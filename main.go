@@ -16,14 +16,20 @@ func main() {
 		Token:    os.Getenv("TSURU_TOKEN"),
 	}
 	startTime := time.Now().Add(-24 * time.Hour)
+	kindnames := []string{"app.create", "app.update", "app.delete"}
 	f := eventFilter{
-		Kindname: "app.create",
-		Since:    &startTime,
+		Since: &startTime,
 	}
-	events, err := tsuru.EventList(f)
-	if err != nil {
-		fmt.Println(err)
-		return
+	var events []event
+	for _, kindname := range kindnames {
+		f.Kindname = kindname
+		ev, err := tsuru.EventList(f)
+		fmt.Printf("%s %d\n", kindname, len(ev))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		events = append(events, ev...)
 	}
 
 	for _, event := range events {
