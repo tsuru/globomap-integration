@@ -41,6 +41,10 @@ func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New(resp.Status)
 	}
