@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 type tsuruClient struct {
@@ -22,6 +23,8 @@ type event struct {
 		Type  string
 		Value string
 	}
+	StartTime time.Time
+	EndTime   time.Time
 }
 
 type eventFilter struct {

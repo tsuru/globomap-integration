@@ -24,6 +24,6 @@ func main() {
 	}
 
 	for _, event := range events {
-		fmt.Println(event.Target.Value)
+		fmt.Printf("%s %s\n", event.StartTime, event.Target.Value)
 	}
 }
