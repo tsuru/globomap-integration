@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 func main() {
@@ -14,8 +15,10 @@ func main() {
 		Hostname: os.Getenv("TSURU_HOSTNAME"),
 		Token:    os.Getenv("TSURU_TOKEN"),
 	}
+	startTime := time.Now().Add(-24 * time.Hour)
 	f := eventFilter{
 		Kindname: "app.create",
+		Since:    &startTime,
 	}
 	events, err := tsuru.EventList(f)
 	if err != nil {

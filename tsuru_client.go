@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const TIME_FORMAT = "2006-01-02T15:04:05MST"
+
 type tsuruClient struct {
 	Hostname string
 	Token    string
@@ -29,11 +31,13 @@ type event struct {
 
 type eventFilter struct {
 	Kindname string
+	Since    *time.Time
+	Until    *time.Time
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	path := "/events"
-	resp, err := t.doRequest(path + "?" + f.Apply().Encode())
+	resp, err := t.doRequest(path + f.Format())
 	if err != nil {
 		return nil, err
 	}
@@ -65,10 +69,17 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (f *eventFilter) Apply() url.Values {
+func (f *eventFilter) Format() string {
 	v := url.Values{}
 	if f.Kindname != "" {
 		v.Set("kindname", f.Kindname)
 	}
-	return v
+	if f.Since != nil {
+		v.Set("since", f.Since.Format(TIME_FORMAT))
+	}
+	if f.Until != nil {
+		v.Set("until", f.Until.Format(TIME_FORMAT))
+	}
+
+	return "?" + v.Encode()
 }
