@@ -14,15 +14,16 @@ func main() {
 		Hostname: os.Getenv("TSURU_HOSTNAME"),
 		Token:    os.Getenv("TSURU_TOKEN"),
 	}
-	events, err := tsuru.EventList()
+	f := eventFilter{
+		Kindname: "app.create",
+	}
+	events, err := tsuru.EventList(f)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
 	for _, event := range events {
-		if event.Target.Type == "app" {
-			fmt.Println(event.Target.Value)
-		}
+		fmt.Println(event.Target.Value)
 	}
 }

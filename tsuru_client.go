@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
 type tsuruClient struct {
@@ -23,8 +24,13 @@ type event struct {
 	}
 }
 
-func (t *tsuruClient) EventList() ([]event, error) {
-	resp, err := t.doRequest("/events")
+type eventFilter struct {
+	Kindname string
+}
+
+func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
+	path := "/events"
+	resp, err := t.doRequest(path + "?" + f.Apply().Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -54,4 +60,12 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 	}
 	req.Header.Add("Authorization", "b "+t.Token)
 	return client.Do(req)
+}
+
+func (f *eventFilter) Apply() url.Values {
+	v := url.Values{}
+	if f.Kindname != "" {
+		v.Set("kindname", f.Kindname)
+	}
+	return v
 }
