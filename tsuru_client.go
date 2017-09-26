@@ -25,6 +25,9 @@ type event struct {
 		Type  string
 		Value string
 	}
+	Kind struct {
+		Name string
+	}
 	StartTime time.Time
 	EndTime   time.Time
 }
