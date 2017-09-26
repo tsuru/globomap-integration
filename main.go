@@ -17,22 +17,28 @@ func main() {
 	}
 	startTime := time.Now().Add(-24 * time.Hour)
 	kindnames := []string{"app.create", "app.update", "app.delete"}
-	f := eventFilter{
-		Since: &startTime,
-	}
-	var events []event
+	events := make(chan []event, len(kindnames))
 	for _, kindname := range kindnames {
-		f.Kindname = kindname
-		ev, err := tsuru.EventList(f)
-		fmt.Printf("%s %d\n", kindname, len(ev))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		events = append(events, ev...)
+		go func(kindname string) {
+			f := eventFilter{
+				Kindname: kindname,
+				Since:    &startTime,
+			}
+			ev, err := tsuru.EventList(f)
+			if err != nil {
+				events <- nil
+				return
+			}
+			events <- ev
+		}(kindname)
 	}
 
-	for _, event := range events {
+	eventList := []event{}
+	for i := 0; i < len(kindnames); i++ {
+		eventList = append(eventList, <-events...)
+	}
+
+	for _, event := range eventList {
 		fmt.Printf("%s\t%s\t%s\n", event.StartTime, event.Kind.Name, event.Target.Value)
 	}
 }
