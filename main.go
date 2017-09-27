@@ -41,4 +41,14 @@ func main() {
 	for _, event := range eventList {
 		fmt.Printf("%s\t%s\t%s\n", event.StartTime, event.Kind.Name, event.Target.Value)
 	}
+	postUpdates(eventList)
+}
+
+func postUpdates(events []event) {
+	globomap := globomapClient{
+		Hostname: os.Getenv("GLOBOMAP_HOSTNAME"),
+	}
+	for _, event := range events {
+		globomap.Create()
+	}
 }
