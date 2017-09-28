@@ -28,8 +28,7 @@ type event struct {
 	Kind struct {
 		Name string
 	}
-	StartTime time.Time
-	EndTime   time.Time
+	EndTime time.Time
 }
 
 type eventFilter struct {
