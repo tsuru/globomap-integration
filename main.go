@@ -5,10 +5,17 @@
 package main
 
 import (
-	"fmt"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
+
+type operation struct {
+	action  string // create, update, delete
+	appName string
+	events  []event
+}
 
 func main() {
 	tsuru := &tsuruClient{
@@ -38,17 +45,59 @@ func main() {
 		eventList = append(eventList, <-events...)
 	}
 
-	for _, event := range eventList {
-		fmt.Printf("%s\t%s\t%s\n", event.StartTime, event.Kind.Name, event.Target.Value)
-	}
-	postUpdates(eventList)
+	processEvents(eventList)
 }
 
-func postUpdates(events []event) {
+func processEvents(events []event) {
+	groupedEvents := groupByApp(events)
+	operations := []operation{}
+	for appName, evs := range groupedEvents {
+		if len(evs) == 1 {
+			action := strings.TrimPrefix(evs[0].Kind.Name, "app.")
+			op := operation{
+				appName: appName,
+				action:  action,
+				events:  evs,
+			}
+			operations = append(operations, op)
+			continue
+		}
+
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+
+		action := strings.TrimPrefix(evs[len(evs)-1].Kind.Name, "app.")
+		op := operation{
+			appName: appName,
+			action:  action,
+			events:  evs,
+		}
+		operations = append(operations, op)
+	}
+
+	postUpdates(operations)
+}
+
+func groupByApp(events []event) map[string][]event {
+	result := make(map[string][]event)
+	for _, ev := range events {
+		appName := ev.Target.Value
+		if _, ok := result[appName]; !ok {
+			result[appName] = []event{ev}
+		} else {
+			result[appName] = append(result[appName], ev)
+		}
+	}
+
+	return result
+}
+
+func postUpdates(operations []operation) {
 	globomap := globomapClient{
 		Hostname: os.Getenv("GLOBOMAP_HOSTNAME"),
 	}
-	for _, event := range events {
-		globomap.Create()
+	for _, operation := range operations {
+		globomap.Create(operation)
 	}
 }

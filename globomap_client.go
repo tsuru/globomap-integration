@@ -5,12 +5,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 )
-
-const TIME_FORMAT = "2006-01-02T15:04:05MST"
 
 type globomapClient struct {
 	Hostname string
@@ -20,7 +21,7 @@ type globomapDocument struct {
 	id         string
 	name       string
 	properties map[string]globomapProperty
-	timestamp  int
+	timestamp  int64
 }
 
 type globomapProperty struct {
@@ -29,9 +30,9 @@ type globomapProperty struct {
 	value       interface{}
 }
 
-func (g *globomapClient) Create() error {
+func (g *globomapClient) Create(op operation) error {
 	path := "/v1/updates"
-	resp, err := g.doRequest(path)
+	resp, err := g.doRequest(path, g.body(op))
 	if err != nil {
 		return err
 	}
@@ -41,41 +42,59 @@ func (g *globomapClient) Create() error {
 	return nil
 }
 
-func (g *globomapClient) doRequest(path string) (*http.Response, error) {
+func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response, error) {
 	client := &http.Client{}
-	req, err := http.NewRequest(http.MethodPost, g.Hostname+path, g.body())
+	req, err := http.NewRequest(http.MethodPost, g.Hostname+path, body)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Add("Content-Type", "application/json")
 	return client.Do(req)
 }
 
-func (g *globomapClient) body() io.Reader {
-	return nil
+func (g *globomapClient) body(op operation) io.Reader {
+	d := newDocument(op)
+	b, err := json.Marshal(d.export())
+	fmt.Println(string(b))
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	return bytes.NewReader(b)
+}
+
+func newDocument(op operation) globomapDocument {
+	return globomapDocument{
+		name:      op.appName,
+		timestamp: op.events[len(op.events)-1].EndTime.Unix(),
+	}
 }
 
 func (d *globomapDocument) export() map[string]interface{} {
-	return map[string]interface{}{
+	props := map[string]interface{}{
 		"action":     "CREATE",
 		"collection": "tsuru_app",
 		"element": map[string]interface{}{
-			"id":   "cartola-api-prod",
-			"name": "cartola-api-prod",
-			"properties": map[string]interface{}{
-				"platform":    "static",
-				"description": "Cartola API (PROD)",
-			},
-			"properties_metadata": map[string]interface{}{
-				"platform": map[string]string{
-					"description": "App Platform",
-				},
-				"description": map[string]string{
-					"description": "Description",
-				},
-			},
+			"id":        d.name,
+			"name":      d.name,
 			"provider":  "tsuru",
-			"timestamp": 1506535249,
+			"timestamp": d.timestamp,
 		},
 		"type": "collection",
 	}
+
+	properties := make(map[string]interface{})
+	propertiesMetadata := make(map[string]map[string]string)
+	for k, v := range d.properties {
+		properties[k] = v.value
+		propertiesMetadata[k] = map[string]string{
+			"description": k,
+		}
+	}
+
+	element, _ := props["element"].(map[string]interface{})
+	element["properties"] = properties
+	element["properties_metadata"] = propertiesMetadata
+
+	return props
 }
