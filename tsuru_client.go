@@ -39,7 +39,7 @@ type eventFilter struct {
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	path := "/events"
-	resp, err := t.doRequest(path + f.Format())
+	resp, err := t.doRequest(path + f.format())
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-func (f *eventFilter) Format() string {
+func (f *eventFilter) format() string {
 	v := url.Values{}
 	if f.Kindname != "" {
 		v.Set("kindname", f.Kindname)

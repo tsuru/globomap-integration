@@ -8,23 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"testing"
 	"time"
 
 	"gopkg.in/check.v1"
 )
-
-type S struct {
-	token string
-}
-
-var _ = check.Suite(&S{})
-
-func Test(t *testing.T) { check.TestingT(t) }
-
-func (s *S) SetUpSuite(c *check.C) {
-	s.token = "mytoken"
-}
 
 func (s *S) TestEventList(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
