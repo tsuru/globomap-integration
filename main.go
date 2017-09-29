@@ -97,7 +97,5 @@ func postUpdates(operations []operation) {
 	globomap := globomapClient{
 		Hostname: os.Getenv("GLOBOMAP_HOSTNAME"),
 	}
-	for _, operation := range operations {
-		globomap.Create(operation)
-	}
+	globomap.Create(operations)
 }

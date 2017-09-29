@@ -30,9 +30,9 @@ type globomapProperty struct {
 	value       interface{}
 }
 
-func (g *globomapClient) Create(op operation) error {
+func (g *globomapClient) Create(ops []operation) error {
 	path := "/v1/updates"
-	resp, err := g.doRequest(path, g.body(op))
+	resp, err := g.doRequest(path, g.body(ops))
 	if err != nil {
 		return err
 	}
@@ -52,9 +52,13 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 	return client.Do(req)
 }
 
-func (g *globomapClient) body(op operation) io.Reader {
-	d := newDocument(op)
-	b, err := json.Marshal(d.export())
+func (g *globomapClient) body(ops []operation) io.Reader {
+	data := make([]map[string]interface{}, len(ops))
+	for i, op := range ops {
+		doc := newDocument(op)
+		data[i] = doc.export()
+	}
+	b, err := json.Marshal(data)
 	if err != nil {
 		fmt.Println(err)
 		return nil
