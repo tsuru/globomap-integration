@@ -83,7 +83,7 @@ func (d *globomapDocument) export() map[string]interface{} {
 			"provider":  "tsuru",
 			"timestamp": d.timestamp,
 		},
-		"type": "collection",
+		"type": "collections",
 	}
 
 	properties := make(map[string]interface{})
