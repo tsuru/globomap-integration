@@ -55,7 +55,6 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 func (g *globomapClient) body(op operation) io.Reader {
 	d := newDocument(op)
 	b, err := json.Marshal(d.export())
-	fmt.Println(string(b))
 	if err != nil {
 		fmt.Println(err)
 		return nil
