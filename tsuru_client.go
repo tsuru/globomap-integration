@@ -7,7 +7,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"time"
@@ -46,21 +45,17 @@ func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	if resp.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New(resp.Status)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	var events []event
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&events)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var events []event
-	err = json.Unmarshal(body, &events)
-	if err != nil {
-		return nil, err
-	}
 
 	return events, nil
 }
