@@ -31,6 +31,10 @@ type globomapProperty struct {
 	value       interface{}
 }
 
+type globomapResponse struct {
+	Message string `json:"message"`
+}
+
 func (g *globomapClient) Create(ops []operation) error {
 	path := "/v1/updates"
 	resp, err := g.doRequest(path, g.body(ops))
@@ -40,6 +44,19 @@ func (g *globomapClient) Create(ops []operation) error {
 	if resp.StatusCode != http.StatusOK {
 		return errors.New(resp.Status)
 	}
+
+	if dry {
+		return nil
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var data globomapResponse
+	err = decoder.Decode(&data)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	fmt.Println(data.Message)
 	return nil
 }
 
