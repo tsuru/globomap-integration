@@ -19,6 +19,7 @@ type globomapClient struct {
 }
 
 type globomapDocument struct {
+	collection string
 	id         string
 	name       string
 	properties map[string]globomapProperty
@@ -98,15 +99,16 @@ func (g *globomapClient) body(ops []operation) io.Reader {
 
 func newDocument(op operation) globomapDocument {
 	return globomapDocument{
-		name:      op.appName,
-		timestamp: op.events[len(op.events)-1].EndTime.Unix(),
+		name:       op.appName,
+		collection: op.collection,
+		timestamp:  op.events[len(op.events)-1].EndTime.Unix(),
 	}
 }
 
 func (d *globomapDocument) export() map[string]interface{} {
 	props := map[string]interface{}{
 		"action":     "CREATE",
-		"collection": "tsuru_app",
+		"collection": d.collection,
 		"element": map[string]interface{}{
 			"id":        d.name,
 			"name":      d.name,

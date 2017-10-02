@@ -12,9 +12,10 @@ import (
 )
 
 type operation struct {
-	action  string // create, update, delete
-	appName string
-	events  []event
+	action     string // create, update, delete
+	appName    string
+	collection string
+	events     []event
 }
 
 var dry bool = false
@@ -60,9 +61,10 @@ func processEvents(events []event) {
 		if len(evs) == 1 {
 			action := strings.TrimPrefix(evs[0].Kind.Name, "app.")
 			op := operation{
-				appName: appName,
-				action:  action,
-				events:  evs,
+				appName:    appName,
+				action:     action,
+				collection: "tsuru_app",
+				events:     evs,
 			}
 			operations = append(operations, op)
 			continue
