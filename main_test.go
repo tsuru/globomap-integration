@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"sync/atomic"
 
 	"gopkg.in/check.v1"
@@ -28,6 +29,13 @@ func (s *S) TestProcessEvents(c *check.C) {
 		defer r.Body.Close()
 		c.Assert(data, check.HasLen, 2)
 
+		sort.Slice(data, func(i, j int) bool {
+			el, _ := data[i]["element"].(map[string]interface{})
+			id1, _ := el["id"].(string)
+			el, _ = data[j]["element"].(map[string]interface{})
+			id2, _ := el["id"].(string)
+			return id1 < id2
+		})
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "CREATE")
