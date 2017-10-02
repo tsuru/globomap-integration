@@ -17,7 +17,12 @@ type operation struct {
 	events  []event
 }
 
+var dry bool = false
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "dry" {
+		dry = true
+	}
 	tsuru := &tsuruClient{
 		Hostname: os.Getenv("TSURU_HOSTNAME"),
 		Token:    os.Getenv("TSURU_TOKEN"),

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 )
 
@@ -49,6 +50,18 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 		return nil, err
 	}
 	req.Header.Add("Content-Type", "application/json")
+	if dry {
+		data, err := ioutil.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("%s\n", data)
+		resp := &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "OK",
+		}
+		return resp, nil
+	}
 	return client.Do(req)
 }
 

@@ -8,5 +8,8 @@ build:
 run:
 	go run main.go tsuru_client.go globomap_client.go
 
+dry:
+	go run main.go tsuru_client.go globomap_client.go dry
+
 test:
 	go test -check.v
