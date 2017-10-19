@@ -58,29 +58,17 @@ func processEvents(events []event) {
 	groupedEvents := groupByTarget(events)
 	operations := []operation{}
 	for name, evs := range groupedEvents {
-		if len(evs) == 1 {
-			parts := strings.Split(evs[0].Kind.Name, ".")
-			collection := "tsuru_" + parts[0]
-			action := parts[1]
-			op := operation{
-				name:       name,
-				action:     action,
-				collection: collection,
-				events:     evs,
-			}
-			operations = append(operations, op)
-			continue
-		}
-
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-
-		action := strings.TrimPrefix(evs[len(evs)-1].Kind.Name, "app.")
+		parts := strings.Split(evs[len(evs)-1].Kind.Name, ".")
+		collection := "tsuru_" + parts[0]
+		action := parts[1]
 		op := operation{
-			name:   name,
-			action: action,
-			events: evs,
+			name:       name,
+			action:     action,
+			collection: collection,
+			events:     evs,
 		}
 		operations = append(operations, op)
 	}
