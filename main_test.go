@@ -15,6 +15,21 @@ import (
 	"gopkg.in/check.v1"
 )
 
+func sortEvents(data []map[string]interface{}) {
+	sort.Slice(data, func(i, j int) bool {
+		collection1, _ := data[i]["collection"].(string)
+		collection2, _ := data[j]["collection"].(string)
+		if collection1 != collection2 {
+			return collection1 < collection2
+		}
+		el, _ := data[i]["element"].(map[string]interface{})
+		id1, _ := el["id"].(string)
+		el, _ = data[j]["element"].(map[string]interface{})
+		id2, _ := el["id"].(string)
+		return id1 < id2
+	})
+}
+
 func (s *S) TestProcessEvents(c *check.C) {
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,18 +44,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 		defer r.Body.Close()
 		c.Assert(data, check.HasLen, 3)
 
-		sort.Slice(data, func(i, j int) bool {
-			collection1, _ := data[i]["collection"].(string)
-			collection2, _ := data[j]["collection"].(string)
-			if collection1 != collection2 {
-				return collection1 < collection2
-			}
-			el, _ := data[i]["element"].(map[string]interface{})
-			id1, _ := el["id"].(string)
-			el, _ = data[j]["element"].(map[string]interface{})
-			id2, _ := el["id"].(string)
-			return id1 < id2
-		})
+		sortEvents(data)
 
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -97,18 +101,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		defer r.Body.Close()
 		c.Assert(data, check.HasLen, 2)
 
-		sort.Slice(data, func(i, j int) bool {
-			collection1, _ := data[i]["collection"].(string)
-			collection2, _ := data[j]["collection"].(string)
-			if collection1 != collection2 {
-				return collection1 < collection2
-			}
-			el, _ := data[i]["element"].(map[string]interface{})
-			id1, _ := el["id"].(string)
-			el, _ = data[j]["element"].(map[string]interface{})
-			id2, _ := el["id"].(string)
-			return id1 < id2
-		})
+		sortEvents(data)
 
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
