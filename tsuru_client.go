@@ -19,6 +19,11 @@ type tsuruClient struct {
 	Token    string
 }
 
+type app struct {
+	Name string
+	Pool string
+}
+
 type event struct {
 	Target struct {
 		Type  string
@@ -58,6 +63,24 @@ func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	defer resp.Body.Close()
 
 	return events, nil
+}
+
+func (t *tsuruClient) AppInfo(name string) (*app, error) {
+	path := "/apps/" + name
+	resp, err := t.doRequest(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var a app
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&a)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return &a, nil
 }
 
 func (t *tsuruClient) doRequest(path string) (*http.Response, error) {

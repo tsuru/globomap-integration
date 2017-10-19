@@ -76,3 +76,43 @@ func (s *S) TestEventListNoContent(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(events, check.HasLen, 0)
 }
+
+func (s *S) TestAppInfo(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/apps/test-app")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+
+		a := app{Name: "test-app"}
+		json.NewEncoder(w).Encode(a)
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	app, err := client.AppInfo("test-app")
+	c.Assert(err, check.IsNil)
+	c.Assert(app, check.NotNil)
+	c.Assert(app.Name, check.Equals, "test-app")
+}
+
+func (s *S) TestAppInfoNotFound(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/apps/test-app")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	app, err := client.AppInfo("test-app")
+	c.Assert(err, check.NotNil)
+	c.Assert(app, check.IsNil)
+}
