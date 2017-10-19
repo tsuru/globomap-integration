@@ -24,7 +24,16 @@ type globomapDocument struct {
 	name       string
 	properties map[string]globomapProperty
 	timestamp  int64
+	docType    string
 }
+
+type globomapEdge struct {
+	globomapDocument
+	from string
+	to   string
+}
+
+type globomapPayload map[string]interface{}
 
 type globomapProperty struct {
 	name        string
@@ -36,7 +45,7 @@ type globomapResponse struct {
 	Message string `json:"message"`
 }
 
-func (g *globomapClient) Create(ops []operation) error {
+func (g *globomapClient) Post(ops []operation) error {
 	path := "/v1/updates"
 	resp, err := g.doRequest(path, g.body(ops))
 	if err != nil {
@@ -84,10 +93,15 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 }
 
 func (g *globomapClient) body(ops []operation) io.Reader {
-	data := make([]map[string]interface{}, len(ops))
+	data := make([]globomapPayload, len(ops))
 	for i, op := range ops {
-		doc := newDocument(op)
-		data[i] = doc.export()
+		if op.docType == "collections" {
+			doc := newDocument(op)
+			data[i] = doc.export()
+		} else {
+			edge := newEdge(op)
+			data[i] = edge.export()
+		}
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
@@ -101,13 +115,26 @@ func newDocument(op operation) globomapDocument {
 	return globomapDocument{
 		name:       op.name,
 		collection: op.collection,
-		timestamp:  op.events[len(op.events)-1].EndTime.Unix(),
+		docType:    op.docType,
+		timestamp:  op.Time().Unix(),
 	}
 }
 
-func (d *globomapDocument) export() map[string]interface{} {
+func newEdge(op operation) globomapEdge {
+	appName := op.events[0].Target.Value
+	edge := globomapEdge{
+		globomapDocument: newDocument(op),
+		from:             appName,
+		to:               "pool1",
+	}
+
+	return edge
+}
+
+func (d *globomapDocument) export() globomapPayload {
 	props := map[string]interface{}{
 		"action":     "CREATE",
+		"type":       d.docType,
 		"collection": d.collection,
 		"element": map[string]interface{}{
 			"id":        d.name,
@@ -115,7 +142,6 @@ func (d *globomapDocument) export() map[string]interface{} {
 			"provider":  "tsuru",
 			"timestamp": d.timestamp,
 		},
-		"type": "collections",
 	}
 
 	properties := make(map[string]interface{})
@@ -131,5 +157,15 @@ func (d *globomapDocument) export() map[string]interface{} {
 	element["properties"] = properties
 	element["properties_metadata"] = propertiesMetadata
 
+	return props
+}
+
+func (e *globomapEdge) export() globomapPayload {
+	props := e.globomapDocument.export()
+	element, _ := props["element"].(map[string]interface{})
+	element["id"] = fmt.Sprintf("%s-%s", e.from, e.to)
+	element["name"] = fmt.Sprintf("%s-%s", e.from, e.to)
+	element["from"] = e.from
+	element["to"] = e.to
 	return props
 }

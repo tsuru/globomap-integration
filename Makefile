@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file.
 
+.PHONY: build run dry test
+
 build:
 	go build main.go tsuru_client.go globomap_client.go -o globomap-integration
 

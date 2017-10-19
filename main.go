@@ -15,10 +15,18 @@ type operation struct {
 	action     string // create, update, delete
 	name       string
 	collection string
+	docType    string
 	events     []event
 }
 
 var dry bool = false
+
+func (op *operation) Time() time.Time {
+	if len(op.events) > 0 {
+		return op.events[len(op.events)-1].EndTime
+	}
+	return time.Now()
+}
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "dry" {
@@ -68,9 +76,20 @@ func processEvents(events []event) {
 			name:       name,
 			action:     action,
 			collection: collection,
+			docType:    "collections",
 			events:     evs,
 		}
 		operations = append(operations, op)
+
+		if collection == "tsuru_app" {
+			op := operation{
+				action:     "CREATE",
+				collection: "tsuru_pool_app",
+				docType:    "edges",
+				events:     evs,
+			}
+			operations = append(operations, op)
+		}
 	}
 
 	postUpdates(operations)
@@ -94,5 +113,5 @@ func postUpdates(operations []operation) {
 	globomap := globomapClient{
 		Hostname: os.Getenv("GLOBOMAP_HOSTNAME"),
 	}
-	globomap.Create(operations)
+	globomap.Post(operations)
 }

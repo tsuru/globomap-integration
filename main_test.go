@@ -15,7 +15,7 @@ import (
 	"gopkg.in/check.v1"
 )
 
-func sortEvents(data []map[string]interface{}) {
+func sortPayload(data []globomapPayload) {
 	sort.Slice(data, func(i, j int) bool {
 		collection1, _ := data[i]["collection"].(string)
 		collection2, _ := data[j]["collection"].(string)
@@ -38,13 +38,13 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []map[string]interface{}
+		var data []globomapPayload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 3)
+		c.Assert(data, check.HasLen, 5)
 
-		sortEvents(data)
+		sortPayload(data)
 
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -66,6 +66,24 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[2]["type"], check.Equals, "collections")
 		c.Assert(el["name"], check.Equals, "pool1")
+
+		el, ok = data[3]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[3]["action"], check.Equals, "CREATE")
+		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[3]["type"], check.Equals, "edges")
+		c.Assert(el["name"], check.Equals, "myapp1-pool1")
+		c.Assert(el["from"], check.Equals, "myapp1")
+		c.Assert(el["to"], check.Equals, "pool1")
+
+		el, ok = data[4]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[4]["action"], check.Equals, "CREATE")
+		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(el["name"], check.Equals, "myapp2-pool1")
+		c.Assert(el["from"], check.Equals, "myapp2")
+		c.Assert(el["to"], check.Equals, "pool1")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
@@ -95,13 +113,13 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []map[string]interface{}
+		var data []globomapPayload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 2)
+		c.Assert(data, check.HasLen, 3)
 
-		sortEvents(data)
+		sortPayload(data)
 
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -116,6 +134,15 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[1]["type"], check.Equals, "collections")
 		c.Assert(el["name"], check.Equals, "pool1")
+
+		el, ok = data[2]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[2]["action"], check.Equals, "CREATE")
+		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[2]["type"], check.Equals, "edges")
+		c.Assert(el["name"], check.Equals, "myapp1-pool1")
+		c.Assert(el["from"], check.Equals, "myapp1")
+		c.Assert(el["to"], check.Equals, "pool1")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
