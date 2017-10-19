@@ -121,11 +121,10 @@ func newDocument(op operation) globomapDocument {
 }
 
 func newEdge(op operation) globomapEdge {
-	appName := op.events[0].Target.Value
 	edge := globomapEdge{
 		globomapDocument: newDocument(op),
-		from:             appName,
-		to:               "pool1",
+		from:             op.app.Name,
+		to:               op.app.Pool,
 	}
 
 	return edge

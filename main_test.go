@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"sort"
 	"sync/atomic"
 
@@ -31,6 +32,34 @@ func sortPayload(data []globomapPayload) {
 }
 
 func (s *S) TestProcessEvents(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r, err := regexp.Compile("/apps/(.*)")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		m := r.FindStringSubmatch(req.URL.Path)
+		if len(m) < 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		name := m[1]
+		a1 := app{Name: "myapp1", Pool: "pool1"}
+		a2 := app{Name: "myapp2", Pool: "pool1"}
+		switch name {
+		case "myapp1":
+			json.NewEncoder(w).Encode(a1)
+		case "myapp2":
+			json.NewEncoder(w).Encode(a2)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	defer os.Unsetenv("TSURU_HOSTNAME")
+	setup()
+
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
@@ -106,6 +135,34 @@ func (s *S) TestProcessEvents(c *check.C) {
 }
 
 func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r, err := regexp.Compile("/apps/(.*)")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		m := r.FindStringSubmatch(req.URL.Path)
+		if len(m) < 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		name := m[1]
+		a1 := app{Name: "myapp1", Pool: "pool1"}
+		a2 := app{Name: "myapp2", Pool: "pool1"}
+		switch name {
+		case "myapp1":
+			json.NewEncoder(w).Encode(a1)
+		case "myapp2":
+			json.NewEncoder(w).Encode(a2)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	defer os.Unsetenv("TSURU_HOSTNAME")
+	setup()
+
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)

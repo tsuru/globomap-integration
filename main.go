@@ -17,9 +17,11 @@ type operation struct {
 	collection string
 	docType    string
 	events     []event
+	app        *app
 }
 
 var dry bool = false
+var tsuru *tsuruClient
 
 func (op *operation) Time() time.Time {
 	if len(op.events) > 0 {
@@ -28,14 +30,18 @@ func (op *operation) Time() time.Time {
 	return time.Now()
 }
 
-func main() {
+func setup() {
 	if len(os.Args) > 1 && os.Args[1] == "dry" {
 		dry = true
 	}
-	tsuru := &tsuruClient{
+	tsuru = &tsuruClient{
 		Hostname: os.Getenv("TSURU_HOSTNAME"),
 		Token:    os.Getenv("TSURU_TOKEN"),
 	}
+}
+
+func main() {
+	setup()
 	startTime := time.Now().Add(-24 * time.Hour)
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
@@ -82,11 +88,16 @@ func processEvents(events []event) {
 		operations = append(operations, op)
 
 		if collection == "tsuru_app" {
+			app, err := tsuru.AppInfo(name)
+			if err != nil {
+				continue
+			}
 			op := operation{
 				action:     "CREATE",
 				collection: "tsuru_pool_app",
 				docType:    "edges",
 				events:     evs,
+				app:        app,
 			}
 			operations = append(operations, op)
 		}
