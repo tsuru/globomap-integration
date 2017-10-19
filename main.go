@@ -13,7 +13,7 @@ import (
 
 type operation struct {
 	action     string // create, update, delete
-	appName    string
+	name       string
 	collection string
 	events     []event
 }
@@ -29,7 +29,7 @@ func main() {
 		Token:    os.Getenv("TSURU_TOKEN"),
 	}
 	startTime := time.Now().Add(-24 * time.Hour)
-	kindnames := []string{"app.create", "app.update", "app.delete"}
+	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
 	for _, kindname := range kindnames {
 		go func(kindname string) {
@@ -55,15 +55,17 @@ func main() {
 }
 
 func processEvents(events []event) {
-	groupedEvents := groupByApp(events)
+	groupedEvents := groupByTarget(events)
 	operations := []operation{}
-	for appName, evs := range groupedEvents {
+	for name, evs := range groupedEvents {
 		if len(evs) == 1 {
-			action := strings.TrimPrefix(evs[0].Kind.Name, "app.")
+			parts := strings.Split(evs[0].Kind.Name, ".")
+			collection := "tsuru_" + parts[0]
+			action := parts[1]
 			op := operation{
-				appName:    appName,
+				name:       name,
 				action:     action,
-				collection: "tsuru_app",
+				collection: collection,
 				events:     evs,
 			}
 			operations = append(operations, op)
@@ -76,9 +78,9 @@ func processEvents(events []event) {
 
 		action := strings.TrimPrefix(evs[len(evs)-1].Kind.Name, "app.")
 		op := operation{
-			appName: appName,
-			action:  action,
-			events:  evs,
+			name:   name,
+			action: action,
+			events: evs,
 		}
 		operations = append(operations, op)
 	}
@@ -86,14 +88,14 @@ func processEvents(events []event) {
 	postUpdates(operations)
 }
 
-func groupByApp(events []event) map[string][]event {
+func groupByTarget(events []event) map[string][]event {
 	result := make(map[string][]event)
 	for _, ev := range events {
-		appName := ev.Target.Value
-		if _, ok := result[appName]; !ok {
-			result[appName] = []event{ev}
+		name := ev.Target.Value
+		if _, ok := result[name]; !ok {
+			result[name] = []event{ev}
 		} else {
-			result[appName] = append(result[appName], ev)
+			result[name] = append(result[name], ev)
 		}
 	}
 

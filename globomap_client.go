@@ -99,7 +99,7 @@ func (g *globomapClient) body(ops []operation) io.Reader {
 
 func newDocument(op operation) globomapDocument {
 	return globomapDocument{
-		name:       op.appName,
+		name:       op.name,
 		collection: op.collection,
 		timestamp:  op.events[len(op.events)-1].EndTime.Unix(),
 	}
