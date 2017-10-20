@@ -6,8 +6,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,10 +27,17 @@ type operation struct {
 }
 
 type configParams struct {
-	flags         *gnuflag.FlagSet
+	flags         flags
 	dry           bool
 	tsuruHostname string
 	tsuruToken    string
+	startTime     time.Time
+}
+
+type flags struct {
+	fs        *gnuflag.FlagSet
+	dry       bool
+	startTime string
 }
 
 var config configParams
@@ -40,7 +50,21 @@ func (op *operation) Time() time.Time {
 	return time.Now()
 }
 
-func (c *configParams) validate() error {
+func (c *configParams) processArguments(args []string) error {
+	config.flags.fs.BoolVar(&config.flags.dry, "dry", false, "enable dry mode")
+	config.flags.fs.BoolVar(&config.flags.dry, "d", false, "enable dry mode")
+	config.flags.fs.StringVar(&config.flags.startTime, "start", "1h", "start time")
+	config.flags.fs.StringVar(&config.flags.startTime, "s", "1h", "start time")
+	err := config.flags.fs.Parse(true, args)
+	if err != nil {
+		return err
+	}
+	config.dry = config.flags.dry
+
+	err = config.parseStartTime()
+	if err != nil {
+		return err
+	}
 	if c.tsuruHostname == "" {
 		return errors.New("TSURU_HOSTNAME is required")
 	}
@@ -50,17 +74,46 @@ func (c *configParams) validate() error {
 	return nil
 }
 
+func (c *configParams) parseStartTime() error {
+	if config.flags.startTime == "" {
+		return nil
+	}
+	r, err := regexp.Compile(`^(\d+) ?(\w)$`)
+	if err != nil {
+		return errors.New("Invalid start argument")
+	}
+	matches := r.FindStringSubmatch(config.flags.startTime)
+	if len(matches) != 3 {
+		return fmt.Errorf("Invalid start argument: %s", config.flags.startTime)
+	}
+
+	value, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return fmt.Errorf("Invalid start argument: %s is not a valid number", matches[1])
+	}
+	unit := matches[2]
+	switch unit {
+	case "d":
+		config.startTime = time.Now().Add(time.Duration(-24*value) * time.Hour)
+	case "h":
+		config.startTime = time.Now().Add(time.Duration(-1*value) * time.Hour)
+	case "m":
+		config.startTime = time.Now().Add(time.Duration(-1*value) * time.Minute)
+	default:
+		return fmt.Errorf("Invalid start argument: %s is not a valid unit", unit)
+
+	}
+	return nil
+}
+
 func setup(args []string) {
 	config = configParams{
-		flags:         gnuflag.NewFlagSet("", gnuflag.ExitOnError),
+		flags:         flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)},
 		tsuruHostname: os.Getenv("TSURU_HOSTNAME"),
 		tsuruToken:    os.Getenv("TSURU_TOKEN"),
+		startTime:     time.Now().Add(-24 * time.Hour),
 	}
-	config.flags.BoolVar(&config.dry, "dry", false, "enable dry mode")
-	config.flags.BoolVar(&config.dry, "d", false, "enable dry mode")
-	config.flags.Parse(true, args)
-
-	err := config.validate()
+	err := config.processArguments(args)
 	if err != nil {
 		panic(err)
 	}
@@ -72,14 +125,13 @@ func setup(args []string) {
 
 func main() {
 	setup(os.Args[1:])
-	startTime := time.Now().Add(-24 * time.Hour)
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
 	for _, kindname := range kindnames {
 		go func(kindname string) {
 			f := eventFilter{
 				Kindname: kindname,
-				Since:    &startTime,
+				Since:    &config.startTime,
 			}
 			ev, err := tsuru.EventList(f)
 			if err != nil {
