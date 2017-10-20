@@ -5,7 +5,7 @@
 .PHONY: build run dry test
 
 build:
-	go build main.go tsuru_client.go globomap_client.go -o globomap-integration
+	go build -o globomap-integration main.go tsuru_client.go globomap_client.go
 
 run:
 	go run main.go tsuru_client.go globomap_client.go
