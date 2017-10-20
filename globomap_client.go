@@ -55,7 +55,7 @@ func (g *globomapClient) Post(ops []operation) error {
 		return errors.New(resp.Status)
 	}
 
-	if dry {
+	if config.dry {
 		return nil
 	}
 
@@ -77,7 +77,7 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 		return nil, err
 	}
 	req.Header.Add("Content-Type", "application/json")
-	if dry {
+	if config.dry {
 		data, err := ioutil.ReadAll(body)
 		if err != nil {
 			return nil, err

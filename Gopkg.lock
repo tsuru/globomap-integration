@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  branch = "master"
+  name = "github.com/tsuru/gnuflag"
+  packages = ["."]
+  revision = "86b8c1b864aadcf9c94d67bc607ce3f19cbb9aa2"
+
+[[projects]]
   branch = "v1"
   name = "gopkg.in/check.v1"
   packages = ["."]
@@ -10,6 +16,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "6fd39ad6060b19a151f3ed573a3192ec9a015c216805fc4cab44f40a4f76b498"
+  inputs-digest = "e2f8f50ec0dc1e026734838f004e6273c6af6fa01e907710c7feedacfa93c429"
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tsuru/gnuflag"
 )
 
 type operation struct {
@@ -20,7 +22,12 @@ type operation struct {
 	app        *app
 }
 
-var dry bool = false
+type configParams struct {
+	flags *gnuflag.FlagSet
+	dry   bool
+}
+
+var config configParams
 var tsuru *tsuruClient
 
 func (op *operation) Time() time.Time {
@@ -31,9 +38,12 @@ func (op *operation) Time() time.Time {
 }
 
 func setup() {
-	if len(os.Args) > 1 && os.Args[1] == "dry" {
-		dry = true
+	config = configParams{
+		flags: gnuflag.NewFlagSet("", gnuflag.ExitOnError),
 	}
+	config.flags.BoolVar(&config.dry, "dry", false, "enable dry mode")
+	config.flags.BoolVar(&config.dry, "d", false, "enable dry mode")
+	config.flags.Parse(true, os.Args)
 
 	hostname := os.Getenv("TSURU_HOSTNAME")
 	if hostname == "" {
