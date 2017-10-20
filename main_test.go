@@ -57,7 +57,6 @@ func (s *S) TestProcessEvents(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	defer os.Unsetenv("TSURU_HOSTNAME")
 	setup()
 
 	var requests int32
@@ -116,7 +115,6 @@ func (s *S) TestProcessEvents(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
-	defer os.Unsetenv("GLOBOMAP_HOSTNAME")
 
 	e1 := event{}
 	e1.Target.Type = "app"
@@ -160,7 +158,6 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	defer os.Unsetenv("TSURU_HOSTNAME")
 	setup()
 
 	var requests int32
@@ -203,7 +200,6 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
-	defer os.Unsetenv("GLOBOMAP_HOSTNAME")
 
 	e1 := event{}
 	e1.Target.Type = "app"
