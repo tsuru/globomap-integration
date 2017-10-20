@@ -57,7 +57,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup()
+	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +158,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup()
+	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

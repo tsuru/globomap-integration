@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"sort"
 	"strings"
@@ -23,8 +24,10 @@ type operation struct {
 }
 
 type configParams struct {
-	flags *gnuflag.FlagSet
-	dry   bool
+	flags         *gnuflag.FlagSet
+	dry           bool
+	tsuruHostname string
+	tsuruToken    string
 }
 
 var config configParams
@@ -37,30 +40,38 @@ func (op *operation) Time() time.Time {
 	return time.Now()
 }
 
-func setup() {
+func (c *configParams) validate() error {
+	if c.tsuruHostname == "" {
+		return errors.New("TSURU_HOSTNAME is required")
+	}
+	if c.tsuruToken == "" {
+		return errors.New("TSURU_TOKEN is required")
+	}
+	return nil
+}
+
+func setup(args []string) {
 	config = configParams{
-		flags: gnuflag.NewFlagSet("", gnuflag.ExitOnError),
+		flags:         gnuflag.NewFlagSet("", gnuflag.ExitOnError),
+		tsuruHostname: os.Getenv("TSURU_HOSTNAME"),
+		tsuruToken:    os.Getenv("TSURU_TOKEN"),
 	}
 	config.flags.BoolVar(&config.dry, "dry", false, "enable dry mode")
 	config.flags.BoolVar(&config.dry, "d", false, "enable dry mode")
-	config.flags.Parse(true, os.Args)
+	config.flags.Parse(true, args)
 
-	hostname := os.Getenv("TSURU_HOSTNAME")
-	if hostname == "" {
-		panic("TSURU_HOSTNAME is required")
-	}
-	token := os.Getenv("TSURU_TOKEN")
-	if token == "" {
-		panic("TSURU_TOKEN is required")
+	err := config.validate()
+	if err != nil {
+		panic(err)
 	}
 	tsuru = &tsuruClient{
-		Hostname: hostname,
-		Token:    token,
+		Hostname: config.tsuruHostname,
+		Token:    config.tsuruToken,
 	}
 }
 
 func main() {
-	setup()
+	setup(os.Args[1:])
 	startTime := time.Now().Add(-24 * time.Hour)
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
