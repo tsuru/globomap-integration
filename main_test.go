@@ -232,3 +232,29 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
+
+func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	setup(nil)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.ExpectFailure("No request should have been done")
+	}))
+	defer server.Close()
+	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+
+	processEvents([]event{
+		newEvent("app.create", "myapp1"),
+		newEvent("app.delete", "myapp1"),
+		newEvent("app.delete", "myapp1"),
+		newEvent("app.create", "myapp1"),
+		newEvent("app.update", "myapp1"),
+		newEvent("app.delete", "myapp1"),
+	})
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
+}

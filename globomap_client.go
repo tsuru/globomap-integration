@@ -32,7 +32,11 @@ type globomapResponse struct {
 
 func (g *globomapClient) Post(ops []operation) error {
 	path := "/v1/updates"
-	resp, err := g.doRequest(path, g.body(ops))
+	body := g.body(ops)
+	if body == nil {
+		return errors.New("No events to post")
+	}
+	resp, err := g.doRequest(path, body)
 	if err != nil {
 		return err
 	}
@@ -89,6 +93,9 @@ func (g *globomapClient) body(ops []operation) io.Reader {
 		if payload != nil {
 			data = append(data, *payload)
 		}
+	}
+	if len(data) == 0 {
+		return nil
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
