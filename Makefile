@@ -5,13 +5,13 @@
 .PHONY: build run dry test
 
 build:
-	go build -o globomap-integration main.go tsuru_client.go globomap_client.go
+	go build -o globomap-integration main.go config.go tsuru_client.go globomap_client.go
 
 run:
-	go run main.go tsuru_client.go globomap_client.go
+	go run main.go config.go tsuru_client.go globomap_client.go
 
 dry:
-	go run main.go tsuru_client.go globomap_client.go dry
+	go run main.go config.go tsuru_client.go globomap_client.go dry
 
 test:
 	go test -check.v
