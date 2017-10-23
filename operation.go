@@ -6,11 +6,11 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
 type operation struct {
-	action     string // create, update, delete
 	name       string
 	collection string
 	docType    string
@@ -25,9 +25,30 @@ func (op *operation) Time() time.Time {
 	return time.Now()
 }
 
+func (op *operation) action() string {
+	firstStatus := eventStatus(op.events[0])
+	if len(op.events) == 1 {
+		return firstStatus
+	}
+
+	lastStatus := eventStatus(op.events[len(op.events)-1])
+	if lastStatus == "DELETE" {
+		if firstStatus == "CREATE" {
+			return "" // nothing to do
+		}
+		return "DELETE"
+	}
+	return firstStatus
+}
+
+func eventStatus(e event) string {
+	parts := strings.Split(e.Kind.Name, ".")
+	return strings.ToUpper(parts[1])
+}
+
 func (op *operation) toDocument() globomapPayload {
 	props := globomapPayload{
-		"action":     "CREATE",
+		"action":     op.action(),
 		"type":       op.docType,
 		"collection": op.collection,
 		"element": map[string]interface{}{

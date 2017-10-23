@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"sync/atomic"
 
 	"gopkg.in/check.v1"
@@ -29,6 +30,15 @@ func sortPayload(data []globomapPayload) {
 		id2, _ := el["id"].(string)
 		return id1 < id2
 	})
+}
+
+func newEvent(kind, value string) event {
+	parts := strings.Split(kind, ".")
+	e := event{}
+	e.Target.Type = parts[0]
+	e.Target.Value = value
+	e.Kind.Name = kind
+	return e
 }
 
 func (s *S) TestProcessEvents(c *check.C) {
@@ -83,14 +93,14 @@ func (s *S) TestProcessEvents(c *check.C) {
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "CREATE")
+		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[1]["type"], check.Equals, "collections")
 		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "CREATE")
+		c.Assert(data[2]["action"], check.Equals, "UPDATE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[2]["type"], check.Equals, "collections")
 		c.Assert(el["name"], check.Equals, "pool1")
@@ -106,7 +116,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[4]["action"], check.Equals, "CREATE")
+		c.Assert(data[4]["action"], check.Equals, "DELETE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
 		c.Assert(el["name"], check.Equals, "myapp2-pool1")
@@ -116,19 +126,11 @@ func (s *S) TestProcessEvents(c *check.C) {
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 
-	e1 := event{}
-	e1.Target.Type = "app"
-	e1.Target.Value = "myapp1"
-	e1.Kind.Name = "app.create"
-	e2 := event{}
-	e2.Target.Type = "app"
-	e2.Target.Value = "myapp2"
-	e2.Kind.Name = "app.create"
-	e3 := event{}
-	e3.Target.Type = "pool"
-	e3.Target.Value = "pool1"
-	e3.Kind.Name = "pool.create"
-	processEvents([]event{e1, e2, e3})
+	processEvents([]event{
+		newEvent("app.create", "myapp1"),
+		newEvent("app.delete", "myapp2"),
+		newEvent("pool.update", "pool1"),
+	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
@@ -171,13 +173,13 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 3)
+		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
 
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "CREATE")
+		c.Assert(data[0]["action"], check.Equals, "DELETE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[0]["type"], check.Equals, "collections")
 		c.Assert(el["name"], check.Equals, "myapp1")
@@ -185,34 +187,46 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[1]["action"], check.Equals, "CREATE")
-		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool")
+		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[1]["type"], check.Equals, "collections")
-		c.Assert(el["name"], check.Equals, "pool1")
+		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "CREATE")
-		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[2]["type"], check.Equals, "edges")
+		c.Assert(data[2]["action"], check.Equals, "UPDATE")
+		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
+		c.Assert(data[2]["type"], check.Equals, "collections")
+		c.Assert(el["name"], check.Equals, "pool1")
+
+		el, ok = data[3]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[3]["action"], check.Equals, "DELETE")
+		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[3]["type"], check.Equals, "edges")
 		c.Assert(el["name"], check.Equals, "myapp1-pool1")
 		c.Assert(el["from"], check.Equals, "myapp1")
+		c.Assert(el["to"], check.Equals, "pool1")
+
+		el, ok = data[4]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[4]["action"], check.Equals, "CREATE")
+		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(el["name"], check.Equals, "myapp2-pool1")
+		c.Assert(el["from"], check.Equals, "myapp2")
 		c.Assert(el["to"], check.Equals, "pool1")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 
-	e1 := event{}
-	e1.Target.Type = "app"
-	e1.Target.Value = "myapp1"
-	e1.Kind.Name = "app.create"
-	e2 := event{}
-	e2.Target.Type = "app"
-	e2.Target.Value = "myapp1"
-	e2.Kind.Name = "app.update"
-	e3 := event{}
-	e3.Target.Type = "pool"
-	e3.Target.Value = "pool1"
-	e3.Kind.Name = "pool.create"
-	processEvents([]event{e1, e2, e3})
+	processEvents([]event{
+		newEvent("app.update", "myapp1"),
+		newEvent("app.delete", "myapp1"),
+		newEvent("app.create", "myapp2"),
+		newEvent("app.update", "myapp2"),
+		newEvent("pool.update", "pool1"),
+		newEvent("pool.delete", "pool1"),
+		newEvent("pool.create", "pool1"),
+	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }

@@ -75,10 +75,8 @@ func processEvents(events []event) {
 		})
 		parts := strings.Split(evs[len(evs)-1].Kind.Name, ".")
 		collection := "tsuru_" + parts[0]
-		action := parts[1]
 		op := operation{
 			name:       name,
-			action:     action,
 			collection: collection,
 			docType:    "collections",
 			events:     evs,
@@ -91,7 +89,6 @@ func processEvents(events []event) {
 				continue
 			}
 			op := operation{
-				action:     "CREATE",
 				collection: "tsuru_pool_app",
 				docType:    "edges",
 				events:     evs,
