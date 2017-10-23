@@ -102,7 +102,7 @@ func processEvents(events []event) {
 }
 
 func groupByTarget(events []event) map[string][]event {
-	result := make(map[string][]event)
+	result := map[string][]event{}
 	for _, ev := range events {
 		name := ev.Target.Value
 		if _, ok := result[name]; !ok {

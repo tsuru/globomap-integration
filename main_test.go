@@ -227,6 +227,8 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		newEvent("pool.update", "pool1"),
 		newEvent("pool.delete", "pool1"),
 		newEvent("pool.create", "pool1"),
+		newEvent("pool.create", "pool2"),
+		newEvent("pool.delete", "pool2"),
 	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }

@@ -46,9 +46,14 @@ func eventStatus(e event) string {
 	return strings.ToUpper(parts[1])
 }
 
-func (op *operation) toDocument() globomapPayload {
-	props := globomapPayload{
-		"action":     op.action(),
+func (op *operation) toDocument() *globomapPayload {
+	action := op.action()
+	if action == "" {
+		return nil
+	}
+
+	props := &globomapPayload{
+		"action":     action,
 		"type":       op.docType,
 		"collection": op.collection,
 		"element": map[string]interface{}{
@@ -59,8 +64,8 @@ func (op *operation) toDocument() globomapPayload {
 		},
 	}
 
-	properties := make(map[string]interface{})
-	propertiesMetadata := make(map[string]map[string]string)
+	properties := map[string]interface{}{}
+	propertiesMetadata := map[string]map[string]string{}
 	/*for k, v := range op.properties {
 		properties[k] = v.value
 		propertiesMetadata[k] = map[string]string{
@@ -68,18 +73,21 @@ func (op *operation) toDocument() globomapPayload {
 		}
 	}*/
 
-	element, _ := props["element"].(map[string]interface{})
+	element, _ := (*props)["element"].(map[string]interface{})
 	element["properties"] = properties
 	element["properties_metadata"] = propertiesMetadata
 
 	return props
 }
 
-func (op *operation) toEdge() globomapPayload {
+func (op *operation) toEdge() *globomapPayload {
 	props := op.toDocument()
+	if props == nil {
+		return nil
+	}
 	from := op.app.Name
 	to := op.app.Pool
-	element, _ := props["element"].(map[string]interface{})
+	element, _ := (*props)["element"].(map[string]interface{})
 	element["id"] = fmt.Sprintf("%s-%s", from, to)
 	element["name"] = fmt.Sprintf("%s-%s", from, to)
 	element["from"] = from

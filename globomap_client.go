@@ -78,12 +78,16 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 }
 
 func (g *globomapClient) body(ops []operation) io.Reader {
-	data := make([]globomapPayload, len(ops))
-	for i, op := range ops {
+	data := []globomapPayload{}
+	for _, op := range ops {
+		var payload *globomapPayload
 		if op.docType == "collections" {
-			data[i] = op.toDocument()
+			payload = op.toDocument()
 		} else {
-			data[i] = op.toEdge()
+			payload = op.toEdge()
+		}
+		if payload != nil {
+			data = append(data, *payload)
 		}
 	}
 	b, err := json.Marshal(data)
