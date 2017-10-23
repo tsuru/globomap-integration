@@ -13,16 +13,6 @@ import (
 	"github.com/tsuru/gnuflag"
 )
 
-type operation struct {
-	action     string // create, update, delete
-	name       string
-	collection string
-	docType    string
-	events     []event
-	app        *app
-}
-
-
 type flags struct {
 	fs        *gnuflag.FlagSet
 	dry       bool
@@ -31,13 +21,6 @@ type flags struct {
 
 var config configParams
 var tsuru *tsuruClient
-
-func (op *operation) Time() time.Time {
-	if len(op.events) > 0 {
-		return op.events[len(op.events)-1].EndTime
-	}
-	return time.Now()
-}
 
 func setup(args []string) {
 	config = configParams{

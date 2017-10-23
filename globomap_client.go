@@ -18,21 +18,6 @@ type globomapClient struct {
 	Hostname string
 }
 
-type globomapDocument struct {
-	collection string
-	id         string
-	name       string
-	properties map[string]globomapProperty
-	timestamp  int64
-	docType    string
-}
-
-type globomapEdge struct {
-	globomapDocument
-	from string
-	to   string
-}
-
 type globomapPayload map[string]interface{}
 
 type globomapProperty struct {
@@ -96,11 +81,9 @@ func (g *globomapClient) body(ops []operation) io.Reader {
 	data := make([]globomapPayload, len(ops))
 	for i, op := range ops {
 		if op.docType == "collections" {
-			doc := newDocument(op)
-			data[i] = doc.export()
+			data[i] = op.toDocument()
 		} else {
-			edge := newEdge(op)
-			data[i] = edge.export()
+			data[i] = op.toEdge()
 		}
 	}
 	b, err := json.Marshal(data)
@@ -109,62 +92,4 @@ func (g *globomapClient) body(ops []operation) io.Reader {
 		return nil
 	}
 	return bytes.NewReader(b)
-}
-
-func newDocument(op operation) globomapDocument {
-	return globomapDocument{
-		name:       op.name,
-		collection: op.collection,
-		docType:    op.docType,
-		timestamp:  op.Time().Unix(),
-	}
-}
-
-func newEdge(op operation) globomapEdge {
-	edge := globomapEdge{
-		globomapDocument: newDocument(op),
-		from:             op.app.Name,
-		to:               op.app.Pool,
-	}
-
-	return edge
-}
-
-func (d *globomapDocument) export() globomapPayload {
-	props := map[string]interface{}{
-		"action":     "CREATE",
-		"type":       d.docType,
-		"collection": d.collection,
-		"element": map[string]interface{}{
-			"id":        d.name,
-			"name":      d.name,
-			"provider":  "tsuru",
-			"timestamp": d.timestamp,
-		},
-	}
-
-	properties := make(map[string]interface{})
-	propertiesMetadata := make(map[string]map[string]string)
-	for k, v := range d.properties {
-		properties[k] = v.value
-		propertiesMetadata[k] = map[string]string{
-			"description": k,
-		}
-	}
-
-	element, _ := props["element"].(map[string]interface{})
-	element["properties"] = properties
-	element["properties_metadata"] = propertiesMetadata
-
-	return props
-}
-
-func (e *globomapEdge) export() globomapPayload {
-	props := e.globomapDocument.export()
-	element, _ := props["element"].(map[string]interface{})
-	element["id"] = fmt.Sprintf("%s-%s", e.from, e.to)
-	element["name"] = fmt.Sprintf("%s-%s", e.from, e.to)
-	element["from"] = e.from
-	element["to"] = e.to
-	return props
 }
