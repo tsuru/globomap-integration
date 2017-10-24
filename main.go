@@ -82,20 +82,6 @@ func processEvents(events []event) {
 			events:     evs,
 		}
 		operations = append(operations, op)
-
-		if collection == "tsuru_app" {
-			app, err := tsuru.AppInfo(name)
-			if err != nil {
-				continue
-			}
-			op := operation{
-				collection: "tsuru_pool_app",
-				docType:    "edges",
-				events:     evs,
-				app:        app,
-			}
-			operations = append(operations, op)
-		}
 	}
 
 	postUpdates(operations)

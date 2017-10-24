@@ -15,7 +15,6 @@ type operation struct {
 	collection string
 	docType    string
 	events     []event
-	app        *app
 }
 
 func (op *operation) Time() time.Time {
@@ -41,9 +40,19 @@ func (op *operation) action() string {
 	return firstStatus
 }
 
-func eventStatus(e event) string {
-	parts := strings.Split(e.Kind.Name, ".")
-	return strings.ToUpper(parts[1])
+func (op *operation) toPayload() []globomapPayload {
+	doc := op.toDocument()
+	if doc == nil {
+		return nil
+	}
+	payloads := []globomapPayload{*doc}
+	if (*doc)["collection"] == "tsuru_app" {
+		edge := op.toEdge()
+		if edge != nil {
+			payloads = append(payloads, *edge)
+		}
+	}
+	return payloads
 }
 
 func (op *operation) toDocument() *globomapPayload {
@@ -89,16 +98,29 @@ func (op *operation) toEdge() *globomapPayload {
 	if props == nil {
 		return nil
 	}
-	from := op.app.Name
-	to := op.app.Pool
+	app, err := tsuru.AppInfo(op.name)
+	if err != nil {
+		return nil
+	}
+
+	doc := *props
+	doc["collection"] = "tsuru_pool_app"
+	doc["type"] = "edges"
+	from := app.Name
+	to := app.Pool
 	id := fmt.Sprintf("%s-%s", from, to)
-	element, _ := (*props)["element"].(map[string]interface{})
+	element, _ := doc["element"].(map[string]interface{})
 	element["id"] = id
 	element["name"] = id
 	element["from"] = from
 	element["to"] = to
-	if (*props)["action"] != "CREATE" {
-		(*props)["key"] = "tsuru_" + id
+	if doc["action"] != "CREATE" {
+		doc["key"] = "tsuru_" + id
 	}
 	return props
+}
+
+func eventStatus(e event) string {
+	parts := strings.Split(e.Kind.Name, ".")
+	return strings.ToUpper(parts[1])
 }
