@@ -78,7 +78,6 @@ func processEvents(events []event) {
 		op := operation{
 			name:       name,
 			collection: collection,
-			docType:    "collections",
 			events:     evs,
 		}
 		operations = append(operations, op)

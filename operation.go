@@ -13,7 +13,6 @@ import (
 type operation struct {
 	name       string
 	collection string
-	docType    string
 	events     []event
 }
 
@@ -63,7 +62,7 @@ func (op *operation) toDocument() *globomapPayload {
 
 	props := &globomapPayload{
 		"action":     action,
-		"type":       op.docType,
+		"type":       "collections",
 		"collection": op.collection,
 		"element": map[string]interface{}{
 			"id":        op.name,
