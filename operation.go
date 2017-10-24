@@ -98,25 +98,27 @@ func (op *operation) toEdge() *globomapPayload {
 	if props == nil {
 		return nil
 	}
-	app, err := tsuru.AppInfo(op.name)
-	if err != nil {
-		return nil
-	}
 
 	doc := *props
 	doc["collection"] = "tsuru_pool_app"
 	doc["type"] = "edges"
-	from := app.Name
-	to := app.Pool
-	id := fmt.Sprintf("%s-%s", from, to)
-	element, _ := doc["element"].(map[string]interface{})
-	element["id"] = id
-	element["name"] = id
-	element["from"] = from
-	element["to"] = to
+	id := fmt.Sprintf("%s-pool", op.name)
 	if doc["action"] != "CREATE" {
 		doc["key"] = "tsuru_" + id
 	}
+	element, _ := doc["element"].(map[string]interface{})
+	element["id"] = id
+	element["name"] = id
+	if doc["action"] == "DELETE" {
+		return props
+	}
+
+	app, err := tsuru.AppInfo(op.name)
+	if err != nil {
+		return nil
+	}
+	element["from"] = app.Name
+	element["to"] = app.Pool
 	return props
 }
 

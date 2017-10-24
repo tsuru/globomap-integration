@@ -54,14 +54,9 @@ func (s *S) TestProcessEvents(c *check.C) {
 			return
 		}
 		name := m[1]
-		a1 := app{Name: "myapp1", Pool: "pool1"}
-		a2 := app{Name: "myapp2", Pool: "pool1"}
-		switch name {
-		case "myapp1":
-			json.NewEncoder(w).Encode(a1)
-		case "myapp2":
-			json.NewEncoder(w).Encode(a2)
-		default:
+		if name == "myapp1" {
+			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
+		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -112,7 +107,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[3]["action"], check.Equals, "CREATE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(el["name"], check.Equals, "myapp1-pool1")
+		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		c.Assert(el["from"], check.Equals, "myapp1")
 		c.Assert(el["to"], check.Equals, "pool1")
 
@@ -121,10 +116,8 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[4]["action"], check.Equals, "DELETE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp2-pool1")
-		c.Assert(el["name"], check.Equals, "myapp2-pool1")
-		c.Assert(el["from"], check.Equals, "myapp2")
-		c.Assert(el["to"], check.Equals, "pool1")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp2-pool")
+		c.Assert(el["name"], check.Equals, "myapp2-pool")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
@@ -208,17 +201,15 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool1")
-		c.Assert(el["name"], check.Equals, "myapp1-pool1")
-		c.Assert(el["from"], check.Equals, "myapp1")
-		c.Assert(el["to"], check.Equals, "pool1")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool")
+		c.Assert(el["name"], check.Equals, "myapp1-pool")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[4]["action"], check.Equals, "CREATE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(el["name"], check.Equals, "myapp2-pool1")
+		c.Assert(el["name"], check.Equals, "myapp2-pool")
 		c.Assert(el["from"], check.Equals, "myapp2")
 		c.Assert(el["to"], check.Equals, "pool1")
 	}))
