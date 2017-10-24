@@ -136,6 +136,8 @@ func (op *operation) toEdge() *globomapPayload {
 	element, _ := doc["element"].(map[string]interface{})
 	element["id"] = id
 	element["name"] = id
+	delete(element, "properties")
+	delete(element, "properties_metadata")
 	if doc["action"] == "DELETE" {
 		return props
 	}

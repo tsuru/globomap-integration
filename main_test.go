@@ -306,6 +306,19 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 		c.Assert(props["owner"], check.Equals, "me@example.com")
 		c.Assert(props["team_owner"], check.Equals, "my-team")
 		c.Assert(props["teams"], check.Equals, "team1, team2")
+		_, ok = el["properties_metadata"]
+		c.Assert(ok, check.Equals, true)
+
+		el, ok = data[1]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[1]["action"], check.Equals, "CREATE")
+		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[1]["type"], check.Equals, "edges")
+		c.Assert(el["name"], check.Equals, "myapp1-pool")
+		_, ok = el["properties"]
+		c.Assert(ok, check.Equals, false)
+		_, ok = el["properties_metadata"]
+		c.Assert(ok, check.Equals, false)
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
