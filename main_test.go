@@ -334,3 +334,36 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
+
+func (s *S) TestProcessEventsIgnoresFailedEvents(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		json.NewEncoder(w).Encode(app{})
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	setup(nil)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		c.Assert(r.Method, check.Equals, http.MethodPost)
+		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
+
+		decoder := json.NewDecoder(r.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer r.Body.Close()
+		c.Assert(data, check.HasLen, 2)
+	}))
+	defer server.Close()
+	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+
+	failedEvent := newEvent("app.delete", "myapp1")
+	failedEvent.Error = "something wrong happened"
+	processEvents([]event{
+		newEvent("app.create", "myapp1"),
+		failedEvent,
+	})
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+}

@@ -17,6 +17,7 @@ func (s *S) TestEventList(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
 		c.Assert(r.URL.Path, check.Equals, "/events")
+		c.Assert(r.FormValue("running"), check.Equals, "false")
 		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
 
 		e1 := event{}
@@ -42,6 +43,7 @@ func (s *S) TestEventListWithFilters(c *check.C) {
 	until := time.Now()
 	since := until.Add(-1 * time.Hour)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.FormValue("running"), check.Equals, "false")
 		c.Assert(r.FormValue("kindname"), check.Equals, "app.update")
 		c.Assert(r.FormValue("since"), check.Equals, since.Format(TIME_FORMAT))
 		c.Assert(r.FormValue("until"), check.Equals, until.Format(TIME_FORMAT))
@@ -115,6 +117,13 @@ func (s *S) TestAppInfoNotFound(c *check.C) {
 	app, err := client.AppInfo("test-app")
 	c.Assert(err, check.NotNil)
 	c.Assert(app, check.IsNil)
+}
+
+func (s *S) TestEventFailed(c *check.C) {
+	successfulEvent := event{}
+	failedEvent := event{Error: "some error"}
+	c.Assert(successfulEvent.Failed(), check.Equals, false)
+	c.Assert(failedEvent.Failed(), check.Equals, true)
 }
 
 func (s *S) TestAppAddresses(c *check.C) {

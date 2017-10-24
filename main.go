@@ -89,6 +89,9 @@ func processEvents(events []event) {
 func groupByTarget(events []event) map[string][]event {
 	result := map[string][]event{}
 	for _, ev := range events {
+		if ev.Failed() {
+			continue
+		}
 		name := ev.Target.Value
 		if _, ok := result[name]; !ok {
 			result[name] = []event{ev}

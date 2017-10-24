@@ -51,6 +51,7 @@ type event struct {
 		Name string
 	}
 	EndTime time.Time
+	Error   string
 }
 
 type eventFilter struct {
@@ -61,6 +62,10 @@ type eventFilter struct {
 
 func (a *app) Addresses() []string {
 	return append(a.Cname, a.Ip)
+}
+
+func (e *event) Failed() bool {
+	return e.Error != ""
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
@@ -117,6 +122,7 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 
 func (f *eventFilter) format() string {
 	v := url.Values{}
+	v.Set("running", "false")
 	if f.Kindname != "" {
 		v.Set("kindname", f.Kindname)
 	}
