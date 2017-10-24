@@ -20,8 +20,17 @@ type tsuruClient struct {
 }
 
 type app struct {
-	Name string
-	Pool string
+	Name        string
+	Pool        string
+	Description string
+	Tags        []string
+	Platform    string
+	Router      string
+	Teams       []string
+	Ip          string
+	Cname       []string
+	Owner       string
+	TeamOwner   string
 }
 
 type event struct {
@@ -39,6 +48,10 @@ type eventFilter struct {
 	Kindname string
 	Since    *time.Time
 	Until    *time.Time
+}
+
+func (a *app) Addresses() []string {
+	return append(a.Cname, a.Ip)
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {

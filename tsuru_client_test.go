@@ -116,3 +116,8 @@ func (s *S) TestAppInfoNotFound(c *check.C) {
 	c.Assert(err, check.NotNil)
 	c.Assert(app, check.IsNil)
 }
+
+func (s *S) TestAppAddresses(c *check.C) {
+	a := app{Ip: "ip", Cname: []string{"addr1", "addr2"}}
+	c.Assert(a.Addresses(), check.DeepEquals, []string{"addr1", "addr2", "ip"})
+}
