@@ -31,6 +31,15 @@ type app struct {
 	Cname       []string
 	Owner       string
 	TeamOwner   string
+	Plan        appPlan
+}
+
+type appPlan struct {
+	Cpushare int
+	Memory   int
+	Name     string
+	Router   string
+	Swap     int
 }
 
 type event struct {

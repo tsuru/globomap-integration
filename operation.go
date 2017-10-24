@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,14 +54,19 @@ func (op *operation) properties() map[string]string {
 		app, _ := op.app()
 		if app != nil {
 			return map[string]string{
-				"description": app.Description,
-				"tags":        strings.Join(app.Tags, ", "),
-				"platform":    app.Platform,
-				"addresses":   strings.Join(app.Addresses(), ", "),
-				"router":      app.Router,
-				"owner":       app.Owner,
-				"team_owner":  app.TeamOwner,
-				"teams":       strings.Join(app.Teams, ", "),
+				"description":   app.Description,
+				"tags":          strings.Join(app.Tags, ", "),
+				"platform":      app.Platform,
+				"addresses":     strings.Join(app.Addresses(), ", "),
+				"router":        app.Router,
+				"owner":         app.Owner,
+				"team_owner":    app.TeamOwner,
+				"teams":         strings.Join(app.Teams, ", "),
+				"plan_name":     app.Plan.Name,
+				"plan_router":   app.Plan.Router,
+				"plan_memory":   strconv.Itoa(app.Plan.Memory),
+				"plan_swap":     strconv.Itoa(app.Plan.Swap),
+				"plan_cpushare": strconv.Itoa(app.Plan.Cpushare),
 			}
 		}
 	}

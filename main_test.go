@@ -269,6 +269,7 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 			Owner:       "me@example.com",
 			TeamOwner:   "my-team",
 			Teams:       []string{"team1", "team2"},
+			Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
 		}
 		json.NewEncoder(w).Encode(a)
 	}))
@@ -306,6 +307,11 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 		c.Assert(props["owner"], check.Equals, "me@example.com")
 		c.Assert(props["team_owner"], check.Equals, "my-team")
 		c.Assert(props["teams"], check.Equals, "team1, team2")
+		c.Assert(props["plan_name"], check.Equals, "large")
+		c.Assert(props["plan_router"], check.Equals, "galeb1")
+		c.Assert(props["plan_memory"], check.Equals, "1073741824")
+		c.Assert(props["plan_swap"], check.Equals, "0")
+		c.Assert(props["plan_cpushare"], check.Equals, "1024")
 		_, ok = el["properties_metadata"]
 		c.Assert(ok, check.Equals, true)
 
