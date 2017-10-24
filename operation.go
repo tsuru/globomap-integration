@@ -45,7 +45,7 @@ func (op *operation) toPayload() []globomapPayload {
 		return nil
 	}
 	payloads := []globomapPayload{*doc}
-	if (*doc)["collection"] == "tsuru_app" {
+	if op.collection == "tsuru_app" {
 		edge := op.toEdge()
 		if edge != nil {
 			payloads = append(payloads, *edge)
@@ -116,8 +116,8 @@ func (op *operation) toEdge() *globomapPayload {
 	if err != nil {
 		return nil
 	}
-	element["from"] = app.Name
-	element["to"] = app.Pool
+	element["from"] = "tsuru_app/tsuru_" + app.Name
+	element["to"] = "tsuru_pool/tsuru_" + app.Pool
 	return props
 }
 
