@@ -255,3 +255,63 @@ func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
 	})
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
 }
+
+func (s *S) TestProcessEventsAppProperties(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		a := app{
+			Name:        "myapp1",
+			Description: "about my app",
+			Tags:        []string{"tag1", "tag2"},
+			Platform:    "go",
+			Ip:          "myapp1.example.com",
+			Cname:       []string{"myapp1.alias.com"},
+			Router:      "galeb",
+			Owner:       "me@example.com",
+			TeamOwner:   "my-team",
+			Teams:       []string{"team1", "team2"},
+		}
+		json.NewEncoder(w).Encode(a)
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	setup(nil)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		c.Assert(r.Method, check.Equals, http.MethodPost)
+		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
+
+		decoder := json.NewDecoder(r.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer r.Body.Close()
+		c.Assert(data, check.HasLen, 2)
+		sortPayload(data)
+
+		el, ok := data[0]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[0]["action"], check.Equals, "CREATE")
+		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
+		c.Assert(data[0]["type"], check.Equals, "collections")
+		c.Assert(el["name"], check.Equals, "myapp1")
+		props, ok := el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["description"], check.Equals, "about my app")
+		c.Assert(props["tags"], check.Equals, "tag1, tag2")
+		c.Assert(props["platform"], check.Equals, "go")
+		c.Assert(props["addresses"], check.Equals, "myapp1.alias.com, myapp1.example.com")
+		c.Assert(props["router"], check.Equals, "galeb")
+		c.Assert(props["owner"], check.Equals, "me@example.com")
+		c.Assert(props["team_owner"], check.Equals, "my-team")
+		c.Assert(props["teams"], check.Equals, "team1, team2")
+	}))
+	defer server.Close()
+	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+
+	processEvents([]event{
+		newEvent("app.create", "myapp1"),
+	})
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+}

@@ -14,6 +14,7 @@ type operation struct {
 	name       string
 	collection string
 	events     []event
+	cachedApp  *app
 }
 
 func (op *operation) Time() time.Time {
@@ -37,6 +38,33 @@ func (op *operation) action() string {
 		return "DELETE"
 	}
 	return firstStatus
+}
+
+func (op *operation) app() (*app, error) {
+	var err error
+	if op.cachedApp == nil {
+		op.cachedApp, err = tsuru.AppInfo(op.name)
+	}
+	return op.cachedApp, err
+}
+
+func (op *operation) properties() map[string]string {
+	if op.collection == "tsuru_app" {
+		app, _ := op.app()
+		if app != nil {
+			return map[string]string{
+				"description": app.Description,
+				"tags":        strings.Join(app.Tags, ", "),
+				"platform":    app.Platform,
+				"addresses":   strings.Join(app.Addresses(), ", "),
+				"router":      app.Router,
+				"owner":       app.Owner,
+				"team_owner":  app.TeamOwner,
+				"teams":       strings.Join(app.Teams, ", "),
+			}
+		}
+	}
+	return nil
 }
 
 func (op *operation) toPayload() []globomapPayload {
@@ -78,12 +106,12 @@ func (op *operation) toDocument() *globomapPayload {
 
 	properties := map[string]interface{}{}
 	propertiesMetadata := map[string]map[string]string{}
-	/*for k, v := range op.properties {
-		properties[k] = v.value
+	for k, v := range op.properties() {
+		properties[k] = v
 		propertiesMetadata[k] = map[string]string{
 			"description": k,
 		}
-	}*/
+	}
 
 	element, _ := (*props)["element"].(map[string]interface{})
 	element["properties"] = properties
@@ -112,7 +140,7 @@ func (op *operation) toEdge() *globomapPayload {
 		return props
 	}
 
-	app, err := tsuru.AppInfo(op.name)
+	app, err := op.app()
 	if err != nil {
 		return nil
 	}
