@@ -64,6 +64,10 @@ func (op *operation) toDocument() *globomapPayload {
 		},
 	}
 
+	if action != "CREATE" {
+		(*props)["key"] = "tsuru_" + op.name
+	}
+
 	properties := map[string]interface{}{}
 	propertiesMetadata := map[string]map[string]string{}
 	/*for k, v := range op.properties {
@@ -87,10 +91,14 @@ func (op *operation) toEdge() *globomapPayload {
 	}
 	from := op.app.Name
 	to := op.app.Pool
+	id := fmt.Sprintf("%s-%s", from, to)
 	element, _ := (*props)["element"].(map[string]interface{})
-	element["id"] = fmt.Sprintf("%s-%s", from, to)
-	element["name"] = fmt.Sprintf("%s-%s", from, to)
+	element["id"] = id
+	element["name"] = id
 	element["from"] = from
 	element["to"] = to
+	if (*props)["action"] != "CREATE" {
+		(*props)["key"] = "tsuru_" + id
+	}
 	return props
 }

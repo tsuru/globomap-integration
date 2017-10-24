@@ -96,6 +96,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[1]["type"], check.Equals, "collections")
+		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
 		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
@@ -103,6 +104,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[2]["action"], check.Equals, "UPDATE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[2]["type"], check.Equals, "collections")
+		c.Assert(data[2]["key"], check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
 		el, ok = data[3]["element"].(map[string]interface{})
@@ -119,6 +121,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data[4]["action"], check.Equals, "DELETE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp2-pool1")
 		c.Assert(el["name"], check.Equals, "myapp2-pool1")
 		c.Assert(el["from"], check.Equals, "myapp2")
 		c.Assert(el["to"], check.Equals, "pool1")
@@ -182,6 +185,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[0]["action"], check.Equals, "DELETE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[0]["type"], check.Equals, "collections")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 
 		el, ok = data[1]["element"].(map[string]interface{})
@@ -196,6 +200,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[2]["action"], check.Equals, "UPDATE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[2]["type"], check.Equals, "collections")
+		c.Assert(data[2]["key"], check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
 		el, ok = data[3]["element"].(map[string]interface{})
@@ -203,6 +208,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[3]["type"], check.Equals, "edges")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool1")
 		c.Assert(el["name"], check.Equals, "myapp1-pool1")
 		c.Assert(el["from"], check.Equals, "myapp1")
 		c.Assert(el["to"], check.Equals, "pool1")
