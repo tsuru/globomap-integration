@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -43,20 +42,12 @@ func newEvent(kind, value string) event {
 
 func (s *S) TestProcessEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		r, err := regexp.Compile("/apps/(.*)")
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		m := r.FindStringSubmatch(req.URL.Path)
-		if len(m) < 2 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		name := m[1]
-		if name == "myapp1" {
+		switch req.URL.Path {
+		case "/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
-		} else {
+		case "/pools":
+			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
+		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -78,7 +69,6 @@ func (s *S) TestProcessEvents(c *check.C) {
 		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
-
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "CREATE")
@@ -132,24 +122,13 @@ func (s *S) TestProcessEvents(c *check.C) {
 
 func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		r, err := regexp.Compile("/apps/(.*)")
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		m := r.FindStringSubmatch(req.URL.Path)
-		if len(m) < 2 {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		name := m[1]
-		a1 := app{Name: "myapp1", Pool: "pool1"}
-		a2 := app{Name: "myapp2", Pool: "pool1"}
-		switch name {
-		case "myapp1":
-			json.NewEncoder(w).Encode(a1)
-		case "myapp2":
-			json.NewEncoder(w).Encode(a2)
+		switch req.URL.Path {
+		case "/apps/myapp1":
+			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
+		case "/apps/myapp2":
+			json.NewEncoder(w).Encode(app{Name: "myapp2", Pool: "pool1"})
+		case "/pools":
+			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -172,7 +151,6 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
-
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "DELETE")
@@ -289,8 +267,8 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
 		c.Assert(data, check.HasLen, 2)
-		sortPayload(data)
 
+		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "CREATE")

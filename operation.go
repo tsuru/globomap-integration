@@ -49,28 +49,57 @@ func (op *operation) app() (*app, error) {
 	return op.cachedApp, err
 }
 
-func (op *operation) properties() map[string]string {
-	if op.collection == "tsuru_app" {
-		app, _ := op.app()
-		if app != nil {
-			return map[string]string{
-				"description":   app.Description,
-				"tags":          strings.Join(app.Tags, ", "),
-				"platform":      app.Platform,
-				"addresses":     strings.Join(app.Addresses(), ", "),
-				"router":        app.Router,
-				"owner":         app.Owner,
-				"team_owner":    app.TeamOwner,
-				"teams":         strings.Join(app.Teams, ", "),
-				"plan_name":     app.Plan.Name,
-				"plan_router":   app.Plan.Router,
-				"plan_memory":   strconv.Itoa(app.Plan.Memory),
-				"plan_swap":     strconv.Itoa(app.Plan.Swap),
-				"plan_cpushare": strconv.Itoa(app.Plan.Cpushare),
-			}
+func (op *operation) pool() *pool {
+	for _, p := range pools {
+		if p.Name == op.name {
+			return &p
 		}
 	}
 	return nil
+}
+
+func (op *operation) properties() map[string]string {
+	if op.collection == "tsuru_app" {
+		return op.appProperties()
+	}
+	return op.poolProperties()
+}
+
+func (op *operation) appProperties() map[string]string {
+	app, _ := op.app()
+	if app == nil {
+		return nil
+	}
+
+	return map[string]string{
+		"description":   app.Description,
+		"tags":          strings.Join(app.Tags, ", "),
+		"platform":      app.Platform,
+		"addresses":     strings.Join(app.Addresses(), ", "),
+		"router":        app.Router,
+		"owner":         app.Owner,
+		"team_owner":    app.TeamOwner,
+		"teams":         strings.Join(app.Teams, ", "),
+		"plan_name":     app.Plan.Name,
+		"plan_router":   app.Plan.Router,
+		"plan_memory":   strconv.Itoa(app.Plan.Memory),
+		"plan_swap":     strconv.Itoa(app.Plan.Swap),
+		"plan_cpushare": strconv.Itoa(app.Plan.Cpushare),
+	}
+}
+
+func (op *operation) poolProperties() map[string]string {
+	pool := op.pool()
+	if pool == nil {
+		return nil
+	}
+
+	return map[string]string{
+		"provisioner": pool.Provisioner,
+		"default":     strconv.FormatBool(pool.Default),
+		"public":      strconv.FormatBool(pool.Public),
+		"Teams":       strings.Join(pool.Teams, ", "),
+	}
 }
 
 func (op *operation) toPayload() []globomapPayload {

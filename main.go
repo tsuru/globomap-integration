@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -21,6 +22,7 @@ type flags struct {
 
 var config configParams
 var tsuru *tsuruClient
+var pools []pool
 
 func setup(args []string) {
 	config = configParams{
@@ -69,11 +71,15 @@ func main() {
 func processEvents(events []event) {
 	groupedEvents := groupByTarget(events)
 	operations := []operation{}
+	var hasPoolEvents bool
 	for name, evs := range groupedEvents {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
 		parts := strings.Split(evs[len(evs)-1].Kind.Name, ".")
+		if parts[0] == "pool" {
+			hasPoolEvents = true
+		}
 		collection := "tsuru_" + parts[0]
 		op := operation{
 			name:       name,
@@ -81,6 +87,15 @@ func processEvents(events []event) {
 			events:     evs,
 		}
 		operations = append(operations, op)
+	}
+
+	if hasPoolEvents {
+		var err error
+		pools, err = tsuru.PoolList()
+		if err != nil {
+			fmt.Println("Error retrieving pool list: ", err)
+			return
+		}
 	}
 
 	postUpdates(operations)
