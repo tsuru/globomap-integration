@@ -119,6 +119,44 @@ func (s *S) TestAppInfoNotFound(c *check.C) {
 	c.Assert(app, check.IsNil)
 }
 
+func (s *S) TestPoolList(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/pools")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+
+		p1 := pool{Name: "pool1"}
+		p2 := pool{Name: "pool2"}
+		json.NewEncoder(w).Encode([]pool{p1, p2})
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	pools, err := client.PoolList()
+	c.Assert(err, check.IsNil)
+	c.Assert(pools, check.HasLen, 2)
+	c.Assert(pools[0].Name, check.Equals, "pool1")
+	c.Assert(pools[1].Name, check.Equals, "pool2")
+}
+
+func (s *S) TestPoolListError(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	pools, err := client.PoolList()
+	c.Assert(err, check.NotNil)
+	c.Assert(pools, check.HasLen, 0)
+}
+
 func (s *S) TestEventFailed(c *check.C) {
 	successfulEvent := event{}
 	failedEvent := event{Error: "some error"}

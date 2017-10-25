@@ -42,6 +42,14 @@ type appPlan struct {
 	Swap     int
 }
 
+type pool struct {
+	Name        string
+	Provisioner string
+	Default     bool
+	Public      bool
+	Teams       []string
+}
+
 type event struct {
 	Target struct {
 		Type  string
@@ -108,6 +116,27 @@ func (t *tsuruClient) AppInfo(name string) (*app, error) {
 	defer resp.Body.Close()
 
 	return &a, nil
+}
+
+func (t *tsuruClient) PoolList() ([]pool, error) {
+	path := "/pools"
+	resp, err := t.doRequest(path)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+
+	var pools []pool
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&pools)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return pools, nil
 }
 
 func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
