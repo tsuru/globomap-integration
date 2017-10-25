@@ -20,12 +20,6 @@ type globomapClient struct {
 
 type globomapPayload map[string]interface{}
 
-type globomapProperty struct {
-	name        string
-	description string
-	value       interface{}
-}
-
 type globomapResponse struct {
 	Message string `json:"message"`
 }

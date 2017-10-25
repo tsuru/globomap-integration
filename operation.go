@@ -15,7 +15,21 @@ type operation struct {
 	name       string
 	collection string
 	events     []event
-	cachedApp  *app
+	target     operationTarget
+}
+
+type operationTarget interface {
+	toEdge() *globomapPayload
+	properties() map[string]string
+}
+
+type appOperation struct {
+	cachedApp *app
+	parent    operation
+}
+
+type poolOperation struct {
+	parent operation
 }
 
 func (op *operation) Time() time.Time {
@@ -41,31 +55,24 @@ func (op *operation) action() string {
 	return firstStatus
 }
 
-func (op *operation) app() (*app, error) {
+func (op *appOperation) app() (*app, error) {
 	var err error
 	if op.cachedApp == nil {
-		op.cachedApp, err = tsuru.AppInfo(op.name)
+		op.cachedApp, err = tsuru.AppInfo(op.parent.name)
 	}
 	return op.cachedApp, err
 }
 
-func (op *operation) pool() *pool {
+func (op *poolOperation) pool() *pool {
 	for _, p := range pools {
-		if p.Name == op.name {
+		if p.Name == op.parent.name {
 			return &p
 		}
 	}
 	return nil
 }
 
-func (op *operation) properties() map[string]string {
-	if op.collection == "tsuru_app" {
-		return op.appProperties()
-	}
-	return op.poolProperties()
-}
-
-func (op *operation) appProperties() map[string]string {
+func (op *appOperation) properties() map[string]string {
 	app, _ := op.app()
 	if app == nil {
 		return nil
@@ -88,7 +95,7 @@ func (op *operation) appProperties() map[string]string {
 	}
 }
 
-func (op *operation) poolProperties() map[string]string {
+func (op *poolOperation) properties() map[string]string {
 	pool := op.pool()
 	if pool == nil {
 		return nil
@@ -108,11 +115,9 @@ func (op *operation) toPayload() []globomapPayload {
 		return nil
 	}
 	payloads := []globomapPayload{*doc}
-	if op.collection == "tsuru_app" {
-		edge := op.toEdge()
-		if edge != nil {
-			payloads = append(payloads, *edge)
-		}
+	edge := op.target.toEdge()
+	if edge != nil {
+		payloads = append(payloads, *edge)
 	}
 	return payloads
 }
@@ -141,7 +146,10 @@ func (op *operation) toDocument() *globomapPayload {
 
 	properties := map[string]interface{}{}
 	propertiesMetadata := map[string]map[string]string{}
-	for k, v := range op.properties() {
+	if op.target == nil {
+		return props
+	}
+	for k, v := range op.target.properties() {
 		properties[k] = v
 		propertiesMetadata[k] = map[string]string{
 			"description": k,
@@ -155,8 +163,8 @@ func (op *operation) toDocument() *globomapPayload {
 	return props
 }
 
-func (op *operation) toEdge() *globomapPayload {
-	props := op.toDocument()
+func (op *appOperation) toEdge() *globomapPayload {
+	props := op.parent.toDocument()
 	if props == nil {
 		return nil
 	}
@@ -164,7 +172,7 @@ func (op *operation) toEdge() *globomapPayload {
 	doc := *props
 	doc["collection"] = "tsuru_pool_app"
 	doc["type"] = "edges"
-	id := fmt.Sprintf("%s-pool", op.name)
+	id := fmt.Sprintf("%s-pool", op.parent.name)
 	if doc["action"] != "CREATE" {
 		doc["key"] = "tsuru_" + id
 	}
@@ -184,6 +192,10 @@ func (op *operation) toEdge() *globomapPayload {
 	element["from"] = "tsuru_app/tsuru_" + app.Name
 	element["to"] = "tsuru_pool/tsuru_" + app.Pool
 	return props
+}
+
+func (op *poolOperation) toEdge() *globomapPayload {
+	return nil
 }
 
 func eventStatus(e event) string {
