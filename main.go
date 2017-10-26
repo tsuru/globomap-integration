@@ -80,16 +80,11 @@ func processEvents(events []event) {
 		if parts[0] == "pool" {
 			hasPoolEvents = true
 		}
-		collection := "tsuru_" + parts[0]
-		op := operation{
-			name:       name,
-			collection: collection,
-			events:     evs,
-		}
+		op := operation{events: evs}
 		if parts[0] == "app" {
-			op.target = &appOperation{parent: op}
+			op.target = &appOperation{appName: name}
 		} else {
-			op.target = &poolOperation{parent: op}
+			op.target = &poolOperation{poolName: name}
 		}
 		operations = append(operations, op)
 	}
