@@ -50,7 +50,7 @@ func processEvents(events []event) {
 		if parts[0] == "pool" {
 			hasPoolEvents = true
 		}
-		op := operation{events: evs}
+		op := NewOperation(evs)
 		if parts[0] == "app" {
 			op.target = &appOperation{appName: name}
 		} else {

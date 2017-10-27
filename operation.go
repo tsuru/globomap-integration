@@ -12,7 +12,8 @@ import (
 )
 
 type operation struct {
-	events []event
+	action string
+	time   time.Time
 	target operationTarget
 }
 
@@ -30,29 +31,6 @@ type appOperation struct {
 
 type poolOperation struct {
 	poolName string
-}
-
-func (op *operation) Time() time.Time {
-	if len(op.events) > 0 {
-		return op.events[len(op.events)-1].EndTime
-	}
-	return time.Now()
-}
-
-func (op *operation) action() string {
-	firstStatus := eventStatus(op.events[0])
-	if len(op.events) == 1 {
-		return firstStatus
-	}
-
-	lastStatus := eventStatus(op.events[len(op.events)-1])
-	if lastStatus == "DELETE" {
-		if firstStatus == "CREATE" {
-			return "" // nothing to do
-		}
-		return "DELETE"
-	}
-	return firstStatus
 }
 
 func (op *operation) toPayload() []globomapPayload {
@@ -86,7 +64,7 @@ func (op *operation) toEdge() *globomapPayload {
 		return nil
 	}
 
-	edge := op.target.toEdge(op.action())
+	edge := op.target.toEdge(op.action)
 	if edge == nil {
 		return nil
 	}
@@ -100,7 +78,7 @@ func (op *operation) toEdge() *globomapPayload {
 }
 
 func (op *operation) baseDocument(name string) *globomapPayload {
-	action := op.action()
+	action := op.action
 	if action == "" {
 		return nil
 	}
@@ -111,7 +89,7 @@ func (op *operation) baseDocument(name string) *globomapPayload {
 			"id":        name,
 			"name":      name,
 			"provider":  "tsuru",
-			"timestamp": op.Time().Unix(),
+			"timestamp": op.time.Unix(),
 		},
 	}
 
@@ -239,6 +217,35 @@ func (op *poolOperation) name() string {
 
 func (op *poolOperation) collection() string {
 	return "tsuru_pool"
+}
+
+func NewOperation(events []event) operation {
+	op := operation{
+		action: "CREATE",
+		time:   time.Now(),
+	}
+	if len(events) == 0 {
+		return op
+	}
+	op.time = events[len(events)-1].EndTime
+
+	firstStatus := eventStatus(events[0])
+	if len(events) == 1 {
+		op.action = firstStatus
+		return op
+	}
+	lastStatus := eventStatus(events[len(events)-1])
+	if lastStatus == "DELETE" {
+		if firstStatus == "CREATE" {
+			op.action = ""
+			return op // nothing to do
+		}
+		op.action = "DELETE"
+		return op
+	}
+	op.action = firstStatus
+
+	return op
 }
 
 func eventStatus(e event) string {
