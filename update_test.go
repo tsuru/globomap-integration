@@ -40,7 +40,7 @@ func newEvent(kind, value string) event {
 	return e
 }
 
-func (s *S) TestUpdateRun(c *check.C) {
+func (s *S) TestUpdateCmdRun(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
@@ -119,12 +119,12 @@ func (s *S) TestUpdateRun(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	cmd := &update{}
+	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestUpdateRunWithMultipleEventsPerKind(c *check.C) {
+func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
@@ -211,12 +211,12 @@ func (s *S) TestUpdateRunWithMultipleEventsPerKind(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	cmd := &update{}
+	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestUpdateRunNoRequestWhenNoEventsToPost(c *check.C) {
+func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/events" {
 			events := []event{
@@ -243,12 +243,12 @@ func (s *S) TestUpdateRunNoRequestWhenNoEventsToPost(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	cmd := &update{}
+	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
 }
 
-func (s *S) TestUpdateRunAppProperties(c *check.C) {
+func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
@@ -329,12 +329,12 @@ func (s *S) TestUpdateRunAppProperties(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	cmd := &update{}
+	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestUpdateRunIgnoresFailedEvents(c *check.C) {
+func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
@@ -369,7 +369,7 @@ func (s *S) TestUpdateRunIgnoresFailedEvents(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	cmd := &update{}
+	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }

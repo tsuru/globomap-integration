@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-type update struct{}
+type updateCmd struct{}
 
-func (u *update) Run() {
+func (u *updateCmd) Run() {
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
 	for _, kindname := range kindnames {

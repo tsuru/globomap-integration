@@ -23,11 +23,14 @@ type environment struct {
 var env environment
 
 func setup(args []string) {
-	env.config = configParams{
-		tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
-		tsuruToken:       os.Getenv("TSURU_TOKEN"),
-		globomapHostname: os.Getenv("GLOBOMAP_HOSTNAME"),
-		startTime:        time.Now().Add(-24 * time.Hour),
+	env = environment{
+		cmd: &updateCmd{},
+		config: configParams{
+			tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
+			tsuruToken:       os.Getenv("TSURU_TOKEN"),
+			globomapHostname: os.Getenv("GLOBOMAP_HOSTNAME"),
+			startTime:        time.Now().Add(-24 * time.Hour),
+		},
 	}
 	err := env.config.processArguments(args)
 	if err != nil {
@@ -40,7 +43,6 @@ func setup(args []string) {
 }
 
 func main() {
-	env = environment{cmd: &update{}}
 	setup(os.Args[1:])
 	env.cmd.Run()
 }
