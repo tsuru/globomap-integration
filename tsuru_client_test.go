@@ -79,6 +79,44 @@ func (s *S) TestEventListNoContent(c *check.C) {
 	c.Assert(events, check.HasLen, 0)
 }
 
+func (s *S) TestAppList(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/apps")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+
+		a1 := app{Name: "app1"}
+		a2 := app{Name: "app2"}
+		json.NewEncoder(w).Encode([]app{a1, a2})
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	apps, err := client.AppList()
+	c.Assert(err, check.IsNil)
+	c.Assert(apps, check.HasLen, 2)
+	c.Assert(apps[0].Name, check.Equals, "app1")
+	c.Assert(apps[1].Name, check.Equals, "app2")
+}
+
+func (s *S) TestAppListError(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	apps, err := client.AppList()
+	c.Assert(err, check.NotNil)
+	c.Assert(apps, check.HasLen, 0)
+}
+
 func (s *S) TestAppInfo(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)

@@ -100,6 +100,27 @@ func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	return events, nil
 }
 
+func (t *tsuruClient) AppList() ([]app, error) {
+	path := "/apps"
+	resp, err := t.doRequest(path)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+
+	var apps []app
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&apps)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return apps, nil
+}
+
 func (t *tsuruClient) AppInfo(name string) (*app, error) {
 	path := "/apps/" + name
 	resp, err := t.doRequest(path)
