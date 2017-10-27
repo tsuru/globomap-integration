@@ -38,9 +38,9 @@ func (c *configParams) processArguments(args []string) error {
 	if err != nil {
 		return err
 	}
-	config.dry = flags.dry
+	env.config.dry = flags.dry
 
-	err = config.parseStartTime(flags.startTime)
+	err = env.config.parseStartTime(flags.startTime)
 	if err != nil {
 		return err
 	}
@@ -76,11 +76,11 @@ func (c *configParams) parseStartTime(startTime string) error {
 	unit := matches[2]
 	switch unit {
 	case "d":
-		config.startTime = time.Now().Add(time.Duration(-24*value) * time.Hour)
+		env.config.startTime = time.Now().Add(time.Duration(-24*value) * time.Hour)
 	case "h":
-		config.startTime = time.Now().Add(time.Duration(-1*value) * time.Hour)
+		env.config.startTime = time.Now().Add(time.Duration(-1*value) * time.Hour)
 	case "m":
-		config.startTime = time.Now().Add(time.Duration(-1*value) * time.Minute)
+		env.config.startTime = time.Now().Add(time.Duration(-1*value) * time.Minute)
 	default:
 		return fmt.Errorf("Invalid start argument: %s is not a valid unit", unit)
 

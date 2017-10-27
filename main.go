@@ -13,39 +13,48 @@ type command interface {
 	Run()
 }
 
-var (
+type environment struct {
 	config configParams
+	cmd    command
 	tsuru  *tsuruClient
 	pools  []pool
-)
+}
+
+var env environment
 
 func setup(args []string) {
-	config = configParams{
+	env.config = configParams{
 		tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
 		tsuruToken:       os.Getenv("TSURU_TOKEN"),
 		globomapHostname: os.Getenv("GLOBOMAP_HOSTNAME"),
 		startTime:        time.Now().Add(-24 * time.Hour),
 	}
-	err := config.processArguments(args)
+	err := env.config.processArguments(args)
 	if err != nil {
 		panic(err)
 	}
-	tsuru = &tsuruClient{
-		Hostname: config.tsuruHostname,
-		Token:    config.tsuruToken,
+	env.tsuru = &tsuruClient{
+		Hostname: env.config.tsuruHostname,
+		Token:    env.config.tsuruToken,
 	}
 }
 
 func main() {
+	env = environment{cmd: &update{}}
 	setup(os.Args[1:])
-	var cmd command
-	cmd = &update{}
-	cmd.Run()
+	env.cmd.Run()
 }
 
 func postUpdates(operations []operation) {
 	globomap := globomapClient{
-		Hostname: config.globomapHostname,
+		Hostname: env.config.globomapHostname,
 	}
-	globomap.Post(operations)
+	data := []globomapPayload{}
+	for _, op := range operations {
+		payload := op.toPayload()
+		if len(payload) > 0 {
+			data = append(data, payload...)
+		}
+	}
+	globomap.Post(data)
 }

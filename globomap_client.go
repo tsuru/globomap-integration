@@ -24,9 +24,9 @@ type globomapResponse struct {
 	Message string `json:"message"`
 }
 
-func (g *globomapClient) Post(ops []operation) error {
+func (g *globomapClient) Post(payload []globomapPayload) error {
 	path := "/v1/updates"
-	body := g.body(ops)
+	body := g.body(payload)
 	if body == nil {
 		return errors.New("No events to post")
 	}
@@ -38,7 +38,7 @@ func (g *globomapClient) Post(ops []operation) error {
 		return errors.New(resp.Status)
 	}
 
-	if config.dry {
+	if env.config.dry {
 		return nil
 	}
 
@@ -60,7 +60,7 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 		return nil, err
 	}
 	req.Header.Add("Content-Type", "application/json")
-	if config.dry {
+	if env.config.dry {
 		data, err := ioutil.ReadAll(body)
 		if err != nil {
 			return nil, err
@@ -75,14 +75,7 @@ func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response,
 	return client.Do(req)
 }
 
-func (g *globomapClient) body(ops []operation) io.Reader {
-	data := []globomapPayload{}
-	for _, op := range ops {
-		payload := op.toPayload()
-		if len(payload) > 0 {
-			data = append(data, payload...)
-		}
-	}
+func (g *globomapClient) body(data []globomapPayload) io.Reader {
 	if len(data) == 0 {
 		return nil
 	}

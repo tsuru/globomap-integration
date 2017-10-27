@@ -119,7 +119,7 @@ func (op *operation) baseDocument(name string) *globomapPayload {
 func (op *appOperation) app() (*app, error) {
 	var err error
 	if op.cachedApp == nil {
-		op.cachedApp, err = tsuru.AppInfo(op.appName)
+		op.cachedApp, err = env.tsuru.AppInfo(op.appName)
 	}
 	return op.cachedApp, err
 }
@@ -185,7 +185,7 @@ func (op *appOperation) collection() string {
 }
 
 func (op *poolOperation) pool() *pool {
-	for _, p := range pools {
+	for _, p := range env.pools {
 		if p.Name == op.poolName {
 			return &p
 		}

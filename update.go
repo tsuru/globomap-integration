@@ -19,9 +19,9 @@ func (u *update) Run() {
 		go func(kindname string) {
 			f := eventFilter{
 				Kindname: kindname,
-				Since:    &config.startTime,
+				Since:    &env.config.startTime,
 			}
-			ev, err := tsuru.EventList(f)
+			ev, err := env.tsuru.EventList(f)
 			if err != nil {
 				events <- nil
 				return
@@ -61,7 +61,7 @@ func processEvents(events []event) {
 
 	if hasPoolEvents {
 		var err error
-		pools, err = tsuru.PoolList()
+		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
 			fmt.Println("Error retrieving pool list: ", err)
 			return
