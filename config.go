@@ -10,28 +10,36 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/tsuru/gnuflag"
 )
 
 type configParams struct {
-	flags         flags
 	dry           bool
 	tsuruHostname string
 	tsuruToken    string
 	startTime     time.Time
 }
 
+type flags struct {
+	fs        *gnuflag.FlagSet
+	dry       bool
+	startTime string
+}
+
 func (c *configParams) processArguments(args []string) error {
-	config.flags.fs.BoolVar(&config.flags.dry, "dry", false, "enable dry mode")
-	config.flags.fs.BoolVar(&config.flags.dry, "d", false, "enable dry mode")
-	config.flags.fs.StringVar(&config.flags.startTime, "start", "1h", "start time")
-	config.flags.fs.StringVar(&config.flags.startTime, "s", "1h", "start time")
-	err := config.flags.fs.Parse(true, args)
+	flags := flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)}
+	flags.fs.BoolVar(&flags.dry, "dry", false, "enable dry mode")
+	flags.fs.BoolVar(&flags.dry, "d", false, "enable dry mode")
+	flags.fs.StringVar(&flags.startTime, "start", "1h", "start time")
+	flags.fs.StringVar(&flags.startTime, "s", "1h", "start time")
+	err := flags.fs.Parse(true, args)
 	if err != nil {
 		return err
 	}
-	config.dry = config.flags.dry
+	config.dry = flags.dry
 
-	err = config.parseStartTime()
+	err = config.parseStartTime(flags.startTime)
 	if err != nil {
 		return err
 	}
@@ -44,17 +52,17 @@ func (c *configParams) processArguments(args []string) error {
 	return nil
 }
 
-func (c *configParams) parseStartTime() error {
-	if config.flags.startTime == "" {
+func (c *configParams) parseStartTime(startTime string) error {
+	if startTime == "" {
 		return nil
 	}
 	r, err := regexp.Compile(`^(\d+) ?(\w)$`)
 	if err != nil {
 		return errors.New("Invalid start argument")
 	}
-	matches := r.FindStringSubmatch(config.flags.startTime)
+	matches := r.FindStringSubmatch(startTime)
 	if len(matches) != 3 {
-		return fmt.Errorf("Invalid start argument: %s", config.flags.startTime)
+		return fmt.Errorf("Invalid start argument: %s", startTime)
 	}
 
 	value, err := strconv.Atoi(matches[1])

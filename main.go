@@ -10,15 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/tsuru/gnuflag"
 )
-
-type flags struct {
-	fs        *gnuflag.FlagSet
-	dry       bool
-	startTime string
-}
 
 var config configParams
 var tsuru *tsuruClient
@@ -26,7 +18,6 @@ var pools []pool
 
 func setup(args []string) {
 	config = configParams{
-		flags:         flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)},
 		tsuruHostname: os.Getenv("TSURU_HOSTNAME"),
 		tsuruToken:    os.Getenv("TSURU_TOKEN"),
 		startTime:     time.Now().Add(-24 * time.Hour),
