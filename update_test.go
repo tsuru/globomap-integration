@@ -40,9 +40,16 @@ func newEvent(kind, value string) event {
 	return e
 }
 
-func (s *S) TestProcessEvents(c *check.C) {
+func (s *S) TestUpdateRun(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
+		case "/events":
+			events := []event{
+				newEvent("app.create", "myapp1"),
+				newEvent("app.delete", "myapp2"),
+				newEvent("pool.update", "pool1"),
+			}
+			json.NewEncoder(w).Encode(events)
 		case "/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/pools":
@@ -112,17 +119,27 @@ func (s *S) TestProcessEvents(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	processEvents([]event{
-		newEvent("app.create", "myapp1"),
-		newEvent("app.delete", "myapp2"),
-		newEvent("pool.update", "pool1"),
-	})
+	cmd := &update{}
+	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
+func (s *S) TestUpdateRunWithMultipleEventsPerKind(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
+		case "/events":
+			events := []event{
+				newEvent("app.update", "myapp1"),
+				newEvent("app.delete", "myapp1"),
+				newEvent("app.create", "myapp2"),
+				newEvent("app.update", "myapp2"),
+				newEvent("pool.update", "pool1"),
+				newEvent("pool.delete", "pool1"),
+				newEvent("pool.create", "pool1"),
+				newEvent("pool.create", "pool2"),
+				newEvent("pool.delete", "pool2"),
+			}
+			json.NewEncoder(w).Encode(events)
 		case "/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/apps/myapp2":
@@ -194,23 +211,26 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	processEvents([]event{
-		newEvent("app.update", "myapp1"),
-		newEvent("app.delete", "myapp1"),
-		newEvent("app.create", "myapp2"),
-		newEvent("app.update", "myapp2"),
-		newEvent("pool.update", "pool1"),
-		newEvent("pool.delete", "pool1"),
-		newEvent("pool.create", "pool1"),
-		newEvent("pool.create", "pool2"),
-		newEvent("pool.delete", "pool2"),
-	})
+	cmd := &update{}
+	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
+func (s *S) TestUpdateRunNoRequestWhenNoEventsToPost(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		if req.URL.Path == "/events" {
+			events := []event{
+				newEvent("app.create", "myapp1"),
+				newEvent("app.delete", "myapp1"),
+				newEvent("app.delete", "myapp1"),
+				newEvent("app.create", "myapp1"),
+				newEvent("app.update", "myapp1"),
+				newEvent("app.delete", "myapp1"),
+			}
+			json.NewEncoder(w).Encode(events)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
@@ -223,33 +243,35 @@ func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	processEvents([]event{
-		newEvent("app.create", "myapp1"),
-		newEvent("app.delete", "myapp1"),
-		newEvent("app.delete", "myapp1"),
-		newEvent("app.create", "myapp1"),
-		newEvent("app.update", "myapp1"),
-		newEvent("app.delete", "myapp1"),
-	})
+	cmd := &update{}
+	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
 }
 
-func (s *S) TestProcessEventsAppProperties(c *check.C) {
+func (s *S) TestUpdateRunAppProperties(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		a := app{
-			Name:        "myapp1",
-			Description: "about my app",
-			Tags:        []string{"tag1", "tag2"},
-			Platform:    "go",
-			Ip:          "myapp1.example.com",
-			Cname:       []string{"myapp1.alias.com"},
-			Router:      "galeb",
-			Owner:       "me@example.com",
-			TeamOwner:   "my-team",
-			Teams:       []string{"team1", "team2"},
-			Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+		switch req.URL.Path {
+		case "/events":
+			events := []event{
+				newEvent("app.create", "myapp1"),
+			}
+			json.NewEncoder(w).Encode(events)
+		case "/apps/myapp1":
+			a := app{
+				Name:        "myapp1",
+				Description: "about my app",
+				Tags:        []string{"tag1", "tag2"},
+				Platform:    "go",
+				Ip:          "myapp1.example.com",
+				Cname:       []string{"myapp1.alias.com"},
+				Router:      "galeb",
+				Owner:       "me@example.com",
+				TeamOwner:   "my-team",
+				Teams:       []string{"team1", "team2"},
+				Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+			}
+			json.NewEncoder(w).Encode(a)
 		}
-		json.NewEncoder(w).Encode(a)
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
@@ -307,15 +329,25 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	processEvents([]event{
-		newEvent("app.create", "myapp1"),
-	})
+	cmd := &update{}
+	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestProcessEventsIgnoresFailedEvents(c *check.C) {
+func (s *S) TestUpdateRunIgnoresFailedEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		json.NewEncoder(w).Encode(app{})
+		switch req.URL.Path {
+		case "/events":
+			failedEvent := newEvent("app.delete", "myapp1")
+			failedEvent.Error = "something wrong happened"
+			events := []event{
+				newEvent("app.create", "myapp1"),
+				failedEvent,
+			}
+			json.NewEncoder(w).Encode(events)
+		case "/apps/myapp1":
+			json.NewEncoder(w).Encode(app{})
+		}
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
@@ -337,11 +369,7 @@ func (s *S) TestProcessEventsIgnoresFailedEvents(c *check.C) {
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
 	setup(nil)
 
-	failedEvent := newEvent("app.delete", "myapp1")
-	failedEvent.Error = "something wrong happened"
-	processEvents([]event{
-		newEvent("app.create", "myapp1"),
-		failedEvent,
-	})
+	cmd := &update{}
+	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
