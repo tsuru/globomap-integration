@@ -18,9 +18,10 @@ var pools []pool
 
 func setup(args []string) {
 	config = configParams{
-		tsuruHostname: os.Getenv("TSURU_HOSTNAME"),
-		tsuruToken:    os.Getenv("TSURU_TOKEN"),
-		startTime:     time.Now().Add(-24 * time.Hour),
+		tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
+		tsuruToken:       os.Getenv("TSURU_TOKEN"),
+		globomapHostname: os.Getenv("GLOBOMAP_HOSTNAME"),
+		startTime:        time.Now().Add(-24 * time.Hour),
 	}
 	err := config.processArguments(args)
 	if err != nil {
@@ -111,7 +112,7 @@ func groupByTarget(events []event) map[string][]event {
 
 func postUpdates(operations []operation) {
 	globomap := globomapClient{
-		Hostname: os.Getenv("GLOBOMAP_HOSTNAME"),
+		Hostname: config.globomapHostname,
 	}
 	globomap.Post(operations)
 }

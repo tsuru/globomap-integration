@@ -53,7 +53,6 @@ func (s *S) TestProcessEvents(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +110,7 @@ func (s *S) TestProcessEvents(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	setup(nil)
 
 	processEvents([]event{
 		newEvent("app.create", "myapp1"),
@@ -135,7 +135,6 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +192,7 @@ func (s *S) TestProcessEventsWithMultipleEventsPerKind(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	setup(nil)
 
 	processEvents([]event{
 		newEvent("app.update", "myapp1"),
@@ -214,7 +214,6 @@ func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +221,7 @@ func (s *S) TestProcessEventsNoRequestWhenNoEventsToPost(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	setup(nil)
 
 	processEvents([]event{
 		newEvent("app.create", "myapp1"),
@@ -253,7 +253,6 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +305,7 @@ func (s *S) TestProcessEventsAppProperties(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	setup(nil)
 
 	processEvents([]event{
 		newEvent("app.create", "myapp1"),
@@ -319,7 +319,6 @@ func (s *S) TestProcessEventsIgnoresFailedEvents(c *check.C) {
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-	setup(nil)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -336,6 +335,7 @@ func (s *S) TestProcessEventsIgnoresFailedEvents(c *check.C) {
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	setup(nil)
 
 	failedEvent := newEvent("app.delete", "myapp1")
 	failedEvent.Error = "something wrong happened"
