@@ -154,8 +154,10 @@ func (op *appOperation) toEdge(action string) *globomapPayload {
 		"collection": "tsuru_pool_app",
 		"type":       "edges",
 		"element": map[string]interface{}{
-			"id":   id,
-			"name": id,
+			"id":        id,
+			"name":      id,
+			"provider":  "tsuru",
+			"timestamp": time.Now().Unix(),
 		},
 	}
 
