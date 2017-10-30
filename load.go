@@ -21,10 +21,9 @@ func (l *loadCmd) Run() {
 	}
 
 	operations := make([]operation, len(apps)+len(env.pools))
-	for i, _ := range apps {
+	for i, app := range apps {
 		operations[i] = NewOperation(nil)
-		app := &apps[i]
-		operations[i].target = &appOperation{appName: app.Name, cachedApp: app}
+		operations[i].target = &appOperation{appName: app.Name}
 	}
 	i := len(apps)
 	for k, pool := range env.pools {

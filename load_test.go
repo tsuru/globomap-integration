@@ -21,6 +21,12 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		switch req.URL.Path {
 		case "/apps":
 			json.NewEncoder(w).Encode([]app{a1, a2})
+		case "/apps/myapp1":
+			a1.Description = "my first app"
+			json.NewEncoder(w).Encode(a1)
+		case "/apps/myapp2":
+			a2.Description = "my second app"
+			json.NewEncoder(w).Encode(a2)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		default:
@@ -52,6 +58,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		c.Assert(data[0]["type"], check.Equals, "collections")
 		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
+		props, ok := el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["description"], check.Equals, "my first app")
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -60,6 +69,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		c.Assert(data[1]["type"], check.Equals, "collections")
 		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
 		c.Assert(el["name"], check.Equals, "myapp2")
+		props, ok = el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["description"], check.Equals, "my second app")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -127,22 +139,24 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoApps(c *check.C) {
 
 func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		a := app{
+			Name:        "myapp1",
+			Description: "about my app",
+			Tags:        []string{"tag1", "tag2"},
+			Platform:    "go",
+			Ip:          "myapp1.example.com",
+			Cname:       []string{"myapp1.alias.com"},
+			Router:      "galeb",
+			Owner:       "me@example.com",
+			TeamOwner:   "my-team",
+			Teams:       []string{"team1", "team2"},
+			Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+		}
 		switch req.URL.Path {
 		case "/apps":
-			a := app{
-				Name:        "myapp1",
-				Description: "about my app",
-				Tags:        []string{"tag1", "tag2"},
-				Platform:    "go",
-				Ip:          "myapp1.example.com",
-				Cname:       []string{"myapp1.alias.com"},
-				Router:      "galeb",
-				Owner:       "me@example.com",
-				TeamOwner:   "my-team",
-				Teams:       []string{"team1", "team2"},
-				Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
-			}
-			json.NewEncoder(w).Encode([]app{a})
+			json.NewEncoder(w).Encode([]app{{Name: a.Name}})
+		case "/apps/myapp1":
+			json.NewEncoder(w).Encode(a)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
 		}

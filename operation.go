@@ -91,10 +91,7 @@ func (op *operation) baseDocument(name string) *globomapPayload {
 			"provider":  "tsuru",
 			"timestamp": op.time.Unix(),
 		},
-	}
-
-	if action != "CREATE" {
-		(*props)["key"] = "tsuru_" + name
+		"key": "tsuru_" + name,
 	}
 
 	properties := map[string]interface{}{}
@@ -159,11 +156,9 @@ func (op *appOperation) toEdge(action string) *globomapPayload {
 			"provider":  "tsuru",
 			"timestamp": time.Now().Unix(),
 		},
+		"key": "tsuru_" + id,
 	}
 
-	if props["action"] != "CREATE" {
-		props["key"] = "tsuru_" + id
-	}
 	if props["action"] == "DELETE" {
 		return &props
 	}
