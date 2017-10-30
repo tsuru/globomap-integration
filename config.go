@@ -26,6 +26,7 @@ type flags struct {
 	fs        *gnuflag.FlagSet
 	dry       bool
 	startTime string
+	load      bool
 }
 
 func (c *configParams) processArguments(args []string) error {
@@ -34,11 +35,18 @@ func (c *configParams) processArguments(args []string) error {
 	flags.fs.BoolVar(&flags.dry, "d", false, "enable dry mode")
 	flags.fs.StringVar(&flags.startTime, "start", "1h", "start time")
 	flags.fs.StringVar(&flags.startTime, "s", "1h", "start time")
+	flags.fs.BoolVar(&flags.load, "load", false, "load all data")
+	flags.fs.BoolVar(&flags.load, "l", false, "load all data")
 	err := flags.fs.Parse(true, args)
 	if err != nil {
 		return err
 	}
 	env.config.dry = flags.dry
+	if flags.load {
+		env.cmd = &loadCmd{}
+	} else {
+		env.cmd = &updateCmd{}
+	}
 
 	err = env.config.parseStartTime(flags.startTime)
 	if err != nil {

@@ -24,7 +24,6 @@ var env environment
 
 func setup(args []string) {
 	env = environment{
-		cmd: &updateCmd{},
 		config: configParams{
 			tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
 			tsuruToken:       os.Getenv("TSURU_TOKEN"),
