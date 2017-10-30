@@ -77,9 +77,10 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "CREATE")
+		c.Assert(data[0]["action"], check.Equals, "UPDATE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[0]["type"], check.Equals, "collections")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 
 		el, ok = data[1]["element"].(map[string]interface{})
@@ -100,9 +101,10 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[3]["action"], check.Equals, "CREATE")
+		c.Assert(data[3]["action"], check.Equals, "UPDATE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[3]["type"], check.Equals, "edges")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
@@ -164,7 +166,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 5)
+		c.Assert(data, check.HasLen, 6)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -177,9 +179,10 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "CREATE")
+		c.Assert(data[1]["action"], check.Equals, "UPDATE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[1]["type"], check.Equals, "collections")
+		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
 		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
@@ -193,16 +196,25 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
-		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool")
-		c.Assert(el["name"], check.Equals, "myapp1-pool")
+		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool")
+		c.Assert(data[3]["type"], check.Equals, "collections")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_pool2")
+		c.Assert(el["name"], check.Equals, "pool2")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[4]["action"], check.Equals, "CREATE")
+		c.Assert(data[4]["action"], check.Equals, "DELETE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp1-pool")
+		c.Assert(el["name"], check.Equals, "myapp1-pool")
+
+		el, ok = data[5]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[5]["action"], check.Equals, "UPDATE")
+		c.Assert(data[5]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[5]["type"], check.Equals, "edges")
+		c.Assert(data[5]["key"], check.Equals, "tsuru_myapp2-pool")
 		c.Assert(el["name"], check.Equals, "myapp2-pool")
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
@@ -219,15 +231,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/events" {
-			events := []event{
-				newEvent("app.create", "myapp1"),
-				newEvent("app.delete", "myapp1"),
-				newEvent("app.delete", "myapp1"),
-				newEvent("app.create", "myapp1"),
-				newEvent("app.update", "myapp1"),
-				newEvent("app.delete", "myapp1"),
-			}
-			json.NewEncoder(w).Encode(events)
+			json.NewEncoder(w).Encode([]event{})
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -292,9 +296,10 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "CREATE")
+		c.Assert(data[0]["action"], check.Equals, "UPDATE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[0]["type"], check.Equals, "collections")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 		props, ok := el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -316,9 +321,10 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "CREATE")
+		c.Assert(data[1]["action"], check.Equals, "UPDATE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[1]["type"], check.Equals, "edges")
+		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		_, ok = el["properties"]
 		c.Assert(ok, check.Equals, false)

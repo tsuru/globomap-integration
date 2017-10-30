@@ -223,7 +223,7 @@ func (op *poolOperation) collection() string {
 
 func NewOperation(events []event) operation {
 	op := operation{
-		action: "CREATE",
+		action: "UPDATE",
 		time:   time.Now(),
 	}
 	if len(events) == 0 {
@@ -231,22 +231,11 @@ func NewOperation(events []event) operation {
 	}
 	op.time = events[len(events)-1].EndTime
 
-	firstStatus := eventStatus(events[0])
-	if len(events) == 1 {
-		op.action = firstStatus
-		return op
-	}
 	lastStatus := eventStatus(events[len(events)-1])
-	if lastStatus == "DELETE" {
-		if firstStatus == "CREATE" {
-			op.action = ""
-			return op // nothing to do
-		}
-		op.action = "DELETE"
-		return op
+	if lastStatus == "CREATE" {
+		lastStatus = "UPDATE"
 	}
-	op.action = firstStatus
-
+	op.action = lastStatus
 	return op
 }
 
