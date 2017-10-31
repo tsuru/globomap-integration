@@ -28,6 +28,7 @@ func setup(args []string) {
 		config: configParams{
 			tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
 			tsuruToken:             os.Getenv("TSURU_TOKEN"),
+			globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
 			globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
 			startTime:              time.Now().Add(-24 * time.Hour),
 		},
@@ -41,7 +42,8 @@ func setup(args []string) {
 		Token:    env.config.tsuruToken,
 	}
 	env.globomap = &globomapClient{
-		Hostname: env.config.globomapLoaderHostname,
+		ApiHostname:    env.config.globomapApiHostname,
+		LoaderHostname: env.config.globomapLoaderHostname,
 	}
 }
 

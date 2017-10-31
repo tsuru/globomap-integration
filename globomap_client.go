@@ -15,7 +15,8 @@ import (
 )
 
 type globomapClient struct {
-	Hostname string
+	LoaderHostname string
+	ApiHostname    string
 }
 
 type globomapPayload map[string]interface{}
@@ -55,7 +56,7 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 
 func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, error) {
 	client := &http.Client{}
-	req, err := http.NewRequest(http.MethodPost, g.Hostname+path, body)
+	req, err := http.NewRequest(http.MethodPost, g.LoaderHostname+path, body)
 	if err != nil {
 		return nil, err
 	}

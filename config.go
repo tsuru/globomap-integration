@@ -18,6 +18,7 @@ type configParams struct {
 	dry                    bool
 	tsuruHostname          string
 	tsuruToken             string
+	globomapApiHostname    string
 	globomapLoaderHostname string
 	startTime              time.Time
 }
@@ -57,6 +58,9 @@ func (c *configParams) processArguments(args []string) error {
 	}
 	if c.tsuruToken == "" {
 		return errors.New("TSURU_TOKEN is required")
+	}
+	if c.globomapApiHostname == "" {
+		return errors.New("GLOBOMAP_API_HOSTNAME is required")
 	}
 	if !c.dry && c.globomapLoaderHostname == "" {
 		return errors.New("GLOBOMAP_LOADER_HOSTNAME is required")
