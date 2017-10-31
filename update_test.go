@@ -9,27 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sort"
 	"strings"
 	"sync/atomic"
 
 	"gopkg.in/check.v1"
 )
-
-func sortPayload(data []globomapPayload) {
-	sort.Slice(data, func(i, j int) bool {
-		collection1, _ := data[i]["collection"].(string)
-		collection2, _ := data[j]["collection"].(string)
-		if collection1 != collection2 {
-			return collection1 < collection2
-		}
-		el, _ := data[i]["element"].(map[string]interface{})
-		id1, _ := el["id"].(string)
-		el, _ = data[j]["element"].(map[string]interface{})
-		id2, _ := el["id"].(string)
-		return id1 < id2
-	})
-}
 
 func newEvent(kind, value string) event {
 	parts := strings.Split(kind, ".")

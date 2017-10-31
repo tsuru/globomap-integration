@@ -50,6 +50,16 @@ type pool struct {
 	Teams       []string
 }
 
+type node struct {
+	Id       string
+	Address  string
+	Pool     string
+	Status   string
+	Metadata struct {
+		IaasID string `json:"iaas-id"`
+	}
+}
+
 type event struct {
 	Target struct {
 		Type  string
@@ -158,6 +168,29 @@ func (t *tsuruClient) PoolList() ([]pool, error) {
 	defer resp.Body.Close()
 
 	return pools, nil
+}
+
+func (t *tsuruClient) NodeList() ([]node, error) {
+	path := "/node"
+	resp, err := t.doRequest(path)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New(resp.Status)
+	}
+
+	var data struct {
+		Nodes []node
+	}
+	decoder := json.NewDecoder(resp.Body)
+	err = decoder.Decode(&data)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return data.Nodes, nil
 }
 
 func (t *tsuruClient) doRequest(path string) (*http.Response, error) {

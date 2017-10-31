@@ -6,6 +6,7 @@ package main
 
 import (
 	"os"
+	"sort"
 	"testing"
 
 	"gopkg.in/check.v1"
@@ -33,4 +34,19 @@ func (s *S) TearDownSuite(c *check.C) {
 	os.Unsetenv("TSURU_HOSTNAME")
 	os.Unsetenv("TSURU_TOKEN")
 	os.Unsetenv("GLOBOMAP_HOSTNAME")
+}
+
+func sortPayload(data []globomapPayload) {
+	sort.Slice(data, func(i, j int) bool {
+		collection1, _ := data[i]["collection"].(string)
+		collection2, _ := data[j]["collection"].(string)
+		if collection1 != collection2 {
+			return collection1 < collection2
+		}
+		el, _ := data[i]["element"].(map[string]interface{})
+		id1, _ := el["id"].(string)
+		el, _ = data[j]["element"].(map[string]interface{})
+		id2, _ := el["id"].(string)
+		return id1 < id2
+	})
 }

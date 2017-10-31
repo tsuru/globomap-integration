@@ -195,6 +195,44 @@ func (s *S) TestPoolListError(c *check.C) {
 	c.Assert(pools, check.HasLen, 0)
 }
 
+func (s *S) TestNodeList(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/node")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+
+		n1 := node{Id: "1234"}
+		n2 := node{Id: "5678"}
+		json.NewEncoder(w).Encode(struct{ Nodes []node }{[]node{n1, n2}})
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	nodes, err := client.NodeList()
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 2)
+	c.Assert(nodes[0].Id, check.Equals, "1234")
+	c.Assert(nodes[1].Id, check.Equals, "5678")
+}
+
+func (s *S) TestNodeListError(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	nodes, err := client.NodeList()
+	c.Assert(err, check.NotNil)
+	c.Assert(nodes, check.HasLen, 0)
+}
+
 func (s *S) TestEventFailed(c *check.C) {
 	successfulEvent := event{}
 	failedEvent := event{Error: "some error"}
