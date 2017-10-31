@@ -102,7 +102,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(el["name"], check.Equals, "myapp2-pool")
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}
@@ -204,7 +204,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}
@@ -228,7 +228,7 @@ func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 		c.ExpectFailure("No request should have been done")
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}
@@ -316,7 +316,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 		c.Assert(ok, check.Equals, false)
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}
@@ -356,7 +356,7 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 		c.Assert(data, check.HasLen, 2)
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}

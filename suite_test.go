@@ -27,13 +27,13 @@ func (s *S) SetUpSuite(c *check.C) {
 func (s *S) SetUpTest(c *check.C) {
 	os.Setenv("TSURU_HOSTNAME", "tsuru-host")
 	os.Setenv("TSURU_TOKEN", s.token)
-	os.Setenv("GLOBOMAP_HOSTNAME", "globomap-host")
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", "globomap-loader-host")
 }
 
 func (s *S) TearDownSuite(c *check.C) {
 	os.Unsetenv("TSURU_HOSTNAME")
 	os.Unsetenv("TSURU_TOKEN")
-	os.Unsetenv("GLOBOMAP_HOSTNAME")
+	os.Unsetenv("GLOBOMAP_LOADER_HOSTNAME")
 }
 
 func sortPayload(data []globomapPayload) {

@@ -102,7 +102,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &loadCmd{}
@@ -129,7 +129,7 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoApps(c *check.C) {
 		c.ExpectFailure("No request should have been done")
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &loadCmd{}
@@ -216,7 +216,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		c.Assert(ok, check.Equals, false)
 	}))
 	defer server.Close()
-	os.Setenv("GLOBOMAP_HOSTNAME", server.URL)
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &loadCmd{}

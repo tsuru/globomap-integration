@@ -15,11 +15,11 @@ import (
 )
 
 type configParams struct {
-	dry              bool
-	tsuruHostname    string
-	tsuruToken       string
-	globomapHostname string
-	startTime        time.Time
+	dry                    bool
+	tsuruHostname          string
+	tsuruToken             string
+	globomapLoaderHostname string
+	startTime              time.Time
 }
 
 type flags struct {
@@ -58,8 +58,8 @@ func (c *configParams) processArguments(args []string) error {
 	if c.tsuruToken == "" {
 		return errors.New("TSURU_TOKEN is required")
 	}
-	if !c.dry && c.globomapHostname == "" {
-		return errors.New("GLOBOMAP_HOSTNAME is required")
+	if !c.dry && c.globomapLoaderHostname == "" {
+		return errors.New("GLOBOMAP_LOADER_HOSTNAME is required")
 	}
 	return nil
 }

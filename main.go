@@ -26,10 +26,10 @@ var env environment
 func setup(args []string) {
 	env = environment{
 		config: configParams{
-			tsuruHostname:    os.Getenv("TSURU_HOSTNAME"),
-			tsuruToken:       os.Getenv("TSURU_TOKEN"),
-			globomapHostname: os.Getenv("GLOBOMAP_HOSTNAME"),
-			startTime:        time.Now().Add(-24 * time.Hour),
+			tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
+			tsuruToken:             os.Getenv("TSURU_TOKEN"),
+			globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
+			startTime:              time.Now().Add(-24 * time.Hour),
 		},
 	}
 	err := env.config.processArguments(args)
@@ -41,7 +41,7 @@ func setup(args []string) {
 		Token:    env.config.tsuruToken,
 	}
 	env.globomap = &globomapClient{
-		Hostname: env.config.globomapHostname,
+		Hostname: env.config.globomapLoaderHostname,
 	}
 }
 
