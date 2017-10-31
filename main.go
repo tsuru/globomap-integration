@@ -14,10 +14,11 @@ type command interface {
 }
 
 type environment struct {
-	config configParams
-	cmd    command
-	tsuru  *tsuruClient
-	pools  []pool
+	config   configParams
+	cmd      command
+	tsuru    *tsuruClient
+	globomap *globomapClient
+	pools    []pool
 }
 
 var env environment
@@ -39,6 +40,9 @@ func setup(args []string) {
 		Hostname: env.config.tsuruHostname,
 		Token:    env.config.tsuruToken,
 	}
+	env.globomap = &globomapClient{
+		Hostname: env.config.globomapHostname,
+	}
 }
 
 func main() {
@@ -47,9 +51,6 @@ func main() {
 }
 
 func postUpdates(operations []operation) {
-	globomap := globomapClient{
-		Hostname: env.config.globomapHostname,
-	}
 	data := []globomapPayload{}
 	for _, op := range operations {
 		payload := op.toPayload()
@@ -57,5 +58,5 @@ func postUpdates(operations []operation) {
 			data = append(data, payload...)
 		}
 	}
-	globomap.Post(data)
+	env.globomap.Post(data)
 }

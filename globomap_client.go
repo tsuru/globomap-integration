@@ -30,7 +30,7 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	if body == nil {
 		return errors.New("No events to post")
 	}
-	resp, err := g.doRequest(path, body)
+	resp, err := g.doPost(path, body)
 	if err != nil {
 		return err
 	}
@@ -53,7 +53,7 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	return nil
 }
 
-func (g *globomapClient) doRequest(path string, body io.Reader) (*http.Response, error) {
+func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest(http.MethodPost, g.Hostname+path, body)
 	if err != nil {
