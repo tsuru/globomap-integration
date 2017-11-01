@@ -205,7 +205,38 @@ func (op *poolOperation) properties() map[string]string {
 }
 
 func (op *poolOperation) toEdge(action string) *globomapPayload {
-	return nil
+	nodes, err := op.nodes()
+	if err != nil || len(nodes) == 0 {
+		return nil
+	}
+	node := nodes[0]
+
+	id := fmt.Sprintf("%s-node", node.Name())
+	props := globomapPayload{
+		"action":     action,
+		"collection": "tsuru_pool_comp_unit",
+		"type":       "edges",
+		"element": map[string]interface{}{
+			"id":        id,
+			"name":      id,
+			"provider":  "tsuru",
+			"timestamp": time.Now().Unix(),
+		},
+		"key": "tsuru_" + id,
+	}
+
+	if props["action"] == "DELETE" {
+		return &props
+	}
+
+	element, _ := props["element"].(map[string]interface{})
+	element["from"] = "tsuru_pool/tsuru_" + op.poolName
+	r, err := env.globomap.QueryByName("comp_unit", node.Name())
+	if err != nil || len(r) != 1 {
+		return nil
+	}
+	element["to"] = r[0].Id
+	return &props
 }
 
 func (op *poolOperation) name() string {
