@@ -20,7 +20,7 @@ type operation struct {
 type operationTarget interface {
 	name() string
 	collection() string
-	toEdge(string) *globomapPayload
+	toEdge(string) []globomapPayload
 	properties() map[string]string
 }
 
@@ -39,9 +39,9 @@ func (op *operation) toPayload() []globomapPayload {
 		return nil
 	}
 	payloads := []globomapPayload{*doc}
-	edge := op.toEdge()
-	if edge != nil {
-		payloads = append(payloads, *edge)
+	edges := op.toEdge()
+	if len(edges) > 0 {
+		payloads = append(payloads, edges...)
 	}
 	return payloads
 }
@@ -58,23 +58,25 @@ func (op *operation) toDocument() *globomapPayload {
 	return props
 }
 
-func (op *operation) toEdge() *globomapPayload {
+func (op *operation) toEdge() []globomapPayload {
 	doc := op.baseDocument(op.target.name())
 	if doc == nil {
 		return nil
 	}
 
-	edge := op.target.toEdge(op.action)
-	if edge == nil {
+	edges := op.target.toEdge(op.action)
+	if len(edges) == 0 {
 		return nil
 	}
-	for k, v := range *doc {
-		if _, ok := (*edge)[k]; !ok {
-			(*edge)[k] = v
+	for _, edge := range edges {
+		for k, v := range *doc {
+			if _, ok := edge[k]; !ok {
+				edge[k] = v
+			}
 		}
 	}
 
-	return edge
+	return edges
 }
 
 func (op *operation) baseDocument(name string) *globomapPayload {
@@ -144,7 +146,7 @@ func (op *appOperation) properties() map[string]string {
 	}
 }
 
-func (op *appOperation) toEdge(action string) *globomapPayload {
+func (op *appOperation) toEdge(action string) []globomapPayload {
 	id := fmt.Sprintf("%s-pool", op.name())
 	props := globomapPayload{
 		"action":     action,
@@ -160,7 +162,7 @@ func (op *appOperation) toEdge(action string) *globomapPayload {
 	}
 
 	if props["action"] == "DELETE" {
-		return &props
+		return []globomapPayload{props}
 	}
 
 	app, err := op.app()
@@ -170,7 +172,7 @@ func (op *appOperation) toEdge(action string) *globomapPayload {
 	element, _ := props["element"].(map[string]interface{})
 	element["from"] = "tsuru_app/tsuru_" + app.Name
 	element["to"] = "tsuru_pool/tsuru_" + app.Pool
-	return &props
+	return []globomapPayload{props}
 }
 
 func (op *appOperation) name() string {
@@ -204,39 +206,42 @@ func (op *poolOperation) properties() map[string]string {
 	}
 }
 
-func (op *poolOperation) toEdge(action string) *globomapPayload {
+func (op *poolOperation) toEdge(action string) []globomapPayload {
 	nodes, err := op.nodes()
 	if err != nil || len(nodes) == 0 {
 		return nil
 	}
-	node := nodes[0]
+	edges := []globomapPayload{}
+	for _, node := range nodes {
+		id := fmt.Sprintf("%s-node", node.Name())
+		edge := globomapPayload{
+			"action":     action,
+			"collection": "tsuru_pool_comp_unit",
+			"type":       "edges",
+			"element": map[string]interface{}{
+				"id":        id,
+				"name":      id,
+				"provider":  "tsuru",
+				"timestamp": time.Now().Unix(),
+			},
+			"key": "tsuru_" + id,
+		}
 
-	id := fmt.Sprintf("%s-node", node.Name())
-	props := globomapPayload{
-		"action":     action,
-		"collection": "tsuru_pool_comp_unit",
-		"type":       "edges",
-		"element": map[string]interface{}{
-			"id":        id,
-			"name":      id,
-			"provider":  "tsuru",
-			"timestamp": time.Now().Unix(),
-		},
-		"key": "tsuru_" + id,
-	}
+		if edge["action"] == "DELETE" {
+			edges = append(edges, edge)
+			continue
+		}
 
-	if props["action"] == "DELETE" {
-		return &props
+		element, _ := edge["element"].(map[string]interface{})
+		element["from"] = "tsuru_pool/tsuru_" + op.poolName
+		r, err := env.globomap.QueryByName("comp_unit", node.Name())
+		if err != nil || len(r) != 1 {
+			continue
+		}
+		element["to"] = r[0].Id
+		edges = append(edges, edge)
 	}
-
-	element, _ := props["element"].(map[string]interface{})
-	element["from"] = "tsuru_pool/tsuru_" + op.poolName
-	r, err := env.globomap.QueryByName("comp_unit", node.Name())
-	if err != nil || len(r) != 1 {
-		return nil
-	}
-	element["to"] = r[0].Id
-	return &props
+	return edges
 }
 
 func (op *poolOperation) name() string {

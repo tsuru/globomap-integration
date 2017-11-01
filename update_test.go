@@ -126,7 +126,8 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}}
 			n2 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node2"}}
 			n3 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node3"}}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
+			n4 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node4"}}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -143,9 +144,13 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 		c.Assert(matches[0], check.HasLen, 2)
 
 		name := matches[0][1]
+		queryResult := []globomapQueryResult{}
+		if name != "node3" {
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_" + name, Name: name})
+		}
 		json.NewEncoder(w).Encode(
 			struct{ Documents []globomapQueryResult }{
-				[]globomapQueryResult{{Id: "comp_unit/globomap_" + name, Name: name}},
+				Documents: queryResult,
 			},
 		)
 	}))
@@ -163,7 +168,7 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 4)
+		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -199,6 +204,16 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 		c.Assert(data[3]["type"], check.Equals, "edges")
 		c.Assert(data[3]["key"], check.Equals, "tsuru_node2-node")
 		c.Assert(el["name"], check.Equals, "node2-node")
+
+		el, ok = data[4]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[4]["action"], check.Equals, "UPDATE")
+		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_node4-node")
+		c.Assert(el["name"], check.Equals, "node4-node")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node4")
 	}))
 	defer globomapLoader.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", globomapLoader.URL)
