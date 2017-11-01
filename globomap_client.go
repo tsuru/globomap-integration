@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 )
 
 type globomapClient struct {
@@ -20,6 +21,11 @@ type globomapClient struct {
 }
 
 type globomapPayload map[string]interface{}
+
+type globomapQueryResult struct {
+	Id   string `json:"_id"`
+	Name string
+}
 
 type globomapResponse struct {
 	Message string `json:"message"`
@@ -52,6 +58,26 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	defer resp.Body.Close()
 	fmt.Println(data.Message)
 	return nil
+}
+
+func (g *globomapClient) QueryByName(collection, name string) ([]globomapQueryResult, error) {
+	query := fmt.Sprintf(`[[{"field":"name","value":"%s","operator":"=="}]]`, name)
+	path := fmt.Sprintf("/v1/collections/%s/?query=%s", collection, url.PathEscape(query))
+	resp, err := http.Get(g.ApiHostname + path)
+	if err != nil {
+		return nil, err
+	}
+
+	decoder := json.NewDecoder(resp.Body)
+	var data struct {
+		Documents []globomapQueryResult
+	}
+	err = decoder.Decode(&data)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return data.Documents, nil
 }
 
 func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, error) {

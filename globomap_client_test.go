@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"gopkg.in/check.v1"
 )
@@ -46,4 +47,29 @@ func (s *S) TestPostNoContent(c *check.C) {
 
 	err := client.Post([]globomapPayload{})
 	c.Assert(err, check.ErrorMatches, "No events to post")
+}
+
+func (s *S) TestQueryByName(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/v1/collections/comp_unit/")
+		query := r.FormValue("query")
+		c.Assert(strings.Contains(query, `"value":"vm-1234"`), check.Equals, true)
+
+		json.NewEncoder(w).Encode(
+			struct{ Documents []globomapQueryResult }{
+				[]globomapQueryResult{{Id: "9876", Name: "vm-1234"}},
+			},
+		)
+	}))
+	defer server.Close()
+	client := globomapClient{
+		ApiHostname: server.URL,
+	}
+
+	results, err := client.QueryByName("comp_unit", "vm-1234")
+	c.Assert(err, check.IsNil)
+	c.Assert(results, check.HasLen, 1)
+	c.Assert(results[0].Id, check.Equals, "9876")
+	c.Assert(results[0].Name, check.Equals, "vm-1234")
 }
