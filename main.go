@@ -19,6 +19,7 @@ type environment struct {
 	tsuru    *tsuruClient
 	globomap *globomapClient
 	pools    []pool
+	nodes    []node
 }
 
 var env environment

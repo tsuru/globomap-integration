@@ -244,3 +244,8 @@ func (s *S) TestAppAddresses(c *check.C) {
 	a := app{Ip: "ip", Cname: []string{"addr1", "addr2"}}
 	c.Assert(a.Addresses(), check.DeepEquals, []string{"addr1", "addr2", "ip"})
 }
+
+func (s *S) TestNodeName(c *check.C) {
+	n := node{Metadata: nodeMetadata{IaasID: "vm-1234"}}
+	c.Assert(n.Name(), check.Equals, "vm-1234")
+}

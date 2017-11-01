@@ -216,6 +216,24 @@ func (op *poolOperation) collection() string {
 	return "tsuru_pool"
 }
 
+func (op *poolOperation) nodes() ([]node, error) {
+	if len(env.nodes) == 0 {
+		nodes, err := env.tsuru.NodeList()
+		if err != nil {
+			return nil, err
+		}
+		env.nodes = nodes
+	}
+	nodes := []node{}
+	for _, node := range env.nodes {
+		if node.Pool == op.poolName {
+			nodes = append(nodes, node)
+		}
+	}
+
+	return nodes, nil
+}
+
 func NewOperation(events []event) operation {
 	op := operation{
 		action: "UPDATE",

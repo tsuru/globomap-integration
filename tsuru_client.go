@@ -55,9 +55,11 @@ type node struct {
 	Address  string
 	Pool     string
 	Status   string
-	Metadata struct {
-		IaasID string `json:"iaas-id"`
-	}
+	Metadata nodeMetadata
+}
+
+type nodeMetadata struct {
+	IaasID string `json:"iaas-id"`
 }
 
 type event struct {
@@ -84,6 +86,10 @@ func (a *app) Addresses() []string {
 
 func (e *event) Failed() bool {
 	return e.Error != ""
+}
+
+func (n *node) Name() string {
+	return n.Metadata.IaasID
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
