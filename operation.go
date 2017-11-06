@@ -21,7 +21,7 @@ type operationTarget interface {
 	name() string
 	collection() string
 	toEdge(string) []globomapPayload
-	properties() map[string]string
+	properties() map[string]interface{}
 }
 
 type appOperation struct {
@@ -123,21 +123,21 @@ func (op *appOperation) app() (*app, error) {
 	return op.cachedApp, err
 }
 
-func (op *appOperation) properties() map[string]string {
+func (op *appOperation) properties() map[string]interface{} {
 	app, _ := op.app()
 	if app == nil {
 		return nil
 	}
 
-	return map[string]string{
+	return map[string]interface{}{
 		"description":   app.Description,
-		"tags":          strings.Join(app.Tags, ", "),
+		"tags":          app.Tags,
 		"platform":      app.Platform,
-		"addresses":     strings.Join(app.Addresses(), ", "),
+		"addresses":     app.Addresses(),
 		"router":        app.Router,
 		"owner":         app.Owner,
 		"team_owner":    app.TeamOwner,
-		"teams":         strings.Join(app.Teams, ", "),
+		"teams":         app.Teams,
 		"plan_name":     app.Plan.Name,
 		"plan_router":   app.Plan.Router,
 		"plan_memory":   strconv.Itoa(app.Plan.Memory),
@@ -192,17 +192,17 @@ func (op *poolOperation) pool() *pool {
 	return nil
 }
 
-func (op *poolOperation) properties() map[string]string {
+func (op *poolOperation) properties() map[string]interface{} {
 	pool := op.pool()
 	if pool == nil {
 		return nil
 	}
 
-	return map[string]string{
+	return map[string]interface{}{
 		"provisioner": pool.Provisioner,
 		"default":     strconv.FormatBool(pool.Default),
 		"public":      strconv.FormatBool(pool.Public),
-		"Teams":       strings.Join(pool.Teams, ", "),
+		"Teams":       pool.Teams,
 	}
 }
 
