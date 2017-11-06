@@ -19,7 +19,7 @@ func (u *updateCmd) Run() {
 		go func(kindname string) {
 			f := eventFilter{
 				Kindname: kindname,
-				Since:    &env.config.startTime,
+				Since:    env.config.startTime,
 			}
 			ev, err := env.tsuru.EventList(f)
 			if err != nil {

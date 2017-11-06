@@ -20,7 +20,8 @@ type configParams struct {
 	tsuruToken             string
 	globomapApiHostname    string
 	globomapLoaderHostname string
-	startTime              time.Time
+	startTime              *time.Time
+	repeat                 *time.Time
 }
 
 type flags struct {
@@ -28,6 +29,7 @@ type flags struct {
 	dry       bool
 	startTime string
 	load      bool
+	repeat    string
 }
 
 func (c *configParams) processArguments(args []string) error {
@@ -38,6 +40,8 @@ func (c *configParams) processArguments(args []string) error {
 	flags.fs.StringVar(&flags.startTime, "s", "1h", "start time")
 	flags.fs.BoolVar(&flags.load, "load", false, "load all data")
 	flags.fs.BoolVar(&flags.load, "l", false, "load all data")
+	flags.fs.StringVar(&flags.repeat, "repeat", "1h", "repeat frequency")
+	flags.fs.StringVar(&flags.repeat, "r", "1h", "repeat frequency")
 	err := flags.fs.Parse(true, args)
 	if err != nil {
 		return err
@@ -49,7 +53,11 @@ func (c *configParams) processArguments(args []string) error {
 		env.cmd = &updateCmd{}
 	}
 
-	err = env.config.parseStartTime(flags.startTime)
+	env.config.startTime, err = env.config.parseTime(flags.startTime)
+	if err != nil {
+		return err
+	}
+	env.config.repeat, err = env.config.parseTime(flags.repeat)
 	if err != nil {
 		return err
 	}
@@ -68,34 +76,35 @@ func (c *configParams) processArguments(args []string) error {
 	return nil
 }
 
-func (c *configParams) parseStartTime(startTime string) error {
-	if startTime == "" {
-		return nil
+func (c *configParams) parseTime(timeStr string) (*time.Time, error) {
+	if timeStr == "" {
+		return nil, nil
 	}
 	r, err := regexp.Compile(`^(\d+) ?(\w)$`)
 	if err != nil {
-		return errors.New("Invalid start argument")
+		return nil, errors.New("Invalid start argument")
 	}
-	matches := r.FindStringSubmatch(startTime)
+	matches := r.FindStringSubmatch(timeStr)
 	if len(matches) != 3 {
-		return fmt.Errorf("Invalid start argument: %s", startTime)
+		return nil, fmt.Errorf("Invalid start argument: %s", timeStr)
 	}
 
 	value, err := strconv.Atoi(matches[1])
 	if err != nil {
-		return fmt.Errorf("Invalid start argument: %s is not a valid number", matches[1])
+		return nil, fmt.Errorf("Invalid start argument: %s is not a valid number", matches[1])
 	}
 	unit := matches[2]
+
+	var t time.Time
 	switch unit {
 	case "d":
-		env.config.startTime = time.Now().Add(time.Duration(-24*value) * time.Hour)
+		t = time.Now().Add(time.Duration(-24*value) * time.Hour)
 	case "h":
-		env.config.startTime = time.Now().Add(time.Duration(-1*value) * time.Hour)
+		t = time.Now().Add(time.Duration(-1*value) * time.Hour)
 	case "m":
-		env.config.startTime = time.Now().Add(time.Duration(-1*value) * time.Minute)
+		t = time.Now().Add(time.Duration(-1*value) * time.Minute)
 	default:
-		return fmt.Errorf("Invalid start argument: %s is not a valid unit", unit)
-
+		return nil, fmt.Errorf("Invalid start argument: %s is not a valid unit", unit)
 	}
-	return nil
+	return &t, nil
 }
