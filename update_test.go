@@ -123,7 +123,7 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
 		case "/node":
-			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}}
+			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Protocol: "https", Address: "1.2.3.4", Port: 2376}
 			n2 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node2"}}
 			n3 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node3"}}
 			n4 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node4"}}
@@ -196,6 +196,9 @@ func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
 		c.Assert(el["name"], check.Equals, "node1-node")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
 		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
+		props, ok := el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["address"], check.Equals, "https://1.2.3.4:2376")
 
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)

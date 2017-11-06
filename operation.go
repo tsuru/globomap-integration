@@ -239,6 +239,14 @@ func (op *poolOperation) toEdge(action string) []globomapPayload {
 			continue
 		}
 		element["to"] = r[0].Id
+
+		element["properties"] = map[string]interface{}{
+			"address": node.Addr(),
+		}
+		element["properties_metadata"] = map[string]map[string]string{
+			"address": {"description": "address"},
+		}
+
 		edges = append(edges, edge)
 	}
 	return edges

@@ -249,3 +249,10 @@ func (s *S) TestNodeName(c *check.C) {
 	n := node{Metadata: nodeMetadata{IaasID: "vm-1234"}}
 	c.Assert(n.Name(), check.Equals, "vm-1234")
 }
+
+func (s *S) TestNodeAddr(c *check.C) {
+	n1 := node{Protocol: "https", Address: "10.2.1.153", Port: 2376}
+	c.Assert(n1.Addr(), check.Equals, "https://10.2.1.153:2376")
+	n2 := node{Protocol: "http", Address: "10.2.1.30"}
+	c.Assert(n2.Addr(), check.Equals, "http://10.2.1.30:80")
+}

@@ -7,6 +7,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -53,6 +54,8 @@ type pool struct {
 type node struct {
 	Id       string
 	Address  string
+	Port     int
+	Protocol string
 	Pool     string
 	Status   string
 	Metadata nodeMetadata
@@ -90,6 +93,14 @@ func (e *event) Failed() bool {
 
 func (n *node) Name() string {
 	return n.Metadata.IaasID
+}
+
+func (n *node) Addr() string {
+	port := n.Port
+	if port == 0 {
+		port = 80
+	}
+	return fmt.Sprintf("%s://%s:%d", n.Protocol, n.Address, port)
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
