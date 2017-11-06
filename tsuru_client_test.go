@@ -251,8 +251,15 @@ func (s *S) TestNodeName(c *check.C) {
 }
 
 func (s *S) TestNodeAddr(c *check.C) {
-	n1 := node{Protocol: "https", Address: "10.2.1.153", Port: 2376}
-	c.Assert(n1.Addr(), check.Equals, "https://10.2.1.153:2376")
-	n2 := node{Protocol: "http", Address: "10.2.1.30"}
-	c.Assert(n2.Addr(), check.Equals, "http://10.2.1.30:80")
+	n1 := node{Address: "10.2.1.153"}
+	c.Assert(n1.Addr(), check.Equals, "10.2.1.153")
+
+	n2 := node{Protocol: "http", Address: "10.2.1.30", Port: 0}
+	c.Assert(n2.Addr(), check.Equals, "http://10.2.1.30")
+
+	n3 := node{Protocol: "https", Address: "10.2.1.112", Port: 2376}
+	c.Assert(n3.Addr(), check.Equals, "https://10.2.1.112:2376")
+
+	n4 := node{Protocol: "", Address: "10.2.1.115", Port: 2376}
+	c.Assert(n4.Addr(), check.Equals, "10.2.1.115:2376")
 }

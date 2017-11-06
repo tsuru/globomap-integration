@@ -96,11 +96,14 @@ func (n *node) Name() string {
 }
 
 func (n *node) Addr() string {
-	port := n.Port
-	if port == 0 {
-		port = 80
+	addr := n.Address
+	if n.Protocol != "" {
+		addr = fmt.Sprintf("%s://%s", n.Protocol, addr)
 	}
-	return fmt.Sprintf("%s://%s:%d", n.Protocol, n.Address, port)
+	if n.Port != 0 {
+		addr = fmt.Sprintf("%s:%d", addr, n.Port)
+	}
+	return addr
 }
 
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
