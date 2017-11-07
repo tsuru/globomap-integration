@@ -24,7 +24,7 @@ This is the default mode. Checks for new events about apps or pools and post the
 globomap-integration --start 2d
 ```
 
-The time period can be set in days (`d`), hours (`h`) or minutes (`m`). The default value is 1 hour.
+The time period can be set in days (`d`), hours (`h`) or minutes (`m`). The default value is 24 hours.
 
 ### Repeat mode
 
