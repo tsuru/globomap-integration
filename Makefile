@@ -2,16 +2,14 @@
 # Use of this source code is governed by a BSD-style
 # license that can be found in the LICENSE file.
 
-.PHONY: build run dry test
+.PHONY: build test deploy
 
 build:
 	go build
 
-run:
-	go run main.go config.go operation.go tsuru_client.go globomap_client.go
-
-dry:
-	go run main.go config.go operation.go tsuru_client.go globomap_client.go --dry
-
 test:
 	go test -check.v
+
+deploy:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o globomap-integration
+	tsuru app-deploy Procfile globomap-integration -a ${APP}

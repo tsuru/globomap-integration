@@ -1,1 +1,1 @@
-worker: ./globomap-integration --start 1h --repeat
+worker: ./globomap-integration --repeat 1h
