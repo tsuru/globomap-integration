@@ -7,11 +7,12 @@ package main
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
 type updateCmd struct{}
+
+type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
@@ -41,27 +42,28 @@ func (u *updateCmd) Run() {
 }
 
 func processEvents(events []event) {
-	groupedEvents := groupByTarget(events)
+	group := groupByTarget(events)
 	operations := []operation{}
-	var hasPoolEvents bool
-	for name, evs := range groupedEvents {
+
+	for name, evs := range group["app"] {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		parts := strings.Split(evs[len(evs)-1].Kind.Name, ".")
-		if parts[0] == "pool" {
-			hasPoolEvents = true
-		}
 		op := NewOperation(evs)
-		if parts[0] == "app" {
-			op.target = &appOperation{appName: name}
-		} else {
-			op.target = &poolOperation{poolName: name}
-		}
+		op.target = &appOperation{appName: name}
 		operations = append(operations, op)
 	}
 
-	if hasPoolEvents {
+	for name, evs := range group["pool"] {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		op := NewOperation(evs)
+		op.target = &poolOperation{poolName: name}
+		operations = append(operations, op)
+	}
+
+	if len(group["pool"]) > 0 {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
@@ -73,19 +75,25 @@ func processEvents(events []event) {
 	postUpdates(operations)
 }
 
-func groupByTarget(events []event) map[string][]event {
-	result := map[string][]event{}
+func groupByTarget(events []event) map[string]groupedEvents {
+	results := map[string]groupedEvents{
+		"app":  groupedEvents{},
+		"pool": groupedEvents{},
+	}
+
 	for _, ev := range events {
 		if ev.Failed() {
 			continue
 		}
+
 		name := ev.Target.Value
-		if _, ok := result[name]; !ok {
-			result[name] = []event{ev}
+		evType := ev.Target.Type
+		if _, ok := results[evType][name]; !ok {
+			results[evType][name] = []event{ev}
 		} else {
-			result[name] = append(result[name], ev)
+			results[evType][name] = append(results[evType][name], ev)
 		}
 	}
 
-	return result
+	return results
 }
