@@ -25,17 +25,10 @@ type environment struct {
 var env environment
 
 func setup(args []string) {
-	startTime := time.Now().Add(-24 * time.Hour)
 	env = environment{
-		config: configParams{
-			tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
-			tsuruToken:             os.Getenv("TSURU_TOKEN"),
-			globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
-			globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
-			startTime:              &startTime,
-		},
+		config: NewConfig(),
 	}
-	err := env.config.processArguments(args)
+	err := env.config.ProcessArguments(args)
 	if err != nil {
 		panic(err)
 	}

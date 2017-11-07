@@ -7,6 +7,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -21,7 +22,7 @@ type configParams struct {
 	globomapApiHostname    string
 	globomapLoaderHostname string
 	startTime              *time.Time
-	repeat                 *time.Time
+	repeat                 *time.Duration
 }
 
 type flags struct {
@@ -32,7 +33,16 @@ type flags struct {
 	repeat    string
 }
 
-func (c *configParams) processArguments(args []string) error {
+func NewConfig() configParams {
+	return configParams{
+		tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
+		tsuruToken:             os.Getenv("TSURU_TOKEN"),
+		globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
+		globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
+	}
+}
+
+func (c *configParams) ProcessArguments(args []string) error {
 	flags := flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)}
 	flags.fs.BoolVar(&flags.dry, "dry", false, "enable dry mode")
 	flags.fs.BoolVar(&flags.dry, "d", false, "enable dry mode")
@@ -46,18 +56,19 @@ func (c *configParams) processArguments(args []string) error {
 	if err != nil {
 		return err
 	}
-	env.config.dry = flags.dry
+
+	c.dry = flags.dry
 	if flags.load {
 		env.cmd = &loadCmd{}
 	} else {
 		env.cmd = &updateCmd{}
 	}
 
-	env.config.startTime, err = env.config.parseTime(flags.startTime)
+	c.startTime, err = c.parseTime(flags.startTime)
 	if err != nil {
 		return err
 	}
-	env.config.repeat, err = env.config.parseTime(flags.repeat)
+	c.repeat, err = c.parseTimeDuration(flags.repeat)
 	if err != nil {
 		return err
 	}
@@ -77,6 +88,15 @@ func (c *configParams) processArguments(args []string) error {
 }
 
 func (c *configParams) parseTime(timeStr string) (*time.Time, error) {
+	duration, err := c.parseTimeDuration(timeStr)
+	if duration == nil || err != nil {
+		return nil, err
+	}
+	t := time.Now().Add(time.Duration(-1) * *duration)
+	return &t, nil
+}
+
+func (c *configParams) parseTimeDuration(timeStr string) (*time.Duration, error) {
 	if timeStr == "" {
 		return nil, nil
 	}
@@ -95,16 +115,16 @@ func (c *configParams) parseTime(timeStr string) (*time.Time, error) {
 	}
 	unit := matches[2]
 
-	var t time.Time
+	var d time.Duration
 	switch unit {
 	case "d":
-		t = time.Now().Add(time.Duration(-24*value) * time.Hour)
+		d = time.Duration(24*value) * time.Hour
 	case "h":
-		t = time.Now().Add(time.Duration(-1*value) * time.Hour)
+		d = time.Duration(value) * time.Hour
 	case "m":
-		t = time.Now().Add(time.Duration(-1*value) * time.Minute)
+		d = time.Duration(value) * time.Minute
 	default:
 		return nil, fmt.Errorf("Invalid start argument: %s is not a valid unit", unit)
 	}
-	return &t, nil
+	return &d, nil
 }
