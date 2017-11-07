@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 )
@@ -44,7 +45,20 @@ func setup(args []string) {
 
 func main() {
 	setup(os.Args[1:])
-	env.cmd.Run()
+
+	if env.config.repeat == nil {
+		env.cmd.Run()
+	} else {
+		for {
+			start := time.Now()
+			env.cmd.Run()
+			diff := *env.config.repeat - time.Since(start)
+			if diff > 0 {
+				fmt.Printf("waiting %s...\n", diff)
+				time.Sleep(diff)
+			}
+		}
+	}
 }
 
 func postUpdates(operations []operation) {

@@ -21,7 +21,7 @@ type configParams struct {
 	tsuruToken             string
 	globomapApiHostname    string
 	globomapLoaderHostname string
-	startTime              *time.Time
+	start                  *time.Duration
 	repeat                 *time.Duration
 }
 
@@ -64,7 +64,7 @@ func (c *configParams) ProcessArguments(args []string) error {
 		return errors.New("Load mode doesn't support --repeat flag")
 	}
 	if flags.startTime != "" && flags.repeat != "" {
-		return errors.New("--start and --repeat flags can't be used together")
+		return errors.New("--start and --repeat flags can't be set together")
 	}
 
 	c.dry = flags.dry
@@ -72,17 +72,27 @@ func (c *configParams) ProcessArguments(args []string) error {
 		env.cmd = &loadCmd{}
 	} else {
 		env.cmd = &updateCmd{}
-		c.startTime, err = c.parseTime(flags.startTime)
-		if err != nil {
-			return err
-		}
-		if c.startTime == nil {
-			t := time.Now().Add(-24 * time.Hour)
-			c.startTime = &t
-		}
 		c.repeat, err = c.parseTimeDuration(flags.repeat)
 		if err != nil {
 			return err
+		}
+		c.start, err = c.parseTimeDuration(flags.startTime)
+		if err != nil {
+			return err
+		}
+		if c.start == nil {
+			var d time.Duration
+			if c.repeat != nil {
+				// Add a 10 minute margin to start time
+				margin := time.Duration(10 * time.Minute)
+				if margin > *c.repeat {
+					margin = *c.repeat
+				}
+				d = margin + *c.repeat
+			} else {
+				d = time.Duration(24 * time.Hour)
+			}
+			c.start = &d
 		}
 	}
 
@@ -99,15 +109,6 @@ func (c *configParams) ProcessArguments(args []string) error {
 		return errors.New("GLOBOMAP_LOADER_HOSTNAME is required")
 	}
 	return nil
-}
-
-func (c *configParams) parseTime(timeStr string) (*time.Time, error) {
-	duration, err := c.parseTimeDuration(timeStr)
-	if duration == nil || err != nil {
-		return nil, err
-	}
-	t := time.Now().Add(time.Duration(-1) * *duration)
-	return &t, nil
 }
 
 func (c *configParams) parseTimeDuration(timeStr string) (*time.Duration, error) {

@@ -5,6 +5,8 @@
 package main
 
 import (
+	"time"
+
 	"gopkg.in/check.v1"
 )
 
@@ -13,7 +15,8 @@ func (s *S) TestConfigDefault(c *check.C) {
 	err := config.ProcessArguments(nil)
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, false)
-	c.Assert(config.startTime, check.NotNil)
+	c.Assert(config.start, check.NotNil)
+	c.Assert(*config.start, check.DeepEquals, time.Duration(24*time.Hour))
 	c.Assert(config.repeat, check.IsNil)
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
@@ -30,7 +33,8 @@ func (s *S) TestConfigStartTime(c *check.C) {
 	config := NewConfig()
 	err := config.ProcessArguments([]string{"--start", "2d"})
 	c.Assert(err, check.IsNil)
-	c.Assert(config.startTime, check.NotNil)
+	c.Assert(config.start, check.NotNil)
+	c.Assert(*config.start, check.DeepEquals, time.Duration(48*time.Hour))
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
 
@@ -45,7 +49,17 @@ func (s *S) TestConfigRepeat(c *check.C) {
 	err := config.ProcessArguments([]string{"--repeat", "20m"})
 	c.Assert(err, check.IsNil)
 	c.Assert(config.repeat, check.NotNil)
+	c.Assert(*config.repeat, check.DeepEquals, time.Duration(20*time.Minute))
+	c.Assert(config.start, check.NotNil)
+	c.Assert(*config.start, check.DeepEquals, time.Duration(30*time.Minute))
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
+
+	err = config.ProcessArguments([]string{"--repeat", "3m"})
+	c.Assert(err, check.IsNil)
+	c.Assert(config.repeat, check.NotNil)
+	c.Assert(*config.repeat, check.DeepEquals, time.Duration(3*time.Minute))
+	c.Assert(config.start, check.NotNil)
+	c.Assert(*config.start, check.DeepEquals, time.Duration(6*time.Minute))
 }
 
 func (s *S) TestConfigInvalidRepeat(c *check.C) {

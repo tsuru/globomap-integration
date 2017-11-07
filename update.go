@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 type updateCmd struct{}
@@ -15,11 +16,12 @@ type updateCmd struct{}
 func (u *updateCmd) Run() {
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
 	events := make(chan []event, len(kindnames))
+	since := time.Now().Add(-1 * *env.config.start)
 	for _, kindname := range kindnames {
 		go func(kindname string) {
 			f := eventFilter{
 				Kindname: kindname,
-				Since:    env.config.startTime,
+				Since:    &since,
 			}
 			ev, err := env.tsuru.EventList(f)
 			if err != nil {
