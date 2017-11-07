@@ -46,15 +46,25 @@ func (c *configParams) ProcessArguments(args []string) error {
 	flags := flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)}
 	flags.fs.BoolVar(&flags.dry, "dry", false, "enable dry mode")
 	flags.fs.BoolVar(&flags.dry, "d", false, "enable dry mode")
-	flags.fs.StringVar(&flags.startTime, "start", "1h", "start time")
-	flags.fs.StringVar(&flags.startTime, "s", "1h", "start time")
+	flags.fs.StringVar(&flags.startTime, "start", "", "start time")
+	flags.fs.StringVar(&flags.startTime, "s", "", "start time")
 	flags.fs.BoolVar(&flags.load, "load", false, "load all data")
 	flags.fs.BoolVar(&flags.load, "l", false, "load all data")
-	flags.fs.StringVar(&flags.repeat, "repeat", "1h", "repeat frequency")
-	flags.fs.StringVar(&flags.repeat, "r", "1h", "repeat frequency")
+	flags.fs.StringVar(&flags.repeat, "repeat", "", "repeat frequency")
+	flags.fs.StringVar(&flags.repeat, "r", "", "repeat frequency")
 	err := flags.fs.Parse(true, args)
 	if err != nil {
 		return err
+	}
+
+	if flags.load && flags.startTime != "" {
+		return errors.New("Load mode doesn't support --start flag")
+	}
+	if flags.load && flags.repeat != "" {
+		return errors.New("Load mode doesn't support --repeat flag")
+	}
+	if flags.startTime != "" && flags.repeat != "" {
+		return errors.New("--start and --repeat flags can't be used together")
 	}
 
 	c.dry = flags.dry
@@ -62,16 +72,20 @@ func (c *configParams) ProcessArguments(args []string) error {
 		env.cmd = &loadCmd{}
 	} else {
 		env.cmd = &updateCmd{}
+		c.startTime, err = c.parseTime(flags.startTime)
+		if err != nil {
+			return err
+		}
+		if c.startTime == nil {
+			t := time.Now().Add(-24 * time.Hour)
+			c.startTime = &t
+		}
+		c.repeat, err = c.parseTimeDuration(flags.repeat)
+		if err != nil {
+			return err
+		}
 	}
 
-	c.startTime, err = c.parseTime(flags.startTime)
-	if err != nil {
-		return err
-	}
-	c.repeat, err = c.parseTimeDuration(flags.repeat)
-	if err != nil {
-		return err
-	}
 	if c.tsuruHostname == "" {
 		return errors.New("TSURU_HOSTNAME is required")
 	}

@@ -13,6 +13,8 @@ func (s *S) TestConfigDefault(c *check.C) {
 	err := config.ProcessArguments(nil)
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, false)
+	c.Assert(config.startTime, check.NotNil)
+	c.Assert(config.repeat, check.IsNil)
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
 
@@ -28,7 +30,7 @@ func (s *S) TestConfigStartTime(c *check.C) {
 	config := NewConfig()
 	err := config.ProcessArguments([]string{"--start", "2d"})
 	c.Assert(err, check.IsNil)
-	c.Assert(config.dry, check.Equals, false)
+	c.Assert(config.startTime, check.NotNil)
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
 
@@ -38,12 +40,38 @@ func (s *S) TestConfigInvalidStartTime(c *check.C) {
 	c.Assert(err, check.NotNil)
 }
 
+func (s *S) TestConfigRepeat(c *check.C) {
+	config := NewConfig()
+	err := config.ProcessArguments([]string{"--repeat", "20m"})
+	c.Assert(err, check.IsNil)
+	c.Assert(config.repeat, check.NotNil)
+	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
+}
+
+func (s *S) TestConfigInvalidRepeat(c *check.C) {
+	config := NewConfig()
+	err := config.ProcessArguments([]string{"--repeat", "foo"})
+	c.Assert(err, check.NotNil)
+}
+
 func (s *S) TestConfigLoad(c *check.C) {
 	config := NewConfig()
 	err := config.ProcessArguments([]string{"--load"})
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, false)
 	c.Assert(env.cmd, check.FitsTypeOf, &loadCmd{})
+}
+
+func (s *S) TestConfigIncompatibleFlags(c *check.C) {
+	config := NewConfig()
+	err := config.ProcessArguments([]string{"--load", "--start", "2h"})
+	c.Assert(err, check.NotNil)
+
+	err = config.ProcessArguments([]string{"--load", "--repeat", "10m"})
+	c.Assert(err, check.NotNil)
+
+	err = config.ProcessArguments([]string{"--start", "1d", "--repeat", "30m"})
+	c.Assert(err, check.NotNil)
 }
 
 func (s *S) TestConfigMissingEnvVars(c *check.C) {
