@@ -26,11 +26,11 @@ type configParams struct {
 }
 
 type flags struct {
-	fs        *gnuflag.FlagSet
-	dry       bool
-	startTime string
-	load      bool
-	repeat    string
+	fs     *gnuflag.FlagSet
+	dry    bool
+	start  string
+	load   bool
+	repeat string
 }
 
 func NewConfig() configParams {
@@ -44,12 +44,12 @@ func NewConfig() configParams {
 
 func (c *configParams) ProcessArguments(args []string) error {
 	flags := flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)}
-	flags.fs.BoolVar(&flags.dry, "dry", false, "enable dry mode")
-	flags.fs.BoolVar(&flags.dry, "d", false, "enable dry mode")
-	flags.fs.StringVar(&flags.startTime, "start", "", "start time")
-	flags.fs.StringVar(&flags.startTime, "s", "", "start time")
-	flags.fs.BoolVar(&flags.load, "load", false, "load all data")
-	flags.fs.BoolVar(&flags.load, "l", false, "load all data")
+	flags.fs.BoolVar(&flags.dry, "dry", false, "dry mode")
+	flags.fs.BoolVar(&flags.dry, "d", false, "dry mode")
+	flags.fs.StringVar(&flags.start, "start", "", "start time")
+	flags.fs.StringVar(&flags.start, "s", "", "start time")
+	flags.fs.BoolVar(&flags.load, "load", false, "load mode")
+	flags.fs.BoolVar(&flags.load, "l", false, "load mode")
 	flags.fs.StringVar(&flags.repeat, "repeat", "", "repeat frequency")
 	flags.fs.StringVar(&flags.repeat, "r", "", "repeat frequency")
 	err := flags.fs.Parse(true, args)
@@ -57,13 +57,13 @@ func (c *configParams) ProcessArguments(args []string) error {
 		return err
 	}
 
-	if flags.load && flags.startTime != "" {
+	if flags.load && flags.start != "" {
 		return errors.New("Load mode doesn't support --start flag")
 	}
 	if flags.load && flags.repeat != "" {
 		return errors.New("Load mode doesn't support --repeat flag")
 	}
-	if flags.startTime != "" && flags.repeat != "" {
+	if flags.start != "" && flags.repeat != "" {
 		return errors.New("--start and --repeat flags can't be set together")
 	}
 
@@ -76,7 +76,7 @@ func (c *configParams) ProcessArguments(args []string) error {
 		if err != nil {
 			return err
 		}
-		c.start, err = c.parseTimeDuration(flags.startTime)
+		c.start, err = c.parseTimeDuration(flags.start)
 		if err != nil {
 			return err
 		}
