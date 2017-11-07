@@ -240,6 +240,22 @@ func (s *S) TestEventFailed(c *check.C) {
 	c.Assert(failedEvent.Failed(), check.Equals, true)
 }
 
+func (s *S) TestEventPoolName(c *check.C) {
+	e := event{}
+	c.Assert(e.PoolName(), check.Equals, "")
+
+	e.Allowed.Scheme = "pool.read.events"
+	e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"app", "myapp"})
+	c.Assert(e.PoolName(), check.Equals, "")
+
+	e.Allowed.Scheme = "something"
+	e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"pool", "mypool"})
+	c.Assert(e.PoolName(), check.Equals, "")
+
+	e.Allowed.Scheme = "pool.read.events"
+	c.Assert(e.PoolName(), check.Equals, "mypool")
+}
+
 func (s *S) TestAppAddresses(c *check.C) {
 	a := app{Ip: "ip", Cname: []string{"addr1", "addr2"}}
 	c.Assert(a.Addresses(), check.DeepEquals, []string{"addr1", "addr2", "ip"})
