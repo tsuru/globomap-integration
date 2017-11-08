@@ -25,6 +25,16 @@ func newEvent(kind, value string) event {
 	return e
 }
 
+func newNodeEvent(kind, value, poolName string) event {
+	e := event{}
+	e.Target.Type = "node"
+	e.Target.Value = value
+	e.Kind.Name = kind
+	e.Allowed.Scheme = "pool.read.events"
+	e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"pool", poolName})
+	return e
+}
+
 func (s *S) TestUpdateCmdRun(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
@@ -506,13 +516,10 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
-			e := event{}
-			e.Target.Type = "node"
-			e.Target.Value = "https://1.2.3.4:2376"
-			e.Kind.Name = "node.create"
-			e.Allowed.Scheme = "pool.read.events"
-			e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"pool", "pool1"})
-			json.NewEncoder(w).Encode([]event{e})
+			e1 := newNodeEvent("node.create", "https://1.2.3.4:2376", "pool1")
+			e2 := newNodeEvent("node.create", "https://5.6.7.8:2376", "pool1")
+			e3 := newEvent("pool.update", "pool1")
+			json.NewEncoder(w).Encode([]event{e1, e2, e3})
 		case "/pools":
 			p := pool{
 				Name:        "pool1",

@@ -44,15 +44,7 @@ func (u *updateCmd) Run() {
 func processEvents(events []event) {
 	group := groupByTarget(events)
 	operations := []operation{}
-
-	for name, evs := range group["app"] {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		op := NewOperation(evs)
-		op.target = &appOperation{appName: name}
-		operations = append(operations, op)
-	}
+	poolOperations := make(map[string]operation)
 
 	for name, evs := range group["pool"] {
 		sort.Slice(evs, func(i, j int) bool {
@@ -61,24 +53,41 @@ func processEvents(events []event) {
 		op := NewOperation(evs)
 		op.target = &poolOperation{poolName: name}
 		operations = append(operations, op)
+		poolOperations[name] = op
 	}
 
 	for _, evs := range group["node"] {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		op := NewOperation(evs)
-		op.target = &poolOperation{poolName: evs[0].PoolName()}
-		operations = append(operations, op)
+		poolName := evs[0].PoolName()
+		op, ok := poolOperations[poolName]
+		if ok {
+			op.action = "UPDATE"
+		} else {
+			op = NewOperation(evs)
+			op.target = &poolOperation{poolName: poolName}
+			operations = append(operations, op)
+			poolOperations[poolName] = op
+		}
 	}
 
-	if len(group["pool"])+len(group["node"]) > 0 {
+	if len(operations) > 0 {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
 			fmt.Println("Error retrieving pool list: ", err)
 			return
 		}
+	}
+
+	for name, evs := range group["app"] {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		op := NewOperation(evs)
+		op.target = &appOperation{appName: name}
+		operations = append(operations, op)
 	}
 
 	postUpdates(operations)
