@@ -16,29 +16,17 @@ type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
 	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete", "node.create"}
-	events := make(chan []event, len(kindnames))
 	since := time.Now().Add(-1 * *env.config.start)
-	for _, kindname := range kindnames {
-		go func(kindname string) {
-			f := eventFilter{
-				Kindname: kindname,
-				Since:    &since,
-			}
-			ev, err := env.tsuru.EventList(f)
-			if err != nil {
-				events <- nil
-				return
-			}
-			events <- ev
-		}(kindname)
+	f := eventFilter{
+		Kindnames: kindnames,
+		Since:     &since,
+	}
+	events, err := env.tsuru.EventList(f)
+	if err != nil {
+		return
 	}
 
-	eventList := []event{}
-	for i := 0; i < len(kindnames); i++ {
-		eventList = append(eventList, <-events...)
-	}
-
-	processEvents(eventList)
+	processEvents(events)
 }
 
 func processEvents(events []event) {

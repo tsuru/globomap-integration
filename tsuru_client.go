@@ -85,9 +85,9 @@ type event struct {
 }
 
 type eventFilter struct {
-	Kindname string
-	Since    *time.Time
-	Until    *time.Time
+	Kindnames []string
+	Since     *time.Time
+	Until     *time.Time
 }
 
 func (a *app) Addresses() []string {
@@ -245,8 +245,8 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 func (f *eventFilter) format() string {
 	v := url.Values{}
 	v.Set("running", "false")
-	if f.Kindname != "" {
-		v.Set("kindname", f.Kindname)
+	for _, k := range f.Kindnames {
+		v.Add("kindname", k)
 	}
 	if f.Since != nil {
 		v.Set("since", f.Since.Format(TIME_FORMAT))

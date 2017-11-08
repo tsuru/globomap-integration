@@ -43,8 +43,9 @@ func (s *S) TestEventListWithFilters(c *check.C) {
 	until := time.Now()
 	since := until.Add(-1 * time.Hour)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.ParseForm(), check.IsNil)
 		c.Assert(r.FormValue("running"), check.Equals, "false")
-		c.Assert(r.FormValue("kindname"), check.Equals, "app.update")
+		c.Assert(r.Form["kindname"], check.DeepEquals, []string{"app.update", "app.create"})
 		c.Assert(r.FormValue("since"), check.Equals, since.Format(TIME_FORMAT))
 		c.Assert(r.FormValue("until"), check.Equals, until.Format(TIME_FORMAT))
 		w.WriteHeader(http.StatusNoContent)
@@ -56,9 +57,9 @@ func (s *S) TestEventListWithFilters(c *check.C) {
 	}
 
 	filter := eventFilter{
-		Kindname: "app.update",
-		Since:    &since,
-		Until:    &until,
+		Kindnames: []string{"app.update", "app.create"},
+		Since:     &since,
+		Until:     &until,
 	}
 	_, err := client.EventList(filter)
 	c.Assert(err, check.IsNil)
