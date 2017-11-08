@@ -502,6 +502,70 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
+func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/events":
+			e := event{}
+			e.Target.Type = "node"
+			e.Target.Value = "https://1.2.3.4:2376"
+			e.Kind.Name = "node.create"
+			e.Allowed.Scheme = "pool.read.events"
+			e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"pool", "pool1"})
+			json.NewEncoder(w).Encode([]event{e})
+		case "/pools":
+			p := pool{
+				Name:        "pool1",
+				Provisioner: "docker",
+				Default:     false,
+				Public:      true,
+				Teams:       []string{"team1", "team2", "team3"},
+			}
+			json.NewEncoder(w).Encode([]pool{p})
+		}
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		c.Assert(r.Method, check.Equals, http.MethodPost)
+		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
+
+		decoder := json.NewDecoder(r.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer r.Body.Close()
+		c.Assert(data, check.HasLen, 1)
+
+		sortPayload(data)
+		el, ok := data[0]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[0]["action"], check.Equals, "UPDATE")
+		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool")
+		c.Assert(data[0]["type"], check.Equals, "collections")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_pool1")
+		c.Assert(el["name"], check.Equals, "pool1")
+		props, ok := el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["provisioner"], check.Equals, "docker")
+		c.Assert(props["default"], check.Equals, "false")
+		c.Assert(props["public"], check.Equals, "true")
+		c.Assert(props["teams"], check.DeepEquals, []interface{}{"team1", "team2", "team3"})
+		_, ok = el["properties_metadata"]
+		c.Assert(ok, check.Equals, true)
+	}))
+	defer server.Close()
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
+	setup(nil)
+
+	cmd := &updateCmd{}
+	cmd.Run()
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+}
+
 func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {

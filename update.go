@@ -15,7 +15,7 @@ type updateCmd struct{}
 type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
-	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete"}
+	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete", "node.create"}
 	events := make(chan []event, len(kindnames))
 	since := time.Now().Add(-1 * *env.config.start)
 	for _, kindname := range kindnames {
@@ -63,7 +63,16 @@ func processEvents(events []event) {
 		operations = append(operations, op)
 	}
 
-	if len(group["pool"]) > 0 {
+	for _, evs := range group["node"] {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		op := NewOperation(evs)
+		op.target = &poolOperation{poolName: evs[0].PoolName()}
+		operations = append(operations, op)
+	}
+
+	if len(group["pool"])+len(group["node"]) > 0 {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
@@ -79,6 +88,7 @@ func groupByTarget(events []event) map[string]groupedEvents {
 	results := map[string]groupedEvents{
 		"app":  groupedEvents{},
 		"pool": groupedEvents{},
+		"node": groupedEvents{},
 	}
 
 	for _, ev := range events {
