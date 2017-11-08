@@ -518,21 +518,50 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		case "/events":
 			e1 := newNodeEvent("node.create", "https://1.2.3.4:2376", "pool1")
 			e2 := newNodeEvent("node.create", "https://5.6.7.8:2376", "pool1")
-			e3 := newEvent("pool.update", "pool1")
+			e3 := newNodeEvent("node.create", "https://9.10.11.12:2376", "pool2")
 			json.NewEncoder(w).Encode([]event{e1, e2, e3})
 		case "/pools":
-			p := pool{
+			p1 := pool{
 				Name:        "pool1",
 				Provisioner: "docker",
 				Default:     false,
 				Public:      true,
 				Teams:       []string{"team1", "team2", "team3"},
 			}
-			json.NewEncoder(w).Encode([]pool{p})
+			p2 := pool{
+				Name:        "pool2",
+				Provisioner: "swarm",
+				Default:     false,
+				Public:      false,
+				Teams:       []string{"team1"},
+			}
+			json.NewEncoder(w).Encode([]pool{p1, p2})
+		case "/node":
+			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Address: "https://1.2.3.4:2376"}
+			n2 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node2"}, Address: "https://5.6.7.8:2376"}
+			n3 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node3"}, Address: "https://9.10.11.12:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 		}
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+
+	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		re := regexp.MustCompile(`"value":"([^"]*)"`)
+		matches := re.FindAllStringSubmatch(r.FormValue("query"), -1)
+		c.Assert(matches, check.HasLen, 1)
+		c.Assert(matches[0], check.HasLen, 2)
+
+		name := matches[0][1]
+		queryResult := []globomapQueryResult{{Id: "comp_unit/globomap_" + name, Name: name}}
+		json.NewEncoder(w).Encode(
+			struct{ Documents []globomapQueryResult }{
+				Documents: queryResult,
+			},
+		)
+	}))
+	defer globomapApi.Close()
+	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -545,24 +574,47 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 1)
+		c.Assert(data, check.HasLen, 3)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "UPDATE")
-		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool")
-		c.Assert(data[0]["type"], check.Equals, "collections")
-		c.Assert(data[0]["key"], check.Equals, "tsuru_pool1")
-		c.Assert(el["name"], check.Equals, "pool1")
+		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[0]["type"], check.Equals, "edges")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_node1-node")
+		c.Assert(el["name"], check.Equals, "node1-node")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
 		props, ok := el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["provisioner"], check.Equals, "docker")
-		c.Assert(props["default"], check.Equals, "false")
-		c.Assert(props["public"], check.Equals, "true")
-		c.Assert(props["teams"], check.DeepEquals, []interface{}{"team1", "team2", "team3"})
-		_, ok = el["properties_metadata"]
+		c.Assert(props["address"], check.Equals, "https://1.2.3.4:2376")
+
+		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
+		c.Assert(data[1]["action"], check.Equals, "UPDATE")
+		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[1]["type"], check.Equals, "edges")
+		c.Assert(data[1]["key"], check.Equals, "tsuru_node2-node")
+		c.Assert(el["name"], check.Equals, "node2-node")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node2")
+		props, ok = el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["address"], check.Equals, "https://5.6.7.8:2376")
+
+		el, ok = data[2]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[2]["action"], check.Equals, "UPDATE")
+		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[2]["type"], check.Equals, "edges")
+		c.Assert(data[2]["key"], check.Equals, "tsuru_node3-node")
+		c.Assert(el["name"], check.Equals, "node3-node")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node3")
+		props, ok = el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["address"], check.Equals, "https://9.10.11.12:2376")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)

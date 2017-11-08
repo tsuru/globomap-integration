@@ -11,10 +11,21 @@ import (
 	"time"
 )
 
-type operation struct {
+type operation interface {
+	toPayload() []globomapPayload
+}
+
+type tsuruOperation struct {
 	action string
 	time   time.Time
 	target operationTarget
+}
+
+type nodeOperation struct {
+	action   string
+	time     time.Time
+	poolName string
+	nodeAddr string
 }
 
 type operationTarget interface {
@@ -33,7 +44,7 @@ type poolOperation struct {
 	poolName string
 }
 
-func (op *operation) toPayload() []globomapPayload {
+func (op *tsuruOperation) toPayload() []globomapPayload {
 	doc := op.toDocument()
 	if doc == nil {
 		return nil
@@ -46,7 +57,7 @@ func (op *operation) toPayload() []globomapPayload {
 	return payloads
 }
 
-func (op *operation) toDocument() *globomapPayload {
+func (op *tsuruOperation) toDocument() *globomapPayload {
 	props := op.baseDocument(op.target.name())
 	if props == nil {
 		return nil
@@ -58,7 +69,7 @@ func (op *operation) toDocument() *globomapPayload {
 	return props
 }
 
-func (op *operation) toEdge() []globomapPayload {
+func (op *tsuruOperation) toEdge() []globomapPayload {
 	doc := op.baseDocument(op.target.name())
 	if doc == nil {
 		return nil
@@ -79,7 +90,7 @@ func (op *operation) toEdge() []globomapPayload {
 	return edges
 }
 
-func (op *operation) baseDocument(name string) *globomapPayload {
+func (op *tsuruOperation) baseDocument(name string) *globomapPayload {
 	action := op.action
 	if action == "" {
 		return nil
@@ -278,8 +289,85 @@ func (op *poolOperation) nodes() ([]node, error) {
 	return nodes, nil
 }
 
-func NewOperation(events []event) operation {
-	op := operation{
+func (op *nodeOperation) toPayload() []globomapPayload {
+	node, err := op.node()
+	if err != nil || node == nil {
+		return nil
+	}
+
+	id := fmt.Sprintf("%s-node", node.Name())
+	edge := globomapPayload{
+		"action":     op.action,
+		"collection": "tsuru_pool_comp_unit",
+		"type":       "edges",
+		"element": map[string]interface{}{
+			"id":        id,
+			"name":      id,
+			"provider":  "tsuru",
+			"timestamp": op.time.Unix(),
+		},
+		"key": "tsuru_" + id,
+	}
+
+	if edge["action"] == "DELETE" {
+		return []globomapPayload{edge}
+	}
+
+	element, _ := edge["element"].(map[string]interface{})
+	element["from"] = "tsuru_pool/tsuru_" + op.poolName
+	r, err := env.globomap.QueryByName("comp_unit", node.Name())
+	if err != nil || len(r) != 1 {
+		return nil
+	}
+	element["to"] = r[0].Id
+
+	element["properties"] = map[string]interface{}{
+		"address": node.Addr(),
+	}
+	element["properties_metadata"] = map[string]map[string]string{
+		"address": {"description": "address"},
+	}
+
+	return []globomapPayload{edge}
+}
+
+func (op *nodeOperation) node() (*node, error) {
+	if len(env.nodes) == 0 {
+		nodes, err := env.tsuru.NodeList()
+		if err != nil {
+			return nil, err
+		}
+		env.nodes = nodes
+	}
+	for _, node := range env.nodes {
+		if node.Addr() == op.nodeAddr {
+			return &node, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func NewTsuruOperation(events []event) *tsuruOperation {
+	op := &tsuruOperation{
+		action: "UPDATE",
+		time:   time.Now(),
+	}
+	if len(events) == 0 {
+		return op
+	}
+	op.time = events[len(events)-1].EndTime
+
+	lastStatus := eventStatus(events[len(events)-1])
+	if lastStatus == "CREATE" {
+		lastStatus = "UPDATE"
+	}
+	op.action = lastStatus
+	return op
+}
+
+func NewNodeOperation(events []event) *nodeOperation {
+	op := &nodeOperation{
 		action: "UPDATE",
 		time:   time.Now(),
 	}

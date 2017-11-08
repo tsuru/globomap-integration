@@ -32,32 +32,22 @@ func (u *updateCmd) Run() {
 func processEvents(events []event) {
 	group := groupByTarget(events)
 	operations := []operation{}
-	poolOperations := make(map[string]operation)
 
 	for name, evs := range group["pool"] {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		op := NewOperation(evs)
+		op := NewTsuruOperation(evs)
 		op.target = &poolOperation{poolName: name}
 		operations = append(operations, op)
-		poolOperations[name] = op
 	}
 
-	for _, evs := range group["node"] {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
+	for addr, evs := range group["node"] {
 		poolName := evs[0].PoolName()
-		op, ok := poolOperations[poolName]
-		if ok {
-			op.action = "UPDATE"
-		} else {
-			op = NewOperation(evs)
-			op.target = &poolOperation{poolName: poolName}
-			operations = append(operations, op)
-			poolOperations[poolName] = op
-		}
+		op := NewNodeOperation(evs)
+		op.poolName = poolName
+		op.nodeAddr = addr
+		operations = append(operations, op)
 	}
 
 	if len(operations) > 0 {
@@ -73,7 +63,7 @@ func processEvents(events []event) {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		op := NewOperation(evs)
+		op := NewTsuruOperation(evs)
 		op.target = &appOperation{appName: name}
 		operations = append(operations, op)
 	}

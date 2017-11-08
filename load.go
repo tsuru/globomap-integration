@@ -22,13 +22,15 @@ func (l *loadCmd) Run() {
 
 	operations := make([]operation, len(apps)+len(env.pools))
 	for i, app := range apps {
-		operations[i] = NewOperation(nil)
-		operations[i].target = &appOperation{appName: app.Name}
+		op := NewTsuruOperation(nil)
+		op.target = &appOperation{appName: app.Name}
+		operations[i] = op
 	}
 	i := len(apps)
 	for k, pool := range env.pools {
-		operations[i+k] = NewOperation(nil)
-		operations[i+k].target = &poolOperation{poolName: pool.Name}
+		op := NewTsuruOperation(nil)
+		op.target = &poolOperation{poolName: pool.Name}
+		operations[i+k] = op
 	}
 	postUpdates(operations)
 }
