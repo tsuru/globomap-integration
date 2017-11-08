@@ -25,16 +25,6 @@ func newEvent(kind, value string) event {
 	return e
 }
 
-func newNodeEvent(kind, value, poolName string) event {
-	e := event{}
-	e.Target.Type = "node"
-	e.Target.Value = value
-	e.Kind.Name = kind
-	e.Allowed.Scheme = "pool.read.events"
-	e.Allowed.Contexts = append(e.Allowed.Contexts, struct{ CtxType, Value string }{"pool", poolName})
-	return e
-}
-
 func (s *S) TestUpdateCmdRun(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
@@ -516,9 +506,9 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
-			e1 := newNodeEvent("node.create", "https://1.2.3.4:2376", "pool1")
-			e2 := newNodeEvent("node.create", "https://5.6.7.8:2376", "pool1")
-			e3 := newNodeEvent("node.create", "https://9.10.11.12:2376", "pool2")
+			e1 := newEvent("node.create", "https://1.2.3.4:2376")
+			e2 := newEvent("node.delete", "https://5.6.7.8:2376")
+			e3 := newEvent("node.create", "https://9.10.11.12:2376")
 			json.NewEncoder(w).Encode([]event{e1, e2, e3})
 		case "/pools":
 			p1 := pool{
@@ -592,16 +582,11 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "UPDATE")
+		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[1]["type"], check.Equals, "edges")
 		c.Assert(data[1]["key"], check.Equals, "tsuru_node2-node")
 		c.Assert(el["name"], check.Equals, "node2-node")
-		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
-		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node2")
-		props, ok = el["properties"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://5.6.7.8:2376")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)

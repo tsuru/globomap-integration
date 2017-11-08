@@ -24,7 +24,6 @@ type tsuruOperation struct {
 type nodeOperation struct {
 	action   string
 	time     time.Time
-	poolName string
 	nodeAddr string
 }
 
@@ -314,7 +313,7 @@ func (op *nodeOperation) toPayload() []globomapPayload {
 	}
 
 	element, _ := edge["element"].(map[string]interface{})
-	element["from"] = "tsuru_pool/tsuru_" + op.poolName
+	element["from"] = "tsuru_pool/tsuru_" + node.Pool
 	r, err := env.globomap.QueryByName("comp_unit", node.Name())
 	if err != nil || len(r) != 1 {
 		return nil

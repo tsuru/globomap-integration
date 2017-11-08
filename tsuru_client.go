@@ -75,13 +75,6 @@ type event struct {
 	}
 	EndTime time.Time
 	Error   string
-	Allowed struct {
-		Scheme   string
-		Contexts []struct {
-			CtxType string
-			Value   string
-		}
-	}
 }
 
 type eventFilter struct {
@@ -96,18 +89,6 @@ func (a *app) Addresses() []string {
 
 func (e *event) Failed() bool {
 	return e.Error != ""
-}
-
-func (e *event) PoolName() string {
-	if e.Allowed.Scheme != "pool.read.events" {
-		return ""
-	}
-	for _, ctx := range e.Allowed.Contexts {
-		if ctx.CtxType == "pool" {
-			return ctx.Value
-		}
-	}
-	return ""
 }
 
 func (n *node) Name() string {
