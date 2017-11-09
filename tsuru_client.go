@@ -81,9 +81,10 @@ type event struct {
 }
 
 type eventFilter struct {
-	Kindnames []string
-	Since     *time.Time
-	Until     *time.Time
+	Kindnames  []string
+	TargetType string
+	Since      *time.Time
+	Until      *time.Time
 }
 
 func (a *app) Addresses() []string {
@@ -238,6 +239,9 @@ func (f *eventFilter) format() string {
 	v.Set("running", "false")
 	for _, k := range f.Kindnames {
 		v.Add("kindname", k)
+	}
+	if f.TargetType != "" {
+		v.Set("target.type", f.TargetType)
 	}
 	if f.Since != nil {
 		v.Set("since", f.Since.Format(TIME_FORMAT))

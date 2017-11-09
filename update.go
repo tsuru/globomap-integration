@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -15,26 +16,63 @@ type updateCmd struct{}
 type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
+	events := fetchEvents()
+	fmt.Printf("Found %d events\n", len(events))
+	processEvents(events)
+}
+
+func fetchEvents() []event {
+	since := time.Now().Add(-1 * *env.config.start)
+	fmt.Printf("Fetching events since %s\n", since)
+
+	eventStream := make(chan []event, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	kindnames := []string{
 		"app.create", "app.update", "app.delete",
 		"pool.create", "pool.update", "pool.delete",
 		"node.create", "node.delete",
-		"healer",
 	}
-	since := time.Now().Add(-1 * *env.config.start)
-	f := eventFilter{
-		Kindnames: kindnames,
-		Since:     &since,
-	}
-	fmt.Printf("Fetching events since %s\n", since)
-	events, err := env.tsuru.EventList(f)
-	if err != nil {
-		fmt.Printf("Error fetching events: %s\n", err)
-		return
-	}
+	go func(kindnames []string) {
+		defer wg.Done()
+		f := eventFilter{
+			Kindnames: kindnames,
+			Since:     &since,
+		}
+		events, err := env.tsuru.EventList(f)
+		if err != nil {
+			fmt.Printf("Error fetching events: %s\n", err)
+		} else {
+			eventStream <- events
+		}
+	}(kindnames)
 
-	fmt.Printf("Found %d events\n", len(events))
-	processEvents(events)
+	go func(kindnames []string) {
+		defer wg.Done()
+		f := eventFilter{
+			Kindnames:  kindnames,
+			TargetType: "node",
+			Since:      &since,
+		}
+		events, err := env.tsuru.EventList(f)
+		if err != nil {
+			fmt.Printf("Error fetching events: %s\n", err)
+		} else {
+			eventStream <- events
+		}
+	}([]string{"healer"})
+
+	go func() {
+		defer close(eventStream)
+		wg.Wait()
+	}()
+
+	events := []event{}
+	for evs := range eventStream {
+		events = append(events, evs...)
+	}
+	return events
 }
 
 func processEvents(events []event) {
