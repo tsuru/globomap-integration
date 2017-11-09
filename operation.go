@@ -50,7 +50,11 @@ var (
 
 func eventStatus(e event) string {
 	parts := strings.Split(e.Kind.Name, ".")
-	return strings.ToUpper(parts[1])
+	status := strings.ToUpper(parts[1])
+	if status == "CREATE" {
+		status = "UPDATE"
+	}
+	return status
 }
 
 func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomapPayload {

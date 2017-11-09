@@ -44,9 +44,6 @@ func processEvents(events []event) {
 		})
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
-		if lastStatus == "CREATE" {
-			lastStatus = "UPDATE"
-		}
 		op := &poolOperation{
 			action:   lastStatus,
 			time:     endTime,
@@ -58,9 +55,6 @@ func processEvents(events []event) {
 	for addr, evs := range group["node"] {
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
-		if lastStatus == "CREATE" {
-			lastStatus = "UPDATE"
-		}
 		op := &nodeOperation{
 			action:   lastStatus,
 			time:     endTime,
@@ -106,9 +100,6 @@ func processEvents(events []event) {
 		})
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
-		if lastStatus == "CREATE" {
-			lastStatus = "UPDATE"
-		}
 		op := &appOperation{
 			action:  lastStatus,
 			time:    endTime,
