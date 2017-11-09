@@ -48,27 +48,39 @@ func processEvents(events []event) {
 	}
 
 	for addr, evs := range group["node"] {
-		endTime := events[len(events)-1].EndTime
-		nodeAddr := addr
-		if evs[0].Kind.Name == "healer" {
-			removedNodeOp := &nodeOperation{
-				action:   "DELETE",
-				time:     endTime,
-				nodeAddr: addr,
-			}
-			operations = append(operations, removedNodeOp)
-
-			var data map[string]string
-			evs[0].EndData(&data)
-			nodeAddr = data["_id"]
+		endTime := evs[len(evs)-1].EndTime
+		lastStatus := eventStatus(evs[len(evs)-1])
+		if lastStatus == "CREATE" {
+			lastStatus = "UPDATE"
 		}
-
 		op := &nodeOperation{
-			action:   "UPDATE",
+			action:   lastStatus,
 			time:     endTime,
-			nodeAddr: nodeAddr,
+			nodeAddr: addr,
 		}
 		operations = append(operations, op)
+	}
+
+	for addr, evs := range group["healer"] {
+		endTime := evs[len(evs)-1].EndTime
+		removedNodeOp := &nodeOperation{
+			action:   "DELETE",
+			time:     endTime,
+			nodeAddr: addr,
+		}
+		operations = append(operations, removedNodeOp)
+
+		var data map[string]string
+		err := evs[0].EndData(&data)
+		if err != nil {
+			continue
+		}
+		addedNodeOp := &nodeOperation{
+			action:   "UPDATE",
+			time:     endTime,
+			nodeAddr: data["_id"],
+		}
+		operations = append(operations, addedNodeOp)
 	}
 
 	if len(operations) > 0 {
@@ -94,9 +106,10 @@ func processEvents(events []event) {
 
 func groupByTarget(events []event) map[string]groupedEvents {
 	results := map[string]groupedEvents{
-		"app":  groupedEvents{},
-		"pool": groupedEvents{},
-		"node": groupedEvents{},
+		"app":    groupedEvents{},
+		"pool":   groupedEvents{},
+		"node":   groupedEvents{},
+		"healer": groupedEvents{},
 	}
 
 	for _, ev := range events {

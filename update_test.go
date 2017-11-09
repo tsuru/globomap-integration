@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"gopkg.in/check.v1"
+	"gopkg.in/mgo.v2/bson"
 )
 
 func newEvent(kind, value string) event {
@@ -508,7 +509,14 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		case "/events":
 			e1 := newEvent("node.create", "https://1.2.3.4:2376")
 			e2 := newEvent("node.delete", "https://5.6.7.8:2376")
-			e3 := newEvent("node.create", "https://9.10.11.12:2376")
+			e3 := newEvent("healer", "https://9.10.11.12:2376")
+			data := struct {
+				Id string `bson:"_id"`
+			}{"https://13.14.15.16:2376"}
+			b, err := bson.Marshal(data)
+			c.Assert(err, check.IsNil)
+			e3.EndCustomData = bson.Raw{Data: b, Kind: 3}
+
 			json.NewEncoder(w).Encode([]event{e1, e2, e3})
 		case "/pools":
 			p1 := pool{
@@ -530,7 +538,8 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Address: "https://1.2.3.4:2376"}
 			n2 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node2"}, Address: "https://5.6.7.8:2376"}
 			n3 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node3"}, Address: "https://9.10.11.12:2376"}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
+			n4 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node4"}, Address: "https://13.14.15.16:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4}})
 		}
 	}))
 	defer tsuruServer.Close()
@@ -564,7 +573,7 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 3)
+		c.Assert(data, check.HasLen, 4)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -590,16 +599,24 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "UPDATE")
+		c.Assert(data[2]["action"], check.Equals, "DELETE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[2]["type"], check.Equals, "edges")
 		c.Assert(data[2]["key"], check.Equals, "tsuru_node3-node")
 		c.Assert(el["name"], check.Equals, "node3-node")
+
+		el, ok = data[3]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[3]["action"], check.Equals, "UPDATE")
+		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[3]["type"], check.Equals, "edges")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_node4-node")
+		c.Assert(el["name"], check.Equals, "node4-node")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
-		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node3")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node4")
 		props, ok = el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://9.10.11.12:2376")
+		c.Assert(props["address"], check.Equals, "https://13.14.15.16:2376")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
