@@ -4,7 +4,10 @@
 
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type loadCmd struct{}
 
@@ -19,18 +22,34 @@ func (l *loadCmd) Run() {
 		fmt.Printf("Error fetching pools: %s\n", err)
 		return
 	}
+	env.nodes, err = env.tsuru.NodeList()
+	if err != nil {
+		fmt.Printf("Error fetching nodes: %s\n", err)
+		return
+	}
 
-	operations := make([]operation, len(apps)+len(env.pools))
-	for i, app := range apps {
+	operations := make([]operation, len(apps)+len(env.pools)+len(env.nodes))
+	var i int
+	for _, app := range apps {
 		op := NewTsuruOperation(nil)
 		op.target = &appOperation{appName: app.Name}
 		operations[i] = op
+		i++
 	}
-	i := len(apps)
-	for k, pool := range env.pools {
+	for _, pool := range env.pools {
 		op := NewTsuruOperation(nil)
 		op.target = &poolOperation{poolName: pool.Name}
-		operations[i+k] = op
+		operations[i] = op
+		i++
+	}
+	for _, node := range env.nodes {
+		op := &nodeOperation{
+			action:   "UPDATE",
+			time:     time.Now(),
+			nodeAddr: node.Addr(),
+		}
+		operations[i] = op
+		i++
 	}
 	postUpdates(operations)
 }

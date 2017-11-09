@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"sync/atomic"
 
 	"gopkg.in/check.v1"
@@ -29,15 +30,40 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			json.NewEncoder(w).Encode(a2)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+		case "/node":
+			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Address: "https://1.2.3.4:2376"}
+			n2 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node2"}, Address: "https://5.6.7.8:2376"}
+			n3 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node3"}, Address: "https://9.10.11.12:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 		}
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
+	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c.Assert(req.Method, check.Equals, http.MethodGet)
+		c.Assert(req.URL.Path, check.Equals, "/v1/collections/comp_unit/")
+		re := regexp.MustCompile(`"value":"([^"]*)"`)
+		matches := re.FindAllStringSubmatch(req.FormValue("query"), -1)
+		c.Assert(matches, check.HasLen, 1)
+		c.Assert(matches[0], check.HasLen, 2)
+
+		name := matches[0][1]
+		queryResult := []globomapQueryResult{}
+		if name != "node2" {
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_" + name, Name: name})
+		}
+		json.NewEncoder(w).Encode(
+			struct{ Documents []globomapQueryResult }{
+				Documents: queryResult,
+			},
+		)
+	}))
+	defer globomapApi.Close()
+	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
+
 	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	globomapLoader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
@@ -47,8 +73,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(len(data), check.Equals, 5)
-		c.Assert(data, check.HasLen, 5)
+		c.Assert(data, check.HasLen, 7)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -101,8 +126,8 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 	}))
-	defer server.Close()
-	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
+	defer globomapLoader.Close()
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", globomapLoader.URL)
 	setup(nil)
 
 	cmd := &loadCmd{}
@@ -117,8 +142,8 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoApps(c *check.C) {
 			json.NewEncoder(w).Encode([]app{})
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
-		default:
-			w.WriteHeader(http.StatusNotFound)
+		case "/node":
+			json.NewEncoder(w).Encode(nil)
 		}
 	}))
 	defer tsuruServer.Close()
@@ -159,6 +184,8 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 			json.NewEncoder(w).Encode(a)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
+		case "/node":
+			json.NewEncoder(w).Encode(nil)
 		}
 	}))
 	defer tsuruServer.Close()

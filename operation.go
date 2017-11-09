@@ -217,49 +217,7 @@ func (op *poolOperation) properties() map[string]interface{} {
 }
 
 func (op *poolOperation) toEdge(action string) []globomapPayload {
-	nodes, err := op.nodes()
-	if err != nil || len(nodes) == 0 {
-		return nil
-	}
-	edges := []globomapPayload{}
-	for _, node := range nodes {
-		id := fmt.Sprintf("%s-node", node.Name())
-		edge := globomapPayload{
-			"action":     action,
-			"collection": "tsuru_pool_comp_unit",
-			"type":       "edges",
-			"element": map[string]interface{}{
-				"id":        id,
-				"name":      id,
-				"provider":  "tsuru",
-				"timestamp": time.Now().Unix(),
-			},
-			"key": "tsuru_" + id,
-		}
-
-		if edge["action"] == "DELETE" {
-			edges = append(edges, edge)
-			continue
-		}
-
-		element, _ := edge["element"].(map[string]interface{})
-		element["from"] = "tsuru_pool/tsuru_" + op.poolName
-		r, err := env.globomap.QueryByName("comp_unit", node.Name())
-		if err != nil || len(r) != 1 {
-			continue
-		}
-		element["to"] = r[0].Id
-
-		element["properties"] = map[string]interface{}{
-			"address": node.Addr(),
-		}
-		element["properties_metadata"] = map[string]map[string]string{
-			"address": {"description": "address"},
-		}
-
-		edges = append(edges, edge)
-	}
-	return edges
+	return nil
 }
 
 func (op *poolOperation) name() string {
@@ -316,6 +274,7 @@ func (op *nodeOperation) toPayload() []globomapPayload {
 	element["from"] = "tsuru_pool/tsuru_" + node.Pool
 	r, err := env.globomap.QueryByName("comp_unit", node.Name())
 	if err != nil || len(r) != 1 {
+		fmt.Printf("node %s not found in globomap API\n", node.Name())
 		return nil
 	}
 	element["to"] = r[0].Id

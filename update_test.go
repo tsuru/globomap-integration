@@ -34,12 +34,13 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 				newEvent("app.create", "myapp1"),
 				newEvent("app.delete", "myapp2"),
 				newEvent("pool.update", "pool1"),
+				newEvent("pool.delete", "pool2"),
 			}
 			json.NewEncoder(w).Encode(events)
 		case "/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/pools":
-			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
+			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -58,7 +59,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 5)
+		c.Assert(data, check.HasLen, 6)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -87,140 +88,32 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[3]["action"], check.Equals, "UPDATE")
-		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool")
-		c.Assert(el["name"], check.Equals, "myapp1-pool")
-		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
-		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
-
-		el, ok = data[4]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[4]["action"], check.Equals, "DELETE")
-		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp2-pool")
-		c.Assert(el["name"], check.Equals, "myapp2-pool")
-	}))
-	defer server.Close()
-	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
-	setup(nil)
-
-	cmd := &updateCmd{}
-	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
-}
-
-func (s *S) TestUpdateCmdRunWithCompUnits(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			events := []event{
-				newEvent("pool.update", "pool1"),
-				newEvent("pool.delete", "pool2"),
-			}
-			json.NewEncoder(w).Encode(events)
-		case "/pools":
-			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
-		case "/node":
-			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Protocol: "https", Address: "1.2.3.4", Port: 2376}
-			n2 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node2"}}
-			n3 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node3"}}
-			n4 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node4"}}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4}})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-
-	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/v1/collections/comp_unit/")
-		re := regexp.MustCompile(`"value":"([^"]*)"`)
-		matches := re.FindAllStringSubmatch(r.FormValue("query"), -1)
-		c.Assert(matches, check.HasLen, 1)
-		c.Assert(matches[0], check.HasLen, 2)
-
-		name := matches[0][1]
-		queryResult := []globomapQueryResult{}
-		if name != "node3" {
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_" + name, Name: name})
-		}
-		json.NewEncoder(w).Encode(
-			struct{ Documents []globomapQueryResult }{
-				Documents: queryResult,
-			},
-		)
-	}))
-	defer globomapApi.Close()
-	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
-
-	var requests int32
-	globomapLoader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
-		c.Assert(r.Method, check.Equals, http.MethodPost)
-		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
-
-		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
-		err := decoder.Decode(&data)
-		c.Assert(err, check.IsNil)
-		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 5)
-
-		sortPayload(data)
-		el, ok := data[0]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "UPDATE")
-		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool")
-		c.Assert(data[0]["type"], check.Equals, "collections")
-		c.Assert(data[0]["key"], check.Equals, "tsuru_pool1")
-		c.Assert(el["name"], check.Equals, "pool1")
-
-		el, ok = data[1]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "DELETE")
-		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool")
-		c.Assert(data[1]["type"], check.Equals, "collections")
-		c.Assert(data[1]["key"], check.Equals, "tsuru_pool2")
-		c.Assert(el["name"], check.Equals, "pool2")
-
-		el, ok = data[2]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "UPDATE")
-		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[2]["type"], check.Equals, "edges")
-		c.Assert(data[2]["key"], check.Equals, "tsuru_node1-node")
-		c.Assert(el["name"], check.Equals, "node1-node")
-		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
-		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
-		props, ok := el["properties"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://1.2.3.4:2376")
-
-		el, ok = data[3]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
-		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_node2-node")
-		c.Assert(el["name"], check.Equals, "node2-node")
+		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool")
+		c.Assert(data[3]["type"], check.Equals, "collections")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_pool2")
+		c.Assert(el["name"], check.Equals, "pool2")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[4]["action"], check.Equals, "UPDATE")
-		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(data[4]["key"], check.Equals, "tsuru_node4-node")
-		c.Assert(el["name"], check.Equals, "node4-node")
-		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
-		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node4")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp1-pool")
+		c.Assert(el["name"], check.Equals, "myapp1-pool")
+		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
+		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
+
+		el, ok = data[5]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[5]["action"], check.Equals, "DELETE")
+		c.Assert(data[5]["collection"], check.Equals, "tsuru_pool_app")
+		c.Assert(data[5]["type"], check.Equals, "edges")
+		c.Assert(data[5]["key"], check.Equals, "tsuru_myapp2-pool")
+		c.Assert(el["name"], check.Equals, "myapp2-pool")
 	}))
-	defer globomapLoader.Close()
-	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", globomapLoader.URL)
+	defer server.Close()
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
 	setup(nil)
 
 	cmd := &updateCmd{}
