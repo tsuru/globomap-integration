@@ -122,6 +122,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
+	var requestAppInfo1, requestAppInfo2 int32
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/events":
@@ -138,8 +139,10 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 			}
 			json.NewEncoder(w).Encode(events)
 		case "/apps/myapp1":
+			atomic.AddInt32(&requestAppInfo1, 1)
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/apps/myapp2":
+			atomic.AddInt32(&requestAppInfo2, 1)
 			json.NewEncoder(w).Encode(app{Name: "myapp2", Pool: "pool1"})
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
@@ -221,6 +224,8 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 	cmd := &updateCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
+	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
 }
 
 func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {

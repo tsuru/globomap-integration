@@ -16,6 +16,7 @@ import (
 )
 
 func (s *S) TestLoadCmdRun(c *check.C) {
+	var requestAppInfo1, requestAppInfo2 int32
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		a1 := app{Name: "myapp1", Pool: "pool1"}
 		a2 := app{Name: "myapp2", Pool: "pool1"}
@@ -23,9 +24,11 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		case "/apps":
 			json.NewEncoder(w).Encode([]app{a1, a2})
 		case "/apps/myapp1":
+			atomic.AddInt32(&requestAppInfo1, 1)
 			a1.Description = "my first app"
 			json.NewEncoder(w).Encode(a1)
 		case "/apps/myapp2":
+			atomic.AddInt32(&requestAppInfo2, 1)
 			a2.Description = "my second app"
 			json.NewEncoder(w).Encode(a2)
 		case "/pools":
@@ -133,6 +136,8 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 	cmd := &loadCmd{}
 	cmd.Run()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
+	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
 }
 
 func (s *S) TestLoadCmdRunNoRequestWhenNoApps(c *check.C) {

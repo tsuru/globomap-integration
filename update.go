@@ -112,17 +112,29 @@ func processEvents(events []event) {
 		})
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
+
+		var cachedApp *app
+		if lastStatus != "DELETE" {
+			var err error
+			cachedApp, err = env.tsuru.AppInfo(name)
+			if err != nil {
+				continue
+			}
+		}
+
 		op := &appOperation{
-			action:  lastStatus,
-			time:    endTime,
-			appName: name,
+			action:    lastStatus,
+			time:      endTime,
+			appName:   name,
+			cachedApp: cachedApp,
 		}
 		operations = append(operations, op)
 
 		appPoolOp := &appPoolOperation{
-			action:  lastStatus,
-			time:    endTime,
-			appName: name,
+			action:    lastStatus,
+			time:      endTime,
+			appName:   name,
+			cachedApp: cachedApp,
 		}
 		operations = append(operations, appPoolOp)
 	}

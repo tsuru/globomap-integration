@@ -31,18 +31,25 @@ func (l *loadCmd) Run() {
 	operations := make([]operation, (2*len(apps))+len(env.pools)+len(env.nodes))
 	var i int
 	for _, app := range apps {
+		cachedApp, err := env.tsuru.AppInfo(app.Name)
+		if err != nil {
+			continue
+		}
+
 		op := &appOperation{
-			action:  "UPDATE",
-			time:    time.Now(),
-			appName: app.Name,
+			action:    "UPDATE",
+			time:      time.Now(),
+			appName:   cachedApp.Name,
+			cachedApp: cachedApp,
 		}
 		operations[i] = op
 		i++
 
 		appPoolOp := &appPoolOperation{
-			action:  "UPDATE",
-			time:    time.Now(),
-			appName: app.Name,
+			action:    "UPDATE",
+			time:      time.Now(),
+			appName:   cachedApp.Name,
+			cachedApp: cachedApp,
 		}
 		operations[i] = appPoolOp
 		i++
