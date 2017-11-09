@@ -99,6 +99,13 @@ func processEvents(events []event) {
 		op := NewTsuruOperation(evs)
 		op.target = &appOperation{appName: name}
 		operations = append(operations, op)
+
+		appPoolOp := &appPoolOperation{
+			action:  op.action,
+			time:    op.time,
+			appName: name,
+		}
+		operations = append(operations, appPoolOp)
 	}
 
 	postUpdates(operations)

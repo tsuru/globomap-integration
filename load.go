@@ -28,12 +28,20 @@ func (l *loadCmd) Run() {
 		return
 	}
 
-	operations := make([]operation, len(apps)+len(env.pools)+len(env.nodes))
+	operations := make([]operation, (2*len(apps))+len(env.pools)+len(env.nodes))
 	var i int
 	for _, app := range apps {
 		op := NewTsuruOperation(nil)
 		op.target = &appOperation{appName: app.Name}
 		operations[i] = op
+		i++
+
+		appPoolOp := &appPoolOperation{
+			action:  "UPDATE",
+			time:    time.Now(),
+			appName: app.Name,
+		}
+		operations[i] = appPoolOp
 		i++
 	}
 	for _, pool := range env.pools {

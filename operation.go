@@ -39,9 +39,24 @@ type appOperation struct {
 	cachedApp *app
 }
 
+type appPoolOperation struct {
+	action    string
+	time      time.Time
+	appName   string
+	cachedApp *app
+}
+
 type poolOperation struct {
 	poolName string
 }
+
+var (
+	_ operation       = &tsuruOperation{}
+	_ operation       = &nodeOperation{}
+	_ operation       = &appPoolOperation{}
+	_ operationTarget = &appOperation{}
+	_ operationTarget = &poolOperation{}
+)
 
 func (op *tsuruOperation) toPayload() []globomapPayload {
 	doc := op.toDocument()
@@ -157,16 +172,36 @@ func (op *appOperation) properties() map[string]interface{} {
 }
 
 func (op *appOperation) toEdge(action string) []globomapPayload {
-	id := fmt.Sprintf("%s-pool", op.name())
+	return nil
+}
+
+func (op *appOperation) name() string {
+	return op.appName
+}
+
+func (op *appOperation) collection() string {
+	return "tsuru_app"
+}
+
+func (op *appPoolOperation) app() (*app, error) {
+	var err error
+	if op.cachedApp == nil {
+		op.cachedApp, err = env.tsuru.AppInfo(op.appName)
+	}
+	return op.cachedApp, err
+}
+
+func (op *appPoolOperation) toPayload() []globomapPayload {
+	id := fmt.Sprintf("%s-pool", op.appName)
 	props := globomapPayload{
-		"action":     action,
+		"action":     op.action,
 		"collection": "tsuru_pool_app",
 		"type":       "edges",
 		"element": map[string]interface{}{
 			"id":        id,
 			"name":      id,
 			"provider":  "tsuru",
-			"timestamp": time.Now().Unix(),
+			"timestamp": op.time.Unix(),
 		},
 		"key": "tsuru_" + id,
 	}
@@ -183,14 +218,6 @@ func (op *appOperation) toEdge(action string) []globomapPayload {
 	element["from"] = "tsuru_app/tsuru_" + app.Name
 	element["to"] = "tsuru_pool/tsuru_" + app.Pool
 	return []globomapPayload{props}
-}
-
-func (op *appOperation) name() string {
-	return op.appName
-}
-
-func (op *appOperation) collection() string {
-	return "tsuru_app"
 }
 
 func (op *poolOperation) pool() *pool {
