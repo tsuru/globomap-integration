@@ -65,8 +65,8 @@ func postUpdates(operations []operation) {
 	data := []globomapPayload{}
 	for _, op := range operations {
 		payload := op.toPayload()
-		if len(payload) > 0 {
-			data = append(data, payload...)
+		if payload != nil {
+			data = append(data, *payload)
 		}
 	}
 	env.globomap.Post(data)

@@ -42,8 +42,16 @@ func processEvents(events []event) {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		op := NewTsuruOperation(evs)
-		op.target = &poolOperation{poolName: name}
+		endTime := evs[len(evs)-1].EndTime
+		lastStatus := eventStatus(evs[len(evs)-1])
+		if lastStatus == "CREATE" {
+			lastStatus = "UPDATE"
+		}
+		op := &poolOperation{
+			action:   lastStatus,
+			time:     endTime,
+			poolName: name,
+		}
 		operations = append(operations, op)
 	}
 
@@ -96,13 +104,21 @@ func processEvents(events []event) {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
-		op := NewTsuruOperation(evs)
-		op.target = &appOperation{appName: name}
+		endTime := evs[len(evs)-1].EndTime
+		lastStatus := eventStatus(evs[len(evs)-1])
+		if lastStatus == "CREATE" {
+			lastStatus = "UPDATE"
+		}
+		op := &appOperation{
+			action:  lastStatus,
+			time:    endTime,
+			appName: name,
+		}
 		operations = append(operations, op)
 
 		appPoolOp := &appPoolOperation{
-			action:  op.action,
-			time:    op.time,
+			action:  lastStatus,
+			time:    endTime,
 			appName: name,
 		}
 		operations = append(operations, appPoolOp)

@@ -12,13 +12,7 @@ import (
 )
 
 type operation interface {
-	toPayload() []globomapPayload
-}
-
-type tsuruOperation struct {
-	action string
-	time   time.Time
-	target operationTarget
+	toPayload() *globomapPayload
 }
 
 type nodeOperation struct {
@@ -27,14 +21,9 @@ type nodeOperation struct {
 	nodeAddr string
 }
 
-type operationTarget interface {
-	name() string
-	collection() string
-	toEdge(string) []globomapPayload
-	properties() map[string]interface{}
-}
-
 type appOperation struct {
+	action    string
+	time      time.Time
 	appName   string
 	cachedApp *app
 }
@@ -47,97 +36,55 @@ type appPoolOperation struct {
 }
 
 type poolOperation struct {
+	action   string
+	time     time.Time
 	poolName string
 }
 
 var (
-	_ operation       = &tsuruOperation{}
-	_ operation       = &nodeOperation{}
-	_ operation       = &appPoolOperation{}
-	_ operationTarget = &appOperation{}
-	_ operationTarget = &poolOperation{}
+	_ operation = &nodeOperation{}
+	_ operation = &appPoolOperation{}
+	_ operation = &appOperation{}
+	_ operation = &poolOperation{}
 )
 
-func (op *tsuruOperation) toPayload() []globomapPayload {
-	doc := op.toDocument()
-	if doc == nil {
-		return nil
-	}
-	payloads := []globomapPayload{*doc}
-	edges := op.toEdge()
-	if len(edges) > 0 {
-		payloads = append(payloads, edges...)
-	}
-	return payloads
+func eventStatus(e event) string {
+	parts := strings.Split(e.Kind.Name, ".")
+	return strings.ToUpper(parts[1])
 }
 
-func (op *tsuruOperation) toDocument() *globomapPayload {
-	props := op.baseDocument(op.target.name())
-	if props == nil {
-		return nil
-	}
-
-	(*props)["type"] = "collections"
-	(*props)["collection"] = op.target.collection()
-
-	return props
-}
-
-func (op *tsuruOperation) toEdge() []globomapPayload {
-	doc := op.baseDocument(op.target.name())
-	if doc == nil {
-		return nil
-	}
-
-	edges := op.target.toEdge(op.action)
-	if len(edges) == 0 {
-		return nil
-	}
-	for _, edge := range edges {
-		for k, v := range *doc {
-			if _, ok := edge[k]; !ok {
-				edge[k] = v
-			}
-		}
-	}
-
-	return edges
-}
-
-func (op *tsuruOperation) baseDocument(name string) *globomapPayload {
-	action := op.action
-	if action == "" {
-		return nil
-	}
-
-	props := &globomapPayload{
-		"action": action,
+func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomapPayload {
+	doc := &globomapPayload{
+		"action":     action,
+		"collection": collection,
 		"element": map[string]interface{}{
 			"id":        name,
 			"name":      name,
 			"provider":  "tsuru",
-			"timestamp": op.time.Unix(),
+			"timestamp": time.Unix(),
 		},
-		"key": "tsuru_" + name,
+		"key":  "tsuru_" + name,
+		"type": "collections",
 	}
 
 	properties := map[string]interface{}{}
 	propertiesMetadata := map[string]map[string]string{}
-	if op.target == nil {
-		return props
-	}
-	for k, v := range op.target.properties() {
+	for k, v := range props {
 		properties[k] = v
 		propertiesMetadata[k] = map[string]string{
 			"description": k,
 		}
 	}
 
-	element, _ := (*props)["element"].(map[string]interface{})
+	element, _ := (*doc)["element"].(map[string]interface{})
 	element["properties"] = properties
 	element["properties_metadata"] = propertiesMetadata
 
-	return props
+	return doc
+}
+
+func (op *appOperation) toPayload() *globomapPayload {
+	return baseDocument(op.appName, op.action, "tsuru_app", op.time, op.properties())
 }
 
 func (op *appOperation) app() (*app, error) {
@@ -171,18 +118,6 @@ func (op *appOperation) properties() map[string]interface{} {
 	}
 }
 
-func (op *appOperation) toEdge(action string) []globomapPayload {
-	return nil
-}
-
-func (op *appOperation) name() string {
-	return op.appName
-}
-
-func (op *appOperation) collection() string {
-	return "tsuru_app"
-}
-
 func (op *appPoolOperation) app() (*app, error) {
 	var err error
 	if op.cachedApp == nil {
@@ -191,7 +126,7 @@ func (op *appPoolOperation) app() (*app, error) {
 	return op.cachedApp, err
 }
 
-func (op *appPoolOperation) toPayload() []globomapPayload {
+func (op *appPoolOperation) toPayload() *globomapPayload {
 	id := fmt.Sprintf("%s-pool", op.appName)
 	props := globomapPayload{
 		"action":     op.action,
@@ -207,7 +142,7 @@ func (op *appPoolOperation) toPayload() []globomapPayload {
 	}
 
 	if props["action"] == "DELETE" {
-		return []globomapPayload{props}
+		return &props
 	}
 
 	app, err := op.app()
@@ -217,7 +152,11 @@ func (op *appPoolOperation) toPayload() []globomapPayload {
 	element, _ := props["element"].(map[string]interface{})
 	element["from"] = "tsuru_app/tsuru_" + app.Name
 	element["to"] = "tsuru_pool/tsuru_" + app.Pool
-	return []globomapPayload{props}
+	return &props
+}
+
+func (op *poolOperation) toPayload() *globomapPayload {
+	return baseDocument(op.poolName, op.action, "tsuru_pool", op.time, op.properties())
 }
 
 func (op *poolOperation) pool() *pool {
@@ -243,18 +182,6 @@ func (op *poolOperation) properties() map[string]interface{} {
 	}
 }
 
-func (op *poolOperation) toEdge(action string) []globomapPayload {
-	return nil
-}
-
-func (op *poolOperation) name() string {
-	return op.poolName
-}
-
-func (op *poolOperation) collection() string {
-	return "tsuru_pool"
-}
-
 func (op *poolOperation) nodes() ([]node, error) {
 	if len(env.nodes) == 0 {
 		nodes, err := env.tsuru.NodeList()
@@ -273,7 +200,7 @@ func (op *poolOperation) nodes() ([]node, error) {
 	return nodes, nil
 }
 
-func (op *nodeOperation) toPayload() []globomapPayload {
+func (op *nodeOperation) toPayload() *globomapPayload {
 	node, err := op.node()
 	if err != nil || node == nil {
 		return nil
@@ -294,7 +221,7 @@ func (op *nodeOperation) toPayload() []globomapPayload {
 	}
 
 	if edge["action"] == "DELETE" {
-		return []globomapPayload{edge}
+		return &edge
 	}
 
 	element, _ := edge["element"].(map[string]interface{})
@@ -313,7 +240,7 @@ func (op *nodeOperation) toPayload() []globomapPayload {
 		"address": {"description": "address"},
 	}
 
-	return []globomapPayload{edge}
+	return &edge
 }
 
 func (op *nodeOperation) node() (*node, error) {
@@ -331,27 +258,4 @@ func (op *nodeOperation) node() (*node, error) {
 	}
 
 	return nil, nil
-}
-
-func NewTsuruOperation(events []event) *tsuruOperation {
-	op := &tsuruOperation{
-		action: "UPDATE",
-		time:   time.Now(),
-	}
-	if len(events) == 0 {
-		return op
-	}
-	op.time = events[len(events)-1].EndTime
-
-	lastStatus := eventStatus(events[len(events)-1])
-	if lastStatus == "CREATE" {
-		lastStatus = "UPDATE"
-	}
-	op.action = lastStatus
-	return op
-}
-
-func eventStatus(e event) string {
-	parts := strings.Split(e.Kind.Name, ".")
-	return strings.ToUpper(parts[1])
 }
