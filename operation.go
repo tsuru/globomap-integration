@@ -214,7 +214,9 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 	element["from"] = "tsuru_pool/tsuru_" + node.Pool
 	r, err := env.globomap.QueryByName("comp_unit", node.Name())
 	if err != nil || len(r) != 1 {
-		fmt.Printf("node %s not found in globomap API\n", node.Name())
+		if env.config.verbose {
+			fmt.Printf("node %s not found in globomap API\n", node.Name())
+		}
 		return nil
 	}
 	element["to"] = r[0].Id

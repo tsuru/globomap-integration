@@ -14,27 +14,37 @@ type loadCmd struct{}
 func (l *loadCmd) Run() {
 	apps, err := env.tsuru.AppList()
 	if err != nil {
-		fmt.Printf("Error fetching apps: %s\n", err)
+		if env.config.verbose {
+			fmt.Printf("Error fetching apps: %s\n", err)
+		}
 		return
 	}
 	env.pools, err = env.tsuru.PoolList()
 	if err != nil {
-		fmt.Printf("Error fetching pools: %s\n", err)
+		if env.config.verbose {
+			fmt.Printf("Error fetching pools: %s\n", err)
+		}
 		return
 	}
 	env.nodes, err = env.tsuru.NodeList()
 	if err != nil {
-		fmt.Printf("Error fetching nodes: %s\n", err)
+		if env.config.verbose {
+			fmt.Printf("Error fetching nodes: %s\n", err)
+		}
 		return
 	}
-	fmt.Printf("Processing %d apps, %d pools and %d nodes\n", len(apps), len(env.pools), len(env.nodes))
+	if env.config.verbose {
+		fmt.Printf("Processing %d apps, %d pools and %d nodes\n", len(apps), len(env.pools), len(env.nodes))
+	}
 
 	operations := make([]operation, (2*len(apps))+len(env.pools)+len(env.nodes))
 	var i int
 	for _, app := range apps {
 		cachedApp, err := env.tsuru.AppInfo(app.Name)
 		if err != nil {
-			fmt.Printf("Error fetching app %s info: %s\n", app.Name, err)
+			if env.config.verbose {
+				fmt.Printf("Error fetching app %s info: %s\n", app.Name, err)
+			}
 			continue
 		}
 

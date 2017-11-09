@@ -15,6 +15,7 @@ func (s *S) TestConfigDefault(c *check.C) {
 	err := config.ProcessArguments(nil)
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, false)
+	c.Assert(config.verbose, check.Equals, false)
 	c.Assert(config.start, check.NotNil)
 	c.Assert(*config.start, check.DeepEquals, time.Duration(24*time.Hour))
 	c.Assert(config.repeat, check.IsNil)
@@ -26,6 +27,14 @@ func (s *S) TestConfigDry(c *check.C) {
 	err := config.ProcessArguments([]string{"--dry"})
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, true)
+	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
+}
+
+func (s *S) TestConfigVerbose(c *check.C) {
+	config := NewConfig()
+	err := config.ProcessArguments([]string{"--verbose"})
+	c.Assert(err, check.IsNil)
+	c.Assert(config.verbose, check.Equals, true)
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
 
@@ -73,6 +82,7 @@ func (s *S) TestConfigLoad(c *check.C) {
 	err := config.ProcessArguments([]string{"--load"})
 	c.Assert(err, check.IsNil)
 	c.Assert(config.dry, check.Equals, false)
+	c.Assert(config.verbose, check.Equals, false)
 	c.Assert(env.cmd, check.FitsTypeOf, &loadCmd{})
 }
 

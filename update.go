@@ -17,13 +17,17 @@ type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
 	events := fetchEvents()
-	fmt.Printf("Found %d events\n", len(events))
+	if env.config.verbose {
+		fmt.Printf("Found %d events\n", len(events))
+	}
 	processEvents(events)
 }
 
 func fetchEvents() []event {
 	since := time.Now().Add(-1 * *env.config.start)
-	fmt.Printf("Fetching events since %s\n", since)
+	if env.config.verbose {
+		fmt.Printf("Fetching events since %s\n", since)
+	}
 
 	eventStream := make(chan []event, 2)
 	var wg sync.WaitGroup
@@ -42,7 +46,9 @@ func fetchEvents() []event {
 		}
 		events, err := env.tsuru.EventList(f)
 		if err != nil {
-			fmt.Printf("Error fetching events: %s\n", err)
+			if env.config.verbose {
+				fmt.Printf("Error fetching events: %s\n", err)
+			}
 		} else {
 			eventStream <- events
 		}
@@ -57,7 +63,9 @@ func fetchEvents() []event {
 		}
 		events, err := env.tsuru.EventList(f)
 		if err != nil {
-			fmt.Printf("Error fetching events: %s\n", err)
+			if env.config.verbose {
+				fmt.Printf("Error fetching events: %s\n", err)
+			}
 		} else {
 			eventStream <- events
 		}
@@ -97,7 +105,9 @@ func processEvents(events []event) {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
-			fmt.Printf("Error fetching pools: %s\n", err)
+			if env.config.verbose {
+				fmt.Printf("Error fetching pools: %s\n", err)
+			}
 			return
 		}
 	}
@@ -142,7 +152,9 @@ func processEvents(events []event) {
 		var err error
 		env.nodes, err = env.tsuru.NodeList()
 		if err != nil {
-			fmt.Printf("Error fetching nodes: %s\n", err)
+			if env.config.verbose {
+				fmt.Printf("Error fetching nodes: %s\n", err)
+			}
 			return
 		}
 	}

@@ -52,3 +52,7 @@ Every running mode supports dry mode. With `--dry/-d` flag, the payload will be 
 # Checks for events in the last 15 minutes and writes the payload to stdout
 globomap-integration --start 15m --dry
 ```
+
+## Verbose mode
+
+For more output when running the program, add the `--verbose/-v` flag.

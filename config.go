@@ -17,6 +17,7 @@ import (
 
 type configParams struct {
 	dry                    bool
+	verbose                bool
 	tsuruHostname          string
 	tsuruToken             string
 	globomapApiHostname    string
@@ -26,11 +27,12 @@ type configParams struct {
 }
 
 type flags struct {
-	fs     *gnuflag.FlagSet
-	dry    bool
-	start  string
-	load   bool
-	repeat string
+	fs      *gnuflag.FlagSet
+	dry     bool
+	verbose bool
+	start   string
+	load    bool
+	repeat  string
 }
 
 func NewConfig() configParams {
@@ -46,6 +48,8 @@ func (c *configParams) ProcessArguments(args []string) error {
 	flags := flags{fs: gnuflag.NewFlagSet("", gnuflag.ExitOnError)}
 	flags.fs.BoolVar(&flags.dry, "dry", false, "dry mode")
 	flags.fs.BoolVar(&flags.dry, "d", false, "dry mode")
+	flags.fs.BoolVar(&flags.verbose, "verbose", false, "verbose mode")
+	flags.fs.BoolVar(&flags.verbose, "v", false, "verbose mode")
 	flags.fs.StringVar(&flags.start, "start", "", "start time")
 	flags.fs.StringVar(&flags.start, "s", "", "start time")
 	flags.fs.BoolVar(&flags.load, "load", false, "load mode")
@@ -68,6 +72,7 @@ func (c *configParams) ProcessArguments(args []string) error {
 	}
 
 	c.dry = flags.dry
+	c.verbose = flags.verbose
 	if flags.load {
 		env.cmd = &loadCmd{}
 	} else {

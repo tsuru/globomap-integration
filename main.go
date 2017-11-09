@@ -54,7 +54,9 @@ func main() {
 			env.cmd.Run()
 			diff := *env.config.repeat - time.Since(start)
 			if diff > 0 {
-				fmt.Printf("waiting %s...\n", diff)
+				if env.config.verbose {
+					fmt.Printf("waiting %s...\n", diff)
+				}
 				time.Sleep(diff)
 			}
 
@@ -73,7 +75,7 @@ func postUpdates(operations []operation) {
 		}
 	}
 	err := env.globomap.Post(data)
-	if err != nil {
+	if err != nil && env.config.verbose {
 		fmt.Println(err)
 	}
 }
