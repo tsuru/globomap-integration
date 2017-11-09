@@ -365,24 +365,6 @@ func NewTsuruOperation(events []event) *tsuruOperation {
 	return op
 }
 
-func NewNodeOperation(events []event) *nodeOperation {
-	op := &nodeOperation{
-		action: "UPDATE",
-		time:   time.Now(),
-	}
-	if len(events) == 0 {
-		return op
-	}
-	op.time = events[len(events)-1].EndTime
-
-	lastStatus := eventStatus(events[len(events)-1])
-	if lastStatus == "CREATE" {
-		lastStatus = "UPDATE"
-	}
-	op.action = lastStatus
-	return op
-}
-
 func eventStatus(e event) string {
 	parts := strings.Split(e.Kind.Name, ".")
 	return strings.ToUpper(parts[1])

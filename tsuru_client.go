@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"gopkg.in/mgo.v2/bson"
 )
 
 const TIME_FORMAT = "2006-01-02T15:04:05MST"
@@ -73,8 +75,9 @@ type event struct {
 	Kind struct {
 		Name string
 	}
-	EndTime time.Time
-	Error   string
+	EndTime       time.Time
+	Error         string
+	EndCustomData bson.Raw
 }
 
 type eventFilter struct {
@@ -89,6 +92,13 @@ func (a *app) Addresses() []string {
 
 func (e *event) Failed() bool {
 	return e.Error != ""
+}
+
+func (e *event) EndData(value interface{}) error {
+	if e.EndCustomData.Kind == 0 {
+		return nil
+	}
+	return e.EndCustomData.Unmarshal(value)
 }
 
 func (n *node) Name() string {

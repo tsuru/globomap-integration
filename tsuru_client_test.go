@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gopkg.in/check.v1"
+	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestEventList(c *check.C) {
@@ -239,6 +240,25 @@ func (s *S) TestEventFailed(c *check.C) {
 	failedEvent := event{Error: "some error"}
 	c.Assert(successfulEvent.Failed(), check.Equals, false)
 	c.Assert(failedEvent.Failed(), check.Equals, true)
+}
+
+func (s *S) TestEventEndData(c *check.C) {
+	e := &event{}
+	var endData map[string]string
+	err := e.EndData(&endData)
+	c.Assert(err, check.IsNil)
+
+	data := struct {
+		Name string
+		Id   string `bson:"_id"`
+	}{Name: "appname", Id: "123"}
+	b, err := bson.Marshal(data)
+	c.Assert(err, check.IsNil)
+	e.EndCustomData = bson.Raw{Data: b, Kind: 3}
+	err = e.EndData(&endData)
+	c.Assert(err, check.IsNil)
+	c.Assert(endData["name"], check.Equals, "appname")
+	c.Assert(endData["_id"], check.Equals, "123")
 }
 
 func (s *S) TestAppAddresses(c *check.C) {

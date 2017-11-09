@@ -15,7 +15,12 @@ type updateCmd struct{}
 type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
-	kindnames := []string{"app.create", "app.update", "app.delete", "pool.create", "pool.update", "pool.delete", "node.create", "node.delete"}
+	kindnames := []string{
+		"app.create", "app.update", "app.delete",
+		"pool.create", "pool.update", "pool.delete",
+		"node.create", "node.delete",
+		"healer",
+	}
 	since := time.Now().Add(-1 * *env.config.start)
 	f := eventFilter{
 		Kindnames: kindnames,
@@ -43,8 +48,26 @@ func processEvents(events []event) {
 	}
 
 	for addr, evs := range group["node"] {
-		op := NewNodeOperation(evs)
-		op.nodeAddr = addr
+		endTime := events[len(events)-1].EndTime
+		nodeAddr := addr
+		if evs[0].Kind.Name == "healer" {
+			removedNodeOp := &nodeOperation{
+				action:   "DELETE",
+				time:     endTime,
+				nodeAddr: addr,
+			}
+			operations = append(operations, removedNodeOp)
+
+			var data map[string]string
+			evs[0].EndData(&data)
+			nodeAddr = data["_id"]
+		}
+
+		op := &nodeOperation{
+			action:   "UPDATE",
+			time:     endTime,
+			nodeAddr: nodeAddr,
+		}
 		operations = append(operations, op)
 	}
 
