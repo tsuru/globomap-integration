@@ -186,24 +186,6 @@ func (op *poolOperation) properties() map[string]interface{} {
 	}
 }
 
-func (op *poolOperation) nodes() ([]node, error) {
-	if len(env.nodes) == 0 {
-		nodes, err := env.tsuru.NodeList()
-		if err != nil {
-			return nil, err
-		}
-		env.nodes = nodes
-	}
-	nodes := []node{}
-	for _, node := range env.nodes {
-		if node.Pool == op.poolName {
-			nodes = append(nodes, node)
-		}
-	}
-
-	return nodes, nil
-}
-
 func (op *nodeOperation) toPayload() *globomapPayload {
 	node, err := op.node()
 	if err != nil || node == nil {

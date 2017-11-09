@@ -57,6 +57,9 @@ func main() {
 				fmt.Printf("waiting %s...\n", diff)
 				time.Sleep(diff)
 			}
+
+			env.pools = nil
+			env.nodes = nil
 		}
 	}
 }

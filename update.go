@@ -52,6 +52,16 @@ func processEvents(events []event) {
 		operations = append(operations, op)
 	}
 
+	if len(operations) > 0 {
+		var err error
+		env.pools, err = env.tsuru.PoolList()
+		if err != nil {
+			fmt.Println("Error retrieving pool list: ", err)
+			return
+		}
+	}
+
+	var nodeOps int
 	for addr, evs := range group["node"] {
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
@@ -61,6 +71,7 @@ func processEvents(events []event) {
 			nodeAddr: addr,
 		}
 		operations = append(operations, op)
+		nodeOps++
 	}
 
 	for addr, evs := range group["healer"] {
@@ -83,13 +94,14 @@ func processEvents(events []event) {
 			nodeAddr: data["_id"],
 		}
 		operations = append(operations, addedNodeOp)
+		nodeOps++
 	}
 
-	if len(operations) > 0 {
+	if nodeOps > 0 {
 		var err error
-		env.pools, err = env.tsuru.PoolList()
+		env.nodes, err = env.tsuru.NodeList()
 		if err != nil {
-			fmt.Println("Error retrieving pool list: ", err)
+			fmt.Println("Error retrieving node list: ", err)
 			return
 		}
 	}

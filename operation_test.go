@@ -11,50 +11,49 @@ import (
 	"os"
 	"sync/atomic"
 
-	"gopkg.in/check.v1"
+	check "gopkg.in/check.v1"
 )
 
-func (s *S) TestPoolOperationNodes(c *check.C) {
+func (s *S) TestNodeOperationNode(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.URL.Path, check.Equals, "/node")
 
-		n1 := node{Id: "node1", Pool: "prod"}
-		n2 := node{Id: "node2", Pool: "dev"}
-		n3 := node{Id: "node3", Pool: "dev"}
+		n1 := node{Id: "node1", Address: "https://10.20.30.40:2376"}
+		n2 := node{Id: "node2", Address: "https://10.20.30.41:2376"}
+		n3 := node{Id: "node3", Address: "https://10.20.30.42:2376"}
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 	}))
 	defer server.Close()
 	os.Setenv("TSURU_HOSTNAME", server.URL)
 	setup(nil)
 
-	op := &poolOperation{poolName: "dev"}
-	nodes, err := op.nodes()
+	op := &nodeOperation{nodeAddr: "https://10.20.30.41:2376"}
+	node, err := op.node()
 	c.Assert(err, check.IsNil)
-	c.Assert(nodes, check.HasLen, 2)
-	c.Assert(nodes[0].Id, check.Equals, "node2")
-	c.Assert(nodes[1].Id, check.Equals, "node3")
+	c.Assert(node, check.NotNil)
+	c.Assert(node.Id, check.Equals, "node2")
 }
 
-func (s *S) TestPoolOperationNodesCacheRequest(c *check.C) {
+func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
 		c.Assert(r.URL.Path, check.Equals, "/node")
 
-		n1 := node{Id: "node1", Pool: "prod"}
+		n1 := node{Id: "node1", Address: "https://10.20.30.40:2376"}
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
 	}))
 	defer server.Close()
 	os.Setenv("TSURU_HOSTNAME", server.URL)
 	setup(nil)
 
-	op := &poolOperation{poolName: "dev"}
-	op.nodes()
-	op.nodes()
+	op := &nodeOperation{nodeAddr: "https://10.20.30.40:2376"}
+	op.node()
+	op.node()
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
-func (s *S) TestPoolOperationNodesError(c *check.C) {
+func (s *S) TestNodeOperationNodeError(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.URL.Path, check.Equals, "/node")
 
@@ -64,8 +63,8 @@ func (s *S) TestPoolOperationNodesError(c *check.C) {
 	os.Setenv("TSURU_HOSTNAME", server.URL)
 	setup(nil)
 
-	op := &poolOperation{poolName: "dev"}
-	nodes, err := op.nodes()
+	op := &nodeOperation{}
+	node, err := op.node()
 	c.Assert(err, check.NotNil)
-	c.Assert(nodes, check.IsNil)
+	c.Assert(node, check.IsNil)
 }
