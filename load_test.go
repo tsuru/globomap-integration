@@ -34,9 +34,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		case "/node":
-			n1 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node1"}, Address: "https://1.2.3.4:2376"}
-			n2 := node{Pool: "pool2", Metadata: nodeMetadata{IaasID: "node2"}, Address: "https://5.6.7.8:2376"}
-			n3 := node{Pool: "pool1", Metadata: nodeMetadata{IaasID: "node3"}, Address: "https://9.10.11.12:2376"}
+			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.2.3.4:2376"}
+			n2 := node{Pool: "pool2", IaaSID: "node2", Address: "https://5.6.7.8:2376"}
+			n3 := node{Pool: "pool1", IaaSID: "node3", Address: "https://9.10.11.12:2376"}
 			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 		}
 	}))

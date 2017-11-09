@@ -15,11 +15,11 @@ import (
 )
 
 func (s *S) TestEventList(c *check.C) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/events")
-		c.Assert(r.FormValue("running"), check.Equals, "false")
-		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c.Assert(req.Method, check.Equals, http.MethodGet)
+		c.Assert(req.URL.Path, check.Equals, "/events")
+		c.Assert(req.FormValue("running"), check.Equals, "false")
+		c.Assert(req.Header.Get("Authorization"), check.Equals, "b "+s.token)
 
 		e1 := event{}
 		e1.Target.Value = "myapp1"
@@ -47,6 +47,7 @@ func (s *S) TestEventListWithFilters(c *check.C) {
 		c.Assert(r.ParseForm(), check.IsNil)
 		c.Assert(r.FormValue("running"), check.Equals, "false")
 		c.Assert(r.Form["kindname"], check.DeepEquals, []string{"app.update", "app.create"})
+		c.Assert(r.FormValue("target.type"), check.Equals, "node")
 		c.Assert(r.FormValue("since"), check.Equals, since.Format(TIME_FORMAT))
 		c.Assert(r.FormValue("until"), check.Equals, until.Format(TIME_FORMAT))
 		w.WriteHeader(http.StatusNoContent)
@@ -58,9 +59,10 @@ func (s *S) TestEventListWithFilters(c *check.C) {
 	}
 
 	filter := eventFilter{
-		Kindnames: []string{"app.update", "app.create"},
-		Since:     &since,
-		Until:     &until,
+		Kindnames:  []string{"app.update", "app.create"},
+		TargetType: "node",
+		Since:      &since,
+		Until:      &until,
 	}
 	_, err := client.EventList(filter)
 	c.Assert(err, check.IsNil)
@@ -267,7 +269,7 @@ func (s *S) TestAppAddresses(c *check.C) {
 }
 
 func (s *S) TestNodeName(c *check.C) {
-	n := node{Metadata: nodeMetadata{IaasID: "vm-1234"}}
+	n := node{IaaSID: "vm-1234"}
 	c.Assert(n.Name(), check.Equals, "vm-1234")
 }
 

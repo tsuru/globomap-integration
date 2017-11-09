@@ -60,11 +60,7 @@ type node struct {
 	Protocol string
 	Pool     string
 	Status   string
-	Metadata nodeMetadata
-}
-
-type nodeMetadata struct {
-	IaasID string `json:"iaas-id"`
+	IaaSID   string
 }
 
 type event struct {
@@ -103,7 +99,7 @@ func (e *event) EndData(value interface{}) error {
 }
 
 func (n *node) Name() string {
-	return n.Metadata.IaasID
+	return n.IaaSID
 }
 
 func (n *node) Addr() string {
