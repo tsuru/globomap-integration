@@ -72,5 +72,8 @@ func postUpdates(operations []operation) {
 			data = append(data, *payload)
 		}
 	}
-	env.globomap.Post(data)
+	err := env.globomap.Post(data)
+	if err != nil {
+		fmt.Println(err)
+	}
 }

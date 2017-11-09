@@ -27,12 +27,14 @@ func (l *loadCmd) Run() {
 		fmt.Printf("Error fetching nodes: %s\n", err)
 		return
 	}
+	fmt.Printf("Processing %d apps, %d pools and %d nodes\n", len(apps), len(env.pools), len(env.nodes))
 
 	operations := make([]operation, (2*len(apps))+len(env.pools)+len(env.nodes))
 	var i int
 	for _, app := range apps {
 		cachedApp, err := env.tsuru.AppInfo(app.Name)
 		if err != nil {
+			fmt.Printf("Error fetching app %s info: %s\n", app.Name, err)
 			continue
 		}
 

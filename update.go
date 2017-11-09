@@ -26,11 +26,14 @@ func (u *updateCmd) Run() {
 		Kindnames: kindnames,
 		Since:     &since,
 	}
+	fmt.Printf("Fetching events since %s\n", since)
 	events, err := env.tsuru.EventList(f)
 	if err != nil {
+		fmt.Printf("Error fetching events: %s\n", err)
 		return
 	}
 
+	fmt.Printf("Found %d events\n", len(events))
 	processEvents(events)
 }
 
@@ -56,7 +59,7 @@ func processEvents(events []event) {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
-			fmt.Println("Error retrieving pool list: ", err)
+			fmt.Printf("Error fetching pools: %s\n", err)
 			return
 		}
 	}
@@ -101,7 +104,7 @@ func processEvents(events []event) {
 		var err error
 		env.nodes, err = env.tsuru.NodeList()
 		if err != nil {
-			fmt.Println("Error retrieving node list: ", err)
+			fmt.Printf("Error fetching nodes: %s\n", err)
 			return
 		}
 	}
