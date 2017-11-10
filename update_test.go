@@ -422,20 +422,21 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		switch req.URL.Path {
 		case "/events":
 			if req.FormValue("target.type") == "" {
-				e1 := newEvent("node.create", "https://1.2.3.4:2376")
+				e1 := newEvent("node.create", "1.2.3.4")
 				e2 := newEvent("node.delete", "https://5.6.7.8:2376")
-				json.NewEncoder(w).Encode([]event{e1, e2})
+				e3 := newEvent("node.create", "9.10.11.12")
+				json.NewEncoder(w).Encode([]event{e1, e2, e3})
 			} else {
-				e3 := newEvent("healer", "https://9.10.11.12:2376")
-				e3.Kind.Name = "node"
+				e4 := newEvent("healer", "https://13.14.15.16:2376")
+				e4.Kind.Name = "node"
 				data := struct {
 					Id string `bson:"_id"`
-				}{"https://13.14.15.16:2376"}
+				}{"https://17.18.19.20:2376"}
 				b, err := bson.Marshal(data)
 				c.Assert(err, check.IsNil)
-				e3.EndCustomData = bson.Raw{Data: b, Kind: 3}
+				e4.EndCustomData = bson.Raw{Data: b, Kind: 3}
 
-				json.NewEncoder(w).Encode([]event{e3})
+				json.NewEncoder(w).Encode([]event{e4})
 			}
 		case "/pools":
 			p1 := pool{
@@ -455,18 +456,19 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 			json.NewEncoder(w).Encode([]pool{p1, p2})
 		case "/node":
 			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.2.3.4:2376"}
-			n2 := node{Pool: "pool1", IaaSID: "node2", Address: "https://5.6.7.8:2376"}
-			n3 := node{Pool: "pool2", IaaSID: "node3", Address: "https://9.10.11.12:2376"}
+			n2 := node{Pool: "pool1", IaaSID: "node2", Address: "5.6.7.8"}
+			n3 := node{Pool: "pool2", IaaSID: "node3", Address: "9.10.11.12"}
 			n4 := node{Pool: "pool2", IaaSID: "node4", Address: "https://13.14.15.16:2376"}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4}})
+			n5 := node{Pool: "pool2", IaaSID: "node5", Address: "https://17.18.19.20:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4, n5}})
 		}
 	}))
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		re := regexp.MustCompile(`"value":"([^"]*)"`)
-		matches := re.FindAllStringSubmatch(r.FormValue("query"), -1)
+		matches := re.FindAllStringSubmatch(req.FormValue("query"), -1)
 		c.Assert(matches, check.HasLen, 1)
 		c.Assert(matches[0], check.HasLen, 2)
 
@@ -482,17 +484,17 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
 	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		atomic.AddInt32(&requests, 1)
-		c.Assert(r.Method, check.Equals, http.MethodPost)
-		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
+		c.Assert(req.Method, check.Equals, http.MethodPost)
+		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
 
-		decoder := json.NewDecoder(r.Body)
+		decoder := json.NewDecoder(req.Body)
 		var data []globomapPayload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
-		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 4)
+		defer req.Body.Close()
+		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
 		el, ok := data[0]["element"].(map[string]interface{})
@@ -518,24 +520,37 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "DELETE")
+		c.Assert(data[2]["action"], check.Equals, "UPDATE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[2]["type"], check.Equals, "edges")
 		c.Assert(data[2]["key"], check.Equals, "tsuru_node3-node")
 		c.Assert(el["name"], check.Equals, "node3-node")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node3")
+		props, ok = el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["address"], check.Equals, "9.10.11.12")
 
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(data[3]["action"], check.Equals, "UPDATE")
+		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[3]["type"], check.Equals, "edges")
 		c.Assert(data[3]["key"], check.Equals, "tsuru_node4-node")
 		c.Assert(el["name"], check.Equals, "node4-node")
+
+		el, ok = data[4]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[4]["action"], check.Equals, "UPDATE")
+		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[4]["type"], check.Equals, "edges")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_node5-node")
+		c.Assert(el["name"], check.Equals, "node5-node")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
-		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node4")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node5")
 		props, ok = el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://13.14.15.16:2376")
+		c.Assert(props["address"], check.Equals, "https://17.18.19.20:2376")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)

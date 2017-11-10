@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -239,11 +240,28 @@ func (op *nodeOperation) node() (*node, error) {
 		}
 		env.nodes = nodes
 	}
+	ip := op.nodeIP()
 	for _, node := range env.nodes {
-		if node.Addr() == op.nodeAddr {
+		if extractIPFromAddr(node.Address) == ip {
 			return &node, nil
 		}
 	}
+	if env.config.verbose {
+		fmt.Printf("Node not found in tsuru API: %s\n", op.nodeAddr)
+	}
 
 	return nil, nil
+}
+
+func (op *nodeOperation) nodeIP() string {
+	return extractIPFromAddr(op.nodeAddr)
+}
+
+func extractIPFromAddr(addr string) string {
+	re := regexp.MustCompile(`(\d+\.\d+\.\d+\.\d+)`)
+	matches := re.FindAllStringSubmatch(addr, -1)
+	if len(matches) == 1 {
+		return matches[0][1]
+	}
+	return ""
 }

@@ -68,3 +68,17 @@ func (s *S) TestNodeOperationNodeError(c *check.C) {
 	c.Assert(err, check.NotNil)
 	c.Assert(node, check.IsNil)
 }
+
+func (s *S) TestNodeOperationNodeIP(c *check.C) {
+	op := &nodeOperation{}
+	c.Assert(op.nodeIP(), check.Equals, "")
+
+	op.nodeAddr = "10.20.11.113"
+	c.Assert(op.nodeIP(), check.Equals, "10.20.11.113")
+
+	op.nodeAddr = "https://200.53.19.88:2376"
+	c.Assert(op.nodeIP(), check.Equals, "200.53.19.88")
+
+	op.nodeAddr = "invalid"
+	c.Assert(op.nodeIP(), check.Equals, "")
+}
