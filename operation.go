@@ -59,17 +59,15 @@ func eventStatus(e event) string {
 }
 
 func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomapPayload {
-	doc := &globomapPayload{
+	doc := globomapPayload{
 		"action":     action,
 		"collection": collection,
-		"element": map[string]interface{}{
-			"id":        name,
-			"name":      name,
-			"provider":  "tsuru",
-			"timestamp": time.Unix(),
-		},
-		"key":  "tsuru_" + name,
-		"type": "collections",
+		"key":        "tsuru_" + name,
+		"type":       "collections",
+	}
+
+	if action == "DELETE" {
+		return &doc
 	}
 
 	properties := map[string]interface{}{}
@@ -81,11 +79,16 @@ func baseDocument(name, action, collection string, time time.Time, props map[str
 		}
 	}
 
-	element, _ := (*doc)["element"].(map[string]interface{})
-	element["properties"] = properties
-	element["properties_metadata"] = propertiesMetadata
+	doc["element"] = map[string]interface{}{
+		"id":                  name,
+		"name":                name,
+		"provider":            "tsuru",
+		"timestamp":           time.Unix(),
+		"properties":          properties,
+		"properties_metadata": propertiesMetadata,
+	}
 
-	return doc
+	return &doc
 }
 
 func (op *appOperation) toPayload() *globomapPayload {
@@ -137,13 +140,7 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 		"action":     op.action,
 		"collection": "tsuru_pool_app",
 		"type":       "edges",
-		"element": map[string]interface{}{
-			"id":        id,
-			"name":      id,
-			"provider":  "tsuru",
-			"timestamp": op.time.Unix(),
-		},
-		"key": "tsuru_" + id,
+		"key":        "tsuru_" + id,
 	}
 
 	if props["action"] == "DELETE" {
@@ -154,9 +151,14 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 	if err != nil {
 		return nil
 	}
-	element, _ := props["element"].(map[string]interface{})
-	element["from"] = "tsuru_app/tsuru_" + app.Name
-	element["to"] = "tsuru_pool/tsuru_" + app.Pool
+	props["element"] = map[string]interface{}{
+		"id":        id,
+		"name":      id,
+		"provider":  "tsuru",
+		"timestamp": op.time.Unix(),
+		"from":      "tsuru_app/tsuru_" + app.Name,
+		"to":        "tsuru_pool/tsuru_" + app.Pool,
+	}
 	return &props
 }
 
@@ -193,12 +195,7 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 		"action":     op.action,
 		"collection": "tsuru_pool_comp_unit",
 		"type":       "edges",
-		"element": map[string]interface{}{
-			"id":        ip,
-			"provider":  "tsuru",
-			"timestamp": op.time.Unix(),
-		},
-		"key": "tsuru_" + strings.Replace(ip, ".", "_", -1),
+		"key":        "tsuru_" + strings.Replace(ip, ".", "_", -1),
 	}
 
 	if edge["action"] == "DELETE" {
@@ -209,9 +206,6 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 	if err != nil || node == nil {
 		return nil
 	}
-	element, _ := edge["element"].(map[string]interface{})
-	element["name"] = node.Name()
-	element["from"] = "tsuru_pool/tsuru_" + node.Pool
 	r, err := env.globomap.QueryByNameAndIP("comp_unit", node.Name(), node.IP())
 	if err != nil || r == nil {
 		if env.config.verbose {
@@ -219,13 +213,20 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 		}
 		return nil
 	}
-	element["to"] = r.Id
 
-	element["properties"] = map[string]interface{}{
-		"address": node.Addr(),
-	}
-	element["properties_metadata"] = map[string]map[string]string{
-		"address": {"description": "address"},
+	edge["element"] = map[string]interface{}{
+		"id":        ip,
+		"name":      node.Name(),
+		"provider":  "tsuru",
+		"timestamp": op.time.Unix(),
+		"from":      "tsuru_pool/tsuru_" + node.Pool,
+		"to":        r.Id,
+		"properties": map[string]interface{}{
+			"address": node.Addr(),
+		},
+		"properties_metadata": map[string]map[string]string{
+			"address": {"description": "address"},
+		},
 	}
 
 	return &edge

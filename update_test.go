@@ -74,13 +74,10 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 
-		el, ok = data[1]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[1]["type"], check.Equals, "collections")
 		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
-		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -90,13 +87,10 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(data[2]["key"], check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
-		el, ok = data[3]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[3]["type"], check.Equals, "collections")
 		c.Assert(data[3]["key"], check.Equals, "tsuru_pool2")
-		c.Assert(el["name"], check.Equals, "pool2")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -108,13 +102,10 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
 		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 
-		el, ok = data[5]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[5]["action"], check.Equals, "DELETE")
 		c.Assert(data[5]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[5]["type"], check.Equals, "edges")
 		c.Assert(data[5]["key"], check.Equals, "tsuru_myapp2-pool")
-		c.Assert(el["name"], check.Equals, "myapp2-pool")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
@@ -175,15 +166,12 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data, check.HasLen, 6)
 
 		sortPayload(data)
-		el, ok := data[0]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[0]["action"], check.Equals, "DELETE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
 		c.Assert(data[0]["type"], check.Equals, "collections")
 		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
-		c.Assert(el["name"], check.Equals, "myapp1")
 
-		el, ok = data[1]["element"].(map[string]interface{})
+		el, ok := data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[1]["action"], check.Equals, "UPDATE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
@@ -199,21 +187,15 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(data[2]["key"], check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
-		el, ok = data[3]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool")
 		c.Assert(data[3]["type"], check.Equals, "collections")
 		c.Assert(data[3]["key"], check.Equals, "tsuru_pool2")
-		c.Assert(el["name"], check.Equals, "pool2")
 
-		el, ok = data[4]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[4]["action"], check.Equals, "DELETE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
 		c.Assert(data[4]["type"], check.Equals, "edges")
 		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp1-pool")
-		c.Assert(el["name"], check.Equals, "myapp1-pool")
 
 		el, ok = data[5]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -517,13 +499,10 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(ok, check.Equals, true)
 		c.Assert(props["address"], check.Equals, "https://1.1.1.1:2376")
 
-		el, ok = data[1]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[1]["type"], check.Equals, "edges")
 		c.Assert(data[1]["key"], check.Equals, "tsuru_2_2_2_2")
-		c.Assert(el["id"], check.Equals, "2.2.2.2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -539,13 +518,10 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(ok, check.Equals, true)
 		c.Assert(props["address"], check.Equals, "3.3.3.3")
 
-		el, ok = data[3]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[3]["type"], check.Equals, "edges")
 		c.Assert(data[3]["key"], check.Equals, "tsuru_4_4_4_4")
-		c.Assert(el["id"], check.Equals, "4.4.4.4")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)

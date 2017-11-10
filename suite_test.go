@@ -45,10 +45,8 @@ func sortPayload(data []globomapPayload) {
 		if collection1 != collection2 {
 			return collection1 < collection2
 		}
-		el, _ := data[i]["element"].(map[string]interface{})
-		id1, _ := el["id"].(string)
-		el, _ = data[j]["element"].(map[string]interface{})
-		id2, _ := el["id"].(string)
-		return id1 < id2
+		key1, _ := data[i]["key"].(string)
+		key2, _ := data[j]["key"].(string)
+		return key1 < key2
 	})
 }
