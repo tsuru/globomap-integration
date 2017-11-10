@@ -29,47 +29,32 @@ func fetchEvents() []event {
 		fmt.Printf("Fetching events since %s\n", since)
 	}
 
-	eventStream := make(chan []event, 2)
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	kindnames := []string{
-		"app.create", "app.update", "app.delete",
-		"pool.create", "pool.update", "pool.delete",
-		"node.create", "node.delete",
+	filters := []eventFilter{
+		{Kindnames: []string{
+			"app.create", "app.update", "app.delete",
+			"pool.create", "pool.update", "pool.delete",
+			"node.create", "node.delete",
+		}, Since: &since},
+		{Kindnames: []string{"healer"}, TargetType: "node", Since: &since},
 	}
-	go func(kindnames []string) {
-		defer wg.Done()
-		f := eventFilter{
-			Kindnames: kindnames,
-			Since:     &since,
-		}
-		events, err := env.tsuru.EventList(f)
-		if err != nil {
-			if env.config.verbose {
-				fmt.Printf("Error fetching events: %s\n", err)
-			}
-		} else {
-			eventStream <- events
-		}
-	}(kindnames)
 
-	go func(kindnames []string) {
-		defer wg.Done()
-		f := eventFilter{
-			Kindnames:  kindnames,
-			TargetType: "node",
-			Since:      &since,
-		}
-		events, err := env.tsuru.EventList(f)
-		if err != nil {
-			if env.config.verbose {
-				fmt.Printf("Error fetching events: %s\n", err)
+	eventStream := make(chan []event, len(filters))
+	var wg sync.WaitGroup
+	wg.Add(len(filters))
+
+	for _, f := range filters {
+		go func(f eventFilter) {
+			defer wg.Done()
+			events, err := env.tsuru.EventList(f)
+			if err != nil {
+				if env.config.verbose {
+					fmt.Printf("Error fetching events: %s\n", err)
+				}
+			} else {
+				eventStream <- events
 			}
-		} else {
-			eventStream <- events
-		}
-	}([]string{"healer"})
+		}(f)
+	}
 
 	go func() {
 		defer close(eventStream)
