@@ -65,7 +65,25 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	return nil
 }
 
-func (g *globomapClient) QueryByName(collection, name string) ([]globomapQueryResult, error) {
+func (g *globomapClient) Query(collection, name, ip string) (*globomapQueryResult, error) {
+	results, err := g.queryByName(collection, name)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 1 {
+		return &results[0], nil
+	}
+	for _, result := range results {
+		for _, resultIP := range result.Properties.IPs {
+			if resultIP == ip {
+				return &result, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (g *globomapClient) queryByName(collection, name string) ([]globomapQueryResult, error) {
 	query := fmt.Sprintf(`[[{"field":"name","value":"%s","operator":"=="}]]`, name)
 	path := fmt.Sprintf("/v1/collections/%s/?query=%s", collection, url.PathEscape(query))
 	resp, err := http.Get(g.ApiHostname + path)
@@ -83,21 +101,6 @@ func (g *globomapClient) QueryByName(collection, name string) ([]globomapQueryRe
 	}
 	defer resp.Body.Close()
 	return data.Documents, nil
-}
-
-func (g *globomapClient) QueryByNameAndIP(collection, name, ip string) (*globomapQueryResult, error) {
-	results, err := g.QueryByName(collection, name)
-	if err != nil {
-		return nil, err
-	}
-	for _, result := range results {
-		for _, resultIP := range result.Properties.IPs {
-			if resultIP == ip {
-				return &result, nil
-			}
-		}
-	}
-	return nil, nil
 }
 
 func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, error) {

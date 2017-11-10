@@ -206,7 +206,7 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 	if err != nil || node == nil {
 		return nil
 	}
-	r, err := env.globomap.QueryByNameAndIP("comp_unit", node.Name(), node.IP())
+	r, err := env.globomap.Query("comp_unit", node.Name(), node.IP())
 	if err != nil || r == nil {
 		if env.config.verbose {
 			fmt.Printf("node %s (IP %s) not found in globomap API\n", node.Name(), node.IP())
