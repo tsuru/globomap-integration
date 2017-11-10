@@ -422,16 +422,16 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		switch req.URL.Path {
 		case "/events":
 			if req.FormValue("target.type") == "" {
-				e1 := newEvent("node.create", "1.2.3.4")
-				e2 := newEvent("node.delete", "https://5.6.7.8:2376")
-				e3 := newEvent("node.create", "9.10.11.12")
+				e1 := newEvent("node.create", "1.1.1.1")
+				e2 := newEvent("node.delete", "https://2.2.2.2:2376")
+				e3 := newEvent("node.create", "3.3.3.3")
 				json.NewEncoder(w).Encode([]event{e1, e2, e3})
 			} else {
-				e4 := newEvent("healer", "https://13.14.15.16:2376")
+				e4 := newEvent("healer", "https://4.4.4.4:2376")
 				e4.Kind.Name = "node"
 				data := struct {
 					Id string `bson:"_id"`
-				}{"https://17.18.19.20:2376"}
+				}{"https://5.5.5.5:2376"}
 				b, err := bson.Marshal(data)
 				c.Assert(err, check.IsNil)
 				e4.EndCustomData = bson.Raw{Data: b, Kind: 3}
@@ -455,12 +455,10 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 			}
 			json.NewEncoder(w).Encode([]pool{p1, p2})
 		case "/node":
-			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.2.3.4:2376"}
-			n2 := node{Pool: "pool1", IaaSID: "node2", Address: "5.6.7.8"}
-			n3 := node{Pool: "pool2", IaaSID: "node3", Address: "9.10.11.12"}
-			n4 := node{Pool: "pool2", IaaSID: "node4", Address: "https://13.14.15.16:2376"}
-			n5 := node{Pool: "pool2", IaaSID: "node5", Address: "https://17.18.19.20:2376"}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3, n4, n5}})
+			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
+			n3 := node{Pool: "pool2", IaaSID: "node3", Address: "3.3.3.3"}
+			n5 := node{Pool: "pool2", IaaSID: "node5", Address: "https://5.5.5.5:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n3, n5}})
 		}
 	}))
 	defer tsuruServer.Close()
@@ -476,11 +474,11 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		queryResult := []globomapQueryResult{}
 		switch name {
 		case "node1":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.2.3.4"}}})
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.1.1.1"}}})
 		case "node3":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"9.10.11.12"}}})
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"3.3.3.3"}}})
 		case "node5":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node5", Name: "node5", Properties: globomapProperties{IPs: []string{"17.18.19.20"}}})
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node5", Name: "node5", Properties: globomapProperties{IPs: []string{"5.5.5.5"}}})
 		}
 		json.NewEncoder(w).Encode(
 			struct{ Documents []globomapQueryResult }{
@@ -510,55 +508,58 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(data[0]["action"], check.Equals, "UPDATE")
 		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[0]["type"], check.Equals, "edges")
-		c.Assert(data[0]["key"], check.Equals, "tsuru_node1-node")
-		c.Assert(el["name"], check.Equals, "node1-node")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_1_1_1_1")
+		c.Assert(el["id"], check.Equals, "1.1.1.1")
+		c.Assert(el["name"], check.Equals, "node1")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
 		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
 		props, ok := el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://1.2.3.4:2376")
+		c.Assert(props["address"], check.Equals, "https://1.1.1.1:2376")
 
 		el, ok = data[1]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[1]["action"], check.Equals, "DELETE")
 		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[1]["type"], check.Equals, "edges")
-		c.Assert(data[1]["key"], check.Equals, "tsuru_node2-node")
-		c.Assert(el["name"], check.Equals, "node2-node")
+		c.Assert(data[1]["key"], check.Equals, "tsuru_2_2_2_2")
+		c.Assert(el["id"], check.Equals, "2.2.2.2")
 
 		el, ok = data[2]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[2]["action"], check.Equals, "UPDATE")
 		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[2]["type"], check.Equals, "edges")
-		c.Assert(data[2]["key"], check.Equals, "tsuru_node3-node")
-		c.Assert(el["name"], check.Equals, "node3-node")
+		c.Assert(data[2]["key"], check.Equals, "tsuru_3_3_3_3")
+		c.Assert(el["id"], check.Equals, "3.3.3.3")
+		c.Assert(el["name"], check.Equals, "node3")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
 		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node3")
 		props, ok = el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "9.10.11.12")
+		c.Assert(props["address"], check.Equals, "3.3.3.3")
 
 		el, ok = data[3]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[3]["action"], check.Equals, "DELETE")
 		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_node4-node")
-		c.Assert(el["name"], check.Equals, "node4-node")
+		c.Assert(data[3]["key"], check.Equals, "tsuru_4_4_4_4")
+		c.Assert(el["id"], check.Equals, "4.4.4.4")
 
 		el, ok = data[4]["element"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
 		c.Assert(data[4]["action"], check.Equals, "UPDATE")
 		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_comp_unit")
 		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(data[4]["key"], check.Equals, "tsuru_node5-node")
-		c.Assert(el["name"], check.Equals, "node5-node")
+		c.Assert(data[4]["key"], check.Equals, "tsuru_5_5_5_5")
+		c.Assert(el["id"], check.Equals, "5.5.5.5")
+		c.Assert(el["name"], check.Equals, "node5")
 		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool2")
 		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node5")
 		props, ok = el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
-		c.Assert(props["address"], check.Equals, "https://17.18.19.20:2376")
+		c.Assert(props["address"], check.Equals, "https://5.5.5.5:2376")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)

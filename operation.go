@@ -188,30 +188,29 @@ func (op *poolOperation) properties() map[string]interface{} {
 }
 
 func (op *nodeOperation) toPayload() *globomapPayload {
-	node, err := op.node()
-	if err != nil || node == nil {
-		return nil
-	}
-
-	id := fmt.Sprintf("%s-node", node.Name())
+	ip := op.nodeIP()
 	edge := globomapPayload{
 		"action":     op.action,
 		"collection": "tsuru_pool_comp_unit",
 		"type":       "edges",
 		"element": map[string]interface{}{
-			"id":        id,
-			"name":      id,
+			"id":        ip,
 			"provider":  "tsuru",
 			"timestamp": op.time.Unix(),
 		},
-		"key": "tsuru_" + id,
+		"key": "tsuru_" + strings.Replace(ip, ".", "_", -1),
 	}
 
 	if edge["action"] == "DELETE" {
 		return &edge
 	}
 
+	node, err := op.node()
+	if err != nil || node == nil {
+		return nil
+	}
 	element, _ := edge["element"].(map[string]interface{})
+	element["name"] = node.Name()
 	element["from"] = "tsuru_pool/tsuru_" + node.Pool
 	r, err := env.globomap.QueryByNameAndIP("comp_unit", node.Name(), node.IP())
 	if err != nil || r == nil {
