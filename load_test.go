@@ -34,9 +34,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		case "/node":
-			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.2.3.4:2376"}
-			n2 := node{Pool: "pool2", IaaSID: "node2", Address: "https://5.6.7.8:2376"}
-			n3 := node{Pool: "pool1", IaaSID: "node3", Address: "https://9.10.11.12:2376"}
+			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
+			n2 := node{Pool: "pool2", IaaSID: "node2", Address: "https://2.2.2.2:2376"}
+			n3 := node{Pool: "pool1", IaaSID: "node3", Address: "https://3.3.3.3:2376"}
 			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 		}
 	}))
@@ -55,9 +55,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		queryResult := []globomapQueryResult{}
 		switch name {
 		case "node1":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.2.3.4"}}})
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.1.1.1"}}})
 		case "node3":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"9.10.11.12"}}})
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"3.3.3.3"}}})
 		}
 		json.NewEncoder(w).Encode(
 			struct{ Documents []globomapQueryResult }{
@@ -79,58 +79,80 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 7)
 
 		sortPayload(data)
-		el, ok := data[0]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "UPDATE")
-		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
-		c.Assert(data[0]["type"], check.Equals, "collections")
-		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
-		c.Assert(el["name"], check.Equals, "myapp1")
-		props, ok := el["properties"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(props["description"], check.Equals, "my first app")
+		switch data[0]["collection"] {
+		case "tsuru_app":
+			c.Assert(data, check.HasLen, 4)
 
-		el, ok = data[1]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "UPDATE")
-		c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
-		c.Assert(data[1]["type"], check.Equals, "collections")
-		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
-		c.Assert(el["name"], check.Equals, "myapp2")
-		props, ok = el["properties"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(props["description"], check.Equals, "my second app")
+			el, ok := data[0]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[0]["action"], check.Equals, "UPDATE")
+			c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
+			c.Assert(data[0]["type"], check.Equals, "collections")
+			c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
+			c.Assert(el["name"], check.Equals, "myapp1")
+			props, ok := el["properties"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(props["description"], check.Equals, "my first app")
 
-		el, ok = data[2]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[2]["action"], check.Equals, "UPDATE")
-		c.Assert(data[2]["collection"], check.Equals, "tsuru_pool")
-		c.Assert(data[2]["type"], check.Equals, "collections")
-		c.Assert(data[2]["key"], check.Equals, "tsuru_pool1")
-		c.Assert(el["name"], check.Equals, "pool1")
+			el, ok = data[1]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[1]["action"], check.Equals, "UPDATE")
+			c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
+			c.Assert(data[1]["type"], check.Equals, "collections")
+			c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
+			c.Assert(el["name"], check.Equals, "myapp2")
+			props, ok = el["properties"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(props["description"], check.Equals, "my second app")
 
-		el, ok = data[3]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[3]["action"], check.Equals, "UPDATE")
-		c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[3]["type"], check.Equals, "edges")
-		c.Assert(data[3]["key"], check.Equals, "tsuru_myapp1-pool")
-		c.Assert(el["name"], check.Equals, "myapp1-pool")
-		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
-		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
+			el, ok = data[2]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[2]["action"], check.Equals, "UPDATE")
+			c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_app")
+			c.Assert(data[2]["type"], check.Equals, "edges")
+			c.Assert(data[2]["key"], check.Equals, "tsuru_myapp1-pool")
+			c.Assert(el["name"], check.Equals, "myapp1-pool")
+			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
+			c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 
-		el, ok = data[4]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[4]["action"], check.Equals, "UPDATE")
-		c.Assert(data[4]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[4]["type"], check.Equals, "edges")
-		c.Assert(data[4]["key"], check.Equals, "tsuru_myapp2-pool")
-		c.Assert(el["name"], check.Equals, "myapp2-pool")
-		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
-		c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
+			el, ok = data[3]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[3]["action"], check.Equals, "UPDATE")
+			c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
+			c.Assert(data[3]["type"], check.Equals, "edges")
+			c.Assert(data[3]["key"], check.Equals, "tsuru_myapp2-pool")
+			c.Assert(el["name"], check.Equals, "myapp2-pool")
+			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
+			c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
+
+		case "tsuru_pool":
+			c.Assert(data, check.HasLen, 1)
+			el, ok := data[0]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[0]["action"], check.Equals, "UPDATE")
+			c.Assert(data[0]["collection"], check.Equals, "tsuru_pool")
+			c.Assert(data[0]["type"], check.Equals, "collections")
+			c.Assert(data[0]["key"], check.Equals, "tsuru_pool1")
+			c.Assert(el["name"], check.Equals, "pool1")
+
+		case "tsuru_pool_comp_unit":
+			c.Assert(data, check.HasLen, 2)
+			el, ok := data[0]["element"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(data[0]["action"], check.Equals, "UPDATE")
+			c.Assert(data[0]["collection"], check.Equals, "tsuru_pool_comp_unit")
+			c.Assert(data[0]["type"], check.Equals, "edges")
+			c.Assert(data[0]["key"], check.Equals, "tsuru_1_1_1_1")
+			c.Assert(el["id"], check.Equals, "1.1.1.1")
+			c.Assert(el["name"], check.Equals, "node1")
+			c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
+			c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
+			props, ok := el["properties"].(map[string]interface{})
+			c.Assert(ok, check.Equals, true)
+			c.Assert(props["address"], check.Equals, "https://1.1.1.1:2376")
+		}
 	}))
 	defer globomapLoader.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", globomapLoader.URL)
@@ -138,12 +160,12 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 
 	cmd := &loadCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(3))
 	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
 	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
 }
 
-func (s *S) TestLoadCmdRunNoRequestWhenNoApps(c *check.C) {
+func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
 		case "/apps":
