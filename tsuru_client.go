@@ -113,6 +113,10 @@ func (n *node) Addr() string {
 	return addr
 }
 
+func (n *node) IP() string {
+	return extractIPFromAddr(n.Address)
+}
+
 func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	path := "/events"
 	resp, err := t.doRequest(path + f.format())

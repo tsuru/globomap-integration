@@ -213,14 +213,14 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 
 	element, _ := edge["element"].(map[string]interface{})
 	element["from"] = "tsuru_pool/tsuru_" + node.Pool
-	r, err := env.globomap.QueryByName("comp_unit", node.Name())
-	if err != nil || len(r) != 1 {
+	r, err := env.globomap.QueryByNameAndIP("comp_unit", node.Name(), node.IP())
+	if err != nil || r == nil {
 		if env.config.verbose {
-			fmt.Printf("node %s not found in globomap API\n", node.Name())
+			fmt.Printf("node %s (IP %s) not found in globomap API\n", node.Name(), node.IP())
 		}
 		return nil
 	}
-	element["to"] = r[0].Id
+	element["to"] = r.Id
 
 	element["properties"] = map[string]interface{}{
 		"address": node.Addr(),

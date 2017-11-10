@@ -473,7 +473,15 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(matches[0], check.HasLen, 2)
 
 		name := matches[0][1]
-		queryResult := []globomapQueryResult{{Id: "comp_unit/globomap_" + name, Name: name}}
+		queryResult := []globomapQueryResult{}
+		switch name {
+		case "node1":
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.2.3.4"}}})
+		case "node3":
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"9.10.11.12"}}})
+		case "node5":
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node5", Name: "node5", Properties: globomapProperties{IPs: []string{"17.18.19.20"}}})
+		}
 		json.NewEncoder(w).Encode(
 			struct{ Documents []globomapQueryResult }{
 				Documents: queryResult,

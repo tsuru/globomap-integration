@@ -73,3 +73,39 @@ func (s *S) TestQueryByName(c *check.C) {
 	c.Assert(results[0].Id, check.Equals, "9876")
 	c.Assert(results[0].Name, check.Equals, "vm-1234")
 }
+
+func (s *S) TestQueryByNameAndIP(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c.Assert(req.Method, check.Equals, http.MethodGet)
+		c.Assert(req.URL.Path, check.Equals, "/v1/collections/comp_unit/")
+		query := req.FormValue("query")
+
+		if strings.Contains(query, `"value":"vm-1234"`) {
+			json.NewEncoder(w).Encode(
+				struct{ Documents []globomapQueryResult }{
+					[]globomapQueryResult{
+						{Id: "abc", Name: "vm-1234", Properties: globomapProperties{IPs: []string{"10.52.20.20"}}},
+						{Id: "def", Name: "vm-1234", Properties: globomapProperties{IPs: []string{"10.200.22.9"}}},
+					},
+				},
+			)
+		} else {
+			json.NewEncoder(w).Encode(nil)
+		}
+	}))
+	defer server.Close()
+	client := globomapClient{
+		ApiHostname: server.URL,
+	}
+
+	result, err := client.QueryByNameAndIP("comp_unit", "vm-1234", "10.200.22.9")
+	c.Assert(err, check.IsNil)
+	c.Assert(result, check.NotNil)
+	c.Assert(result.Id, check.Equals, "def")
+	c.Assert(result.Name, check.Equals, "vm-1234")
+	c.Assert(result.Properties.IPs, check.DeepEquals, []string{"10.200.22.9"})
+
+	result, err = client.QueryByNameAndIP("comp_unit", "vm-123", "10.200.22.9")
+	c.Assert(err, check.IsNil)
+	c.Assert(result, check.IsNil)
+}

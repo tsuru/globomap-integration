@@ -53,8 +53,11 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 
 		name := matches[0][1]
 		queryResult := []globomapQueryResult{}
-		if name != "node2" {
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_" + name, Name: name})
+		switch name {
+		case "node1":
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.2.3.4"}}})
+		case "node3":
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"9.10.11.12"}}})
 		}
 		json.NewEncoder(w).Encode(
 			struct{ Documents []globomapQueryResult }{
