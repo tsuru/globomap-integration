@@ -42,6 +42,11 @@ type poolOperation struct {
 	poolName string
 }
 
+const (
+	MAX_RETRIES      = 100
+	RETRY_SLEEP_TIME = 5 * time.Minute
+)
+
 var (
 	_ operation = &nodeOperation{}
 	_ operation = &appPoolOperation{}
@@ -190,6 +195,10 @@ func (op *poolOperation) properties() map[string]interface{} {
 }
 
 func (op *nodeOperation) toPayload() *globomapPayload {
+	return op.buildPayload(nil)
+}
+
+func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globomapPayload {
 	ip := op.nodeIP()
 	edge := globomapPayload{
 		"action":     op.action,
@@ -206,16 +215,22 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 	if err != nil || node == nil {
 		return nil
 	}
-	r, err := env.globomap.Query(globomapQueryFields{
-		collection: "comp_unit",
-		name:       node.Name(),
-		ip:         node.IP(),
-	})
-	if err != nil || r == nil {
-		if env.config.verbose {
-			fmt.Printf("node %s (IP %s) not found in globomap API\n", node.Name(), node.IP())
+
+	if queryResult == nil {
+		queryResult, err = env.globomap.Query(globomapQueryFields{
+			collection: "comp_unit",
+			name:       node.Name(),
+			ip:         node.IP(),
+		})
+		if err != nil || queryResult == nil {
+			if env.config.repeat != nil {
+				go op.retry()
+			}
+			if env.config.verbose {
+				fmt.Printf("node %s (IP %s) not found in globomap API\n", node.Name(), node.IP())
+			}
+			return nil
 		}
-		return nil
 	}
 
 	edge["element"] = map[string]interface{}{
@@ -224,7 +239,7 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 		"provider":  "tsuru",
 		"timestamp": op.time.Unix(),
 		"from":      "tsuru_pool/tsuru_" + node.Pool,
-		"to":        r.Id,
+		"to":        queryResult.Id,
 		"properties": map[string]interface{}{
 			"address": node.Addr(),
 		},
@@ -259,6 +274,45 @@ func (op *nodeOperation) node() (*node, error) {
 
 func (op *nodeOperation) nodeIP() string {
 	return extractIPFromAddr(op.nodeAddr)
+}
+
+func (op *nodeOperation) retry() {
+	node, err := op.node()
+	if err != nil || node == nil {
+		return
+	}
+	f := globomapQueryFields{
+		collection: "comp_unit",
+		name:       node.Name(),
+		ip:         node.IP(),
+	}
+
+	for i := 0; i < MAX_RETRIES; i++ {
+		if env.config.verbose {
+			fmt.Printf("(%d/%d) retrying globomap query in %s\n", i+1, MAX_RETRIES, RETRY_SLEEP_TIME)
+		}
+		time.Sleep(RETRY_SLEEP_TIME)
+
+		queryResult, err := env.globomap.Query(f)
+		if queryResult == nil || err != nil {
+			if env.config.verbose {
+				fmt.Printf("node %s (IP %s) not found in globomap API\n", node.Name(), node.IP())
+			}
+			continue
+		}
+
+		payload := op.buildPayload(queryResult)
+		if payload == nil {
+			return
+		}
+		err = env.globomap.Post([]globomapPayload{*payload})
+		if err != nil && env.config.verbose {
+			fmt.Println(err)
+		}
+		return
+	}
+
+	fmt.Printf("max retries reached for fetching node %s (IP %s) from globomap API, giving up\n", node.Name(), node.IP())
 }
 
 func extractIPFromAddr(addr string) string {
