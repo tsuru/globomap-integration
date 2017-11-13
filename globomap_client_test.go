@@ -73,14 +73,22 @@ func (s *S) TestGlobomapQuery(c *check.C) {
 		ApiHostname: server.URL,
 	}
 
-	result, err := client.Query("comp_unit", "vm-1234", "10.200.22.9")
+	result, err := client.Query(globomapQueryFields{
+		collection: "comp_unit",
+		name:       "vm-1234",
+		ip:         "10.200.22.9",
+	})
 	c.Assert(err, check.IsNil)
 	c.Assert(result, check.NotNil)
 	c.Assert(result.Id, check.Equals, "def")
 	c.Assert(result.Name, check.Equals, "vm-1234")
 	c.Assert(result.Properties.IPs, check.DeepEquals, []string{"10.200.22.9"})
 
-	result, err = client.Query("comp_unit", "vm-123", "10.200.22.9")
+	result, err = client.Query(globomapQueryFields{
+		collection: "comp_unit",
+		name:       "vm-123",
+		ip:         "10.200.22.9",
+	})
 	c.Assert(err, check.IsNil)
 	c.Assert(result, check.IsNil)
 }
@@ -103,7 +111,10 @@ func (s *S) TestGlobomapQueryReturnsWhenOneResultWithoutIP(c *check.C) {
 		ApiHostname: server.URL,
 	}
 
-	result, err := client.Query("comp_unit", "vm-1234", "")
+	result, err := client.Query(globomapQueryFields{
+		collection: "comp_unit",
+		name:       "vm-1234",
+	})
 	c.Assert(err, check.IsNil)
 	c.Assert(result, check.NotNil)
 	c.Assert(result.Id, check.Equals, "9876")

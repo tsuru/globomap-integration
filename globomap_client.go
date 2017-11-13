@@ -22,6 +22,12 @@ type globomapClient struct {
 
 type globomapPayload map[string]interface{}
 
+type globomapQueryFields struct {
+	collection string
+	name       string
+	ip         string
+}
+
 type globomapQueryResult struct {
 	Id         string `json:"_id"`
 	Name       string
@@ -65,8 +71,8 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	return nil
 }
 
-func (g *globomapClient) Query(collection, name, ip string) (*globomapQueryResult, error) {
-	results, err := g.queryByName(collection, name)
+func (g *globomapClient) Query(f globomapQueryFields) (*globomapQueryResult, error) {
+	results, err := g.queryByName(f.collection, f.name)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +81,7 @@ func (g *globomapClient) Query(collection, name, ip string) (*globomapQueryResul
 	}
 	for _, result := range results {
 		for _, resultIP := range result.Properties.IPs {
-			if resultIP == ip {
+			if resultIP == f.ip {
 				return &result, nil
 			}
 		}
