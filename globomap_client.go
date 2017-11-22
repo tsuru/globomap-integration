@@ -39,6 +39,7 @@ type globomapProperties struct {
 }
 
 type globomapResponse struct {
+	JobID   string `json:"jobid"`
 	Message string `json:"message"`
 }
 
@@ -67,7 +68,7 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 		return err
 	}
 	defer resp.Body.Close()
-	fmt.Println(data.Message)
+	fmt.Println(&data)
 	return nil
 }
 
@@ -141,4 +142,8 @@ func (g *globomapClient) body(data []globomapPayload) io.Reader {
 		return nil
 	}
 	return bytes.NewReader(b)
+}
+
+func (r *globomapResponse) String() string {
+	return fmt.Sprintf("[%s] %s", r.JobID, r.Message)
 }

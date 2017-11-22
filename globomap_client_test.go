@@ -120,3 +120,11 @@ func (s *S) TestGlobomapQueryReturnsWhenOneResultWithoutIP(c *check.C) {
 	c.Assert(result.Id, check.Equals, "9876")
 	c.Assert(result.Name, check.Equals, "vm-1234")
 }
+
+func (s *S) TestGlobomapResponseString(c *check.C) {
+	r := globomapResponse{
+		JobID:   "12345",
+		Message: "Updates published successfully",
+	}
+	c.Assert(r.String(), check.Equals, "[12345] Updates published successfully")
+}
