@@ -42,11 +42,6 @@ type poolOperation struct {
 	poolName string
 }
 
-const (
-	MAX_RETRIES      = 100
-	RETRY_SLEEP_TIME = 5 * time.Minute
-)
-
 var (
 	_ operation = &nodeOperation{}
 	_ operation = &appPoolOperation{}
@@ -287,11 +282,11 @@ func (op *nodeOperation) retry() {
 		ip:         node.IP(),
 	}
 
-	for i := 0; i < MAX_RETRIES; i++ {
+	for i := 0; i < env.config.maxRetries; i++ {
 		if env.config.verbose {
-			fmt.Printf("(%d/%d) retrying globomap query in %s\n", i+1, MAX_RETRIES, RETRY_SLEEP_TIME)
+			fmt.Printf("(%d/%d) retrying globomap query in %s\n", i+1, env.config.maxRetries, env.config.retrySleepTime)
 		}
-		time.Sleep(RETRY_SLEEP_TIME)
+		time.Sleep(env.config.retrySleepTime)
 
 		queryResult, err := env.globomap.Query(f)
 		if queryResult == nil || err != nil {

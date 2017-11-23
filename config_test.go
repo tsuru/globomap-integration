@@ -5,6 +5,7 @@
 package main
 
 import (
+	"os"
 	"time"
 
 	"gopkg.in/check.v1"
@@ -19,6 +20,8 @@ func (s *S) TestConfigDefault(c *check.C) {
 	c.Assert(config.start, check.NotNil)
 	c.Assert(*config.start, check.DeepEquals, time.Duration(24*time.Hour))
 	c.Assert(config.repeat, check.IsNil)
+	c.Assert(config.retrySleepTime, check.Equals, 5*time.Minute)
+	c.Assert(config.maxRetries, check.Equals, 20)
 	c.Assert(env.cmd, check.FitsTypeOf, &updateCmd{})
 }
 
@@ -69,6 +72,26 @@ func (s *S) TestConfigRepeat(c *check.C) {
 	c.Assert(*config.repeat, check.DeepEquals, time.Duration(3*time.Minute))
 	c.Assert(config.start, check.NotNil)
 	c.Assert(*config.start, check.DeepEquals, time.Duration(6*time.Minute))
+}
+
+func (s *S) TestConfigRetrySleepTime(c *check.C) {
+	os.Setenv("RETRY_SLEEP_TIME", "2h")
+	config := NewConfig()
+	c.Assert(config.retrySleepTime, check.Equals, 2*time.Hour)
+
+	os.Setenv("RETRY_SLEEP_TIME", "invalid")
+	config = NewConfig()
+	c.Assert(config.retrySleepTime, check.Equals, 5*time.Minute)
+}
+
+func (s *S) TestConfigMaxRetries(c *check.C) {
+	os.Setenv("MAX_RETRIES", "5")
+	config := NewConfig()
+	c.Assert(config.maxRetries, check.Equals, 5)
+
+	os.Setenv("MAX_RETRIES", "not a number")
+	config = NewConfig()
+	c.Assert(config.maxRetries, check.Equals, 20)
 }
 
 func (s *S) TestConfigInvalidRepeat(c *check.C) {

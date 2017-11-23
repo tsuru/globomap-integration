@@ -24,6 +24,8 @@ type configParams struct {
 	globomapLoaderHostname string
 	start                  *time.Duration
 	repeat                 *time.Duration
+	retrySleepTime         time.Duration
+	maxRetries             int
 }
 
 type flags struct {
@@ -36,11 +38,30 @@ type flags struct {
 }
 
 func NewConfig() configParams {
-	return configParams{
+	config := configParams{
 		tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
 		tsuruToken:             os.Getenv("TSURU_TOKEN"),
 		globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
 		globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
+		retrySleepTime:         5 * time.Minute,
+		maxRetries:             20,
+	}
+	config.processRetryArguments()
+	return config
+}
+
+func (c *configParams) processRetryArguments() {
+	retry, err := c.parseTimeDuration(os.Getenv("RETRY_SLEEP_TIME"))
+	if retry != nil && err == nil {
+		c.retrySleepTime = *retry
+	}
+
+	max := os.Getenv("MAX_RETRIES")
+	if max != "" {
+		maxInt, err := strconv.Atoi(max)
+		if err == nil && maxInt > 0 {
+			c.maxRetries = maxInt
+		}
 	}
 }
 
