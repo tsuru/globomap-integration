@@ -8,7 +8,7 @@ build:
 	go build
 
 test:
-	go test -check.v
+	go test -check.v -race
 
 deploy:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o globomap-integration
