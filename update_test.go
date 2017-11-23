@@ -594,9 +594,9 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 	defer globomapApi.Close()
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(req.Method, check.Equals, http.MethodPost)
 		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
 
@@ -629,14 +629,11 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 	cmd := &updateCmd{}
 	cmd.Run()
 
-	for i := 0; i < 500; i++ {
-		// Wait for retry to run
-		time.Sleep(10 * time.Millisecond)
-		if atomic.LoadInt32(&requests) == 1 {
-			return
-		}
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
 	}
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
 func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
