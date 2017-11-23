@@ -88,7 +88,7 @@ func (g *globomapClient) post(payload []globomapPayload) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusAccepted {
 		return errors.New(resp.Status)
 	}
 

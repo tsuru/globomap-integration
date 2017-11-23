@@ -21,6 +21,7 @@ func (s *S) TestPost(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 		c.Assert(r.Header.Get("Content-Type"), check.Equals, "application/json")
 
+		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(globomapResponse{Message: "ok"})
 	}))
 	defer server.Close()
@@ -57,6 +58,7 @@ func (s *S) TestPostInChunks(c *check.C) {
 		defer req.Body.Close()
 		c.Assert(data, check.HasLen, expectedPayloadLen)
 
+		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(globomapResponse{JobID: fmt.Sprintf("%d", count), Message: "ok"})
 	}))
 	defer server.Close()
