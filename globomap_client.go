@@ -122,7 +122,7 @@ func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, er
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("%s\n", data)
+		fmt.Println(data)
 		resp := &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "OK",

@@ -37,8 +37,8 @@ globomap-integration --repeat 6h
 
 In repeat mode, queries to globomap API that don't find results are retried by default. You can set two optional environment variables to configure the retry params:
 
-`RETRY_SLEEP_TIME`: sleep time between retries; defaults to 5 minutes
-`MAX_RETRIES`: maximum number of retries for each query; defaults to 20
+- `RETRY_SLEEP_TIME`: sleep time between retries; defaults to 5 minutes
+- `MAX_RETRIES`: maximum number of retries for each query; defaults to 20
 
 ### Load mode
 

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"gopkg.in/check.v1"
 	"gopkg.in/mgo.v2/bson"
@@ -543,6 +544,98 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+}
+
+func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
+	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/events":
+			if req.FormValue("target.type") == "" {
+				e1 := newEvent("node.create", "1.1.1.1")
+				json.NewEncoder(w).Encode([]event{e1})
+			} else {
+				json.NewEncoder(w).Encode(nil)
+			}
+		case "/pools":
+			p1 := pool{
+				Name:        "pool1",
+				Provisioner: "docker",
+				Default:     false,
+				Public:      true,
+				Teams:       []string{"team1", "team2", "team3"},
+			}
+			json.NewEncoder(w).Encode([]pool{p1})
+		case "/node":
+			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
+		}
+	}))
+	defer tsuruServer.Close()
+	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+
+	var globomapApiRequests int32
+	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		re := regexp.MustCompile(`"value":"([^"]*)"`)
+		matches := re.FindAllStringSubmatch(req.FormValue("query"), -1)
+		c.Assert(matches, check.HasLen, 1)
+		c.Assert(matches[0], check.HasLen, 2)
+
+		queryResult := []globomapQueryResult{}
+		if atomic.AddInt32(&globomapApiRequests, 1) > 1 {
+			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.1.1.1"}}})
+		}
+		json.NewEncoder(w).Encode(
+			struct{ Documents []globomapQueryResult }{
+				Documents: queryResult,
+			},
+		)
+	}))
+	defer globomapApi.Close()
+	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
+
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		c.Assert(req.Method, check.Equals, http.MethodPost)
+		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
+
+		decoder := json.NewDecoder(req.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer req.Body.Close()
+		c.Assert(data, check.HasLen, 1)
+
+		el, ok := data[0]["element"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(data[0]["action"], check.Equals, "UPDATE")
+		c.Assert(data[0]["collection"], check.Equals, "tsuru_pool_comp_unit")
+		c.Assert(data[0]["type"], check.Equals, "edges")
+		c.Assert(data[0]["key"], check.Equals, "tsuru_1_1_1_1")
+		c.Assert(el["id"], check.Equals, "1.1.1.1")
+		c.Assert(el["name"], check.Equals, "node1")
+		c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
+		c.Assert(el["to"], check.Equals, "comp_unit/globomap_node1")
+		props, ok := el["properties"].(map[string]interface{})
+		c.Assert(ok, check.Equals, true)
+		c.Assert(props["address"], check.Equals, "https://1.1.1.1:2376")
+	}))
+	defer server.Close()
+	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
+	setup([]string{"--repeat", "1m"})
+
+	env.config.retrySleepTime = 0
+	cmd := &updateCmd{}
+	cmd.Run()
+
+	for i := 0; i < 500; i++ {
+		// Wait for retry to run
+		time.Sleep(10 * time.Millisecond)
+		if atomic.LoadInt32(&requests) == 1 {
+			return
+		}
+	}
 	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
 }
 
