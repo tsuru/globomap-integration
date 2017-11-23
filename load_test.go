@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sync/atomic"
+	"time"
 
 	"gopkg.in/check.v1"
 )
@@ -68,9 +69,11 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 	defer globomapApi.Close()
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
-	var requests int32
+	requests := make(chan bool, 3)
 	globomapLoader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer func() {
+			requests <- true
+		}()
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -160,7 +163,18 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 
 	cmd := &loadCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(3))
+
+	start := time.Now()
+	fullTimeout := 5 * time.Second
+	timeout := fullTimeout
+	for i := 0; i < 3; i++ {
+		select {
+		case <-requests:
+		case <-time.After(timeout):
+			c.Fail()
+		}
+		timeout = fullTimeout - time.Since(start)
+	}
 	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
 	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
 }
@@ -179,7 +193,7 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.ExpectFailure("No request should have been done")
 	}))
@@ -189,7 +203,12 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 
 	cmd := &loadCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
+
+	select {
+	case <-requests:
+		c.Fail()
+	case <-time.After(1 * time.Second):
+	}
 }
 
 func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
@@ -221,9 +240,9 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -278,5 +297,9 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 
 	cmd := &loadCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }

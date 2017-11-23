@@ -53,9 +53,9 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -114,7 +114,12 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }
 
 func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
@@ -153,9 +158,9 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -214,7 +219,12 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
 	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
 }
@@ -230,8 +240,9 @@ func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(requests)
 		c.ExpectFailure("No request should have been done")
 	}))
 	defer server.Close()
@@ -240,7 +251,12 @@ func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(0))
+
+	select {
+	case <-requests:
+		c.Fail()
+	case <-time.After(1 * time.Second):
+	}
 }
 
 func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
@@ -275,9 +291,9 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -332,7 +348,12 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }
 
 func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
@@ -361,9 +382,9 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -397,7 +418,12 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }
 
 func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
@@ -472,9 +498,9 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 	defer globomapApi.Close()
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(req.Method, check.Equals, http.MethodPost)
 		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
 
@@ -544,7 +570,12 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }
 
 func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
@@ -658,9 +689,9 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -677,5 +708,10 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 
 	cmd := &updateCmd{}
 	cmd.Run()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }

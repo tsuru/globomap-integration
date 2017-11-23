@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sync/atomic"
+	"time"
 
 	check "gopkg.in/check.v1"
 )
@@ -35,9 +35,9 @@ func (s *S) TestNodeOperationNode(c *check.C) {
 }
 
 func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
-	var requests int32
+	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		defer close(requests)
 		c.Assert(r.URL.Path, check.Equals, "/node")
 
 		n1 := node{Id: "node1", Address: "https://10.20.30.40:2376"}
@@ -50,7 +50,12 @@ func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
 	op := &nodeOperation{nodeAddr: "https://10.20.30.40:2376"}
 	op.node()
 	op.node()
-	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(1))
+
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		c.Fail()
+	}
 }
 
 func (s *S) TestNodeOperationNodeError(c *check.C) {
