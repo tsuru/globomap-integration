@@ -8,6 +8,12 @@
   revision = "86b8c1b864aadcf9c94d67bc607ce3f19cbb9aa2"
 
 [[projects]]
+  name = "github.com/tsuru/tsuru"
+  packages = ["errors"]
+  revision = "c91725578089a31e3b485ea3af94705334bb89ff"
+  version = "1.4.0"
+
+[[projects]]
   branch = "v1"
   name = "gopkg.in/check.v1"
   packages = ["."]
@@ -22,6 +28,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "68602b89332e0e028ce7eed225e3d17a966d1d8dc95e5bcf93849512a97e2ee9"
+  inputs-digest = "a2e168ae3653bc17f4b06167ac16b407cbd39d90d4eafbe99da6f91aebba9bc0"
   solver-name = "gps-cdcl"
   solver-version = 1

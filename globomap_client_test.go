@@ -6,9 +6,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 
 	"gopkg.in/check.v1"
 )
@@ -34,6 +36,87 @@ func (s *S) TestPost(c *check.C) {
 	}
 	err := client.Post(payload)
 	c.Assert(err, check.IsNil)
+}
+
+func (s *S) TestPostInChunks(c *check.C) {
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt32(&requests, 1)
+		c.Assert(req.Method, check.Equals, http.MethodPost)
+		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
+		c.Assert(req.Header.Get("Content-Type"), check.Equals, "application/json")
+
+		expectedPayloadLen := 100
+		if count == 2 {
+			expectedPayloadLen = 1
+		}
+		decoder := json.NewDecoder(req.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer req.Body.Close()
+		c.Assert(data, check.HasLen, expectedPayloadLen)
+
+		json.NewEncoder(w).Encode(globomapResponse{JobID: fmt.Sprintf("%d", count), Message: "ok"})
+	}))
+	defer server.Close()
+	client := globomapClient{
+		LoaderHostname: server.URL,
+	}
+
+	payload := make([]globomapPayload, 101)
+	for i := 0; i <= 100; i++ {
+		payload[i] = map[string]interface{}{
+			fmt.Sprintf("k%d", i): fmt.Sprintf("v%d", i),
+		}
+	}
+	env.config.sleepTimeBetweenChunks = 0
+	err := client.Post(payload)
+	c.Assert(err, check.IsNil)
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(2))
+}
+
+func (s *S) TestPostInChunksWithErrors(c *check.C) {
+	var requests int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt32(&requests, 1)
+		c.Assert(req.Method, check.Equals, http.MethodPost)
+		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
+		c.Assert(req.Header.Get("Content-Type"), check.Equals, "application/json")
+
+		expectedPayloadLen := 100
+		if count == 3 {
+			expectedPayloadLen = 1
+		}
+		decoder := json.NewDecoder(req.Body)
+		var data []globomapPayload
+		err := decoder.Decode(&data)
+		c.Assert(err, check.IsNil)
+		defer req.Body.Close()
+		c.Assert(data, check.HasLen, expectedPayloadLen)
+
+		if count == 2 {
+			json.NewEncoder(w).Encode(globomapResponse{JobID: fmt.Sprintf("%d", count), Message: "ok"})
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	client := globomapClient{
+		LoaderHostname: server.URL,
+	}
+
+	payload := make([]globomapPayload, 201)
+	for i := 0; i <= 200; i++ {
+		payload[i] = map[string]interface{}{
+			fmt.Sprintf("k%d", i): fmt.Sprintf("v%d", i),
+		}
+	}
+
+	env.config.sleepTimeBetweenChunks = 0
+	err := client.Post(payload)
+	c.Assert(err, check.NotNil)
+	c.Assert(atomic.LoadInt32(&requests), check.Equals, int32(3))
 }
 
 func (s *S) TestPostNoContent(c *check.C) {

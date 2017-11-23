@@ -26,6 +26,7 @@ type configParams struct {
 	repeat                 *time.Duration
 	retrySleepTime         time.Duration
 	maxRetries             int
+	sleepTimeBetweenChunks time.Duration
 }
 
 type flags struct {
@@ -45,6 +46,7 @@ func NewConfig() configParams {
 		globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
 		retrySleepTime:         5 * time.Minute,
 		maxRetries:             20,
+		sleepTimeBetweenChunks: 10 * time.Second,
 	}
 	config.processRetryArguments()
 	return config

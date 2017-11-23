@@ -11,8 +11,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net/http"
 	"net/url"
+	"time"
+
+	tsuruErrors "github.com/tsuru/tsuru/errors"
 )
 
 type globomapClient struct {
@@ -44,6 +48,37 @@ type globomapResponse struct {
 }
 
 func (g *globomapClient) Post(payload []globomapPayload) error {
+	maxPayloadItems := 100
+	if len(payload) <= maxPayloadItems {
+		return g.post(payload)
+	}
+
+	chunks := int(math.Ceil(float64(len(payload)) / float64(maxPayloadItems)))
+	errs := tsuruErrors.NewMultiError()
+	for i := 0; i < chunks; i++ {
+		start := i * maxPayloadItems
+		end := start + maxPayloadItems
+		if end > len(payload) {
+			end = len(payload)
+		}
+
+		if env.config.verbose {
+			fmt.Printf("Posting chunk %d/%d\n", i+1, chunks)
+		}
+		err := g.post(payload[start:end])
+		if err != nil {
+			errs.Add(err)
+		}
+		time.Sleep(env.config.sleepTimeBetweenChunks)
+	}
+
+	if errs.Len() > 0 {
+		return errs
+	}
+	return nil
+}
+
+func (g *globomapClient) post(payload []globomapPayload) error {
 	path := "/v1/updates"
 	body := g.body(payload)
 	if body == nil {
@@ -122,7 +157,7 @@ func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, er
 		if err != nil {
 			return nil, err
 		}
-		fmt.Println(data)
+		fmt.Println(string(data))
 		resp := &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "OK",
