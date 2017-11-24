@@ -15,7 +15,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 )
 
-const TIME_FORMAT = "2006-01-02T15:04:05MST"
+const TIME_FORMAT = "2006-01-02T15:04:05-07:00"
 
 type tsuruClient struct {
 	Hostname string

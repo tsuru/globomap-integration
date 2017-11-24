@@ -297,6 +297,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 
 	cmd := &loadCmd{}
 	cmd.Run()
+
 	select {
 	case <-requests:
 	case <-time.After(5 * time.Second):
