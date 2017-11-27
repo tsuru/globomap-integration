@@ -282,11 +282,12 @@ func (op *nodeOperation) retry() {
 		ip:         node.IP(),
 	}
 
-	for i := 0; i < env.config.maxRetries; i++ {
+	for i := 1; i <= env.config.maxRetries; i++ {
+		retrySleepTime := env.config.retrySleepTime * time.Duration(i)
 		if env.config.verbose {
-			fmt.Printf("(%d/%d) retrying globomap query in %s\n", i+1, env.config.maxRetries, env.config.retrySleepTime)
+			fmt.Printf("(%d/%d) retrying globomap query in %s\n", i, env.config.maxRetries, retrySleepTime)
 		}
-		time.Sleep(env.config.retrySleepTime)
+		time.Sleep(retrySleepTime)
 
 		queryResult, err := env.globomap.Query(f)
 		if queryResult == nil || err != nil {
