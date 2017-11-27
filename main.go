@@ -72,6 +72,17 @@ func postUpdates(operations []operation) {
 		payload := op.toPayload()
 		if payload != nil {
 			data = append(data, *payload)
+
+			if env.config.verbose {
+				switch v := op.(type) {
+				case *appOperation:
+					fmt.Printf("%s app %s\n", v.action, v.appName)
+				case *poolOperation:
+					fmt.Printf("%s pool %s\n", v.action, v.poolName)
+				case *nodeOperation:
+					fmt.Printf("%s node %s\n", v.action, v.nodeAddr)
+				}
+			}
 		}
 	}
 	err := env.globomap.Post(data)
