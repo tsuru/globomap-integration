@@ -124,8 +124,8 @@ func (s *S) TestAppListError(c *check.C) {
 func (s *S) TestAppInfo(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/apps/test-app")
-		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+		c.Assert(r.URL.Path, check.Equals, "/1.0/apps/test-app")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
 
 		a := app{Name: "test-app"}
 		json.NewEncoder(w).Encode(a)
@@ -145,8 +145,8 @@ func (s *S) TestAppInfo(c *check.C) {
 func (s *S) TestAppInfoNotFound(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/apps/test-app")
-		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+		c.Assert(r.URL.Path, check.Equals, "/1.0/apps/test-app")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
 
 		w.WriteHeader(http.StatusNotFound)
 	}))

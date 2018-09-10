@@ -109,21 +109,26 @@ func (op *appOperation) properties() map[string]interface{} {
 		return nil
 	}
 
-	return map[string]interface{}{
-		"description":   app.Description,
-		"tags":          app.Tags,
-		"platform":      app.Platform,
-		"addresses":     app.Addresses(),
-		"router":        app.Router,
-		"owner":         app.Owner,
-		"team_owner":    app.TeamOwner,
-		"teams":         app.Teams,
-		"plan_name":     app.Plan.Name,
-		"plan_router":   app.Plan.Router,
-		"plan_memory":   strconv.Itoa(app.Plan.Memory),
-		"plan_swap":     strconv.Itoa(app.Plan.Swap),
-		"plan_cpushare": strconv.Itoa(app.Plan.Cpushare),
+	props := map[string]interface{}{
+		"description": app.Description,
+		"tags":        app.Tags,
+		"platform":    app.Platform,
+		"addresses":   app.Addresses(),
+		"router":      app.Router,
+		"owner":       app.Owner,
+		"team_owner":  app.TeamOwner,
+		"teams":       app.Teams,
 	}
+
+	if app.Plan != nil {
+		props["plan_name"] = app.Plan.Name
+		props["plan_router"] = app.Plan.Router
+		props["plan_memory"] = strconv.FormatInt(app.Plan.Memory, 10)
+		props["plan_swap"] = strconv.FormatInt(app.Plan.Swap, 10)
+		props["plan_cpushare"] = strconv.Itoa(int(app.Plan.Cpushare))
+	}
+
+	return props
 }
 
 func (op *appPoolOperation) app() (*app, error) {

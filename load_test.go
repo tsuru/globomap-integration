@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 	"gopkg.in/check.v1"
 )
 
@@ -24,11 +25,11 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		switch req.URL.Path {
 		case "/1.0/apps":
 			json.NewEncoder(w).Encode([]app{a1, a2})
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			atomic.AddInt32(&requestAppInfo1, 1)
 			a1.Description = "my first app"
 			json.NewEncoder(w).Encode(a1)
-		case "/apps/myapp2":
+		case "/1.0/apps/myapp2":
 			atomic.AddInt32(&requestAppInfo2, 1)
 			a2.Description = "my second app"
 			json.NewEncoder(w).Encode(a2)
@@ -182,7 +183,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch req.URL.Path {
-		case "/apps":
+		case "/1.0/apps":
 			json.NewEncoder(w).Encode([]app{})
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
@@ -224,12 +225,12 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 			Owner:       "me@example.com",
 			TeamOwner:   "my-team",
 			Teams:       []string{"team1", "team2"},
-			Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+			Plan:        &tsuru.Plan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
 		}
 		switch req.URL.Path {
 		case "/1.0/apps":
 			json.NewEncoder(w).Encode([]app{{Name: a.Name}})
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(a)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 	"gopkg.in/check.v1"
 	"gopkg.in/mgo.v2/bson"
 )
@@ -42,7 +43,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
@@ -143,10 +144,10 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			atomic.AddInt32(&requestAppInfo1, 1)
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
-		case "/apps/myapp2":
+		case "/1.0/apps/myapp2":
 			atomic.AddInt32(&requestAppInfo2, 1)
 			json.NewEncoder(w).Encode(app{Name: "myapp2", Pool: "pool1"})
 		case "/pools":
@@ -271,7 +272,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			a := app{
 				Name:        "myapp1",
 				Description: "about my app",
@@ -283,7 +284,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 				Owner:       "me@example.com",
 				TeamOwner:   "my-team",
 				Teams:       []string{"team1", "team2"},
-				Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+				Plan:        &tsuru.Plan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
 			}
 			json.NewEncoder(w).Encode(a)
 		}
@@ -682,7 +683,7 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/apps/myapp1":
+		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(app{})
 		}
 	}))

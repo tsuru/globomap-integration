@@ -25,20 +25,7 @@ type tsuruClient struct {
 	Token    string
 }
 
-type app struct {
-	Name        string
-	Pool        string
-	Description string
-	Tags        []string
-	Platform    string
-	Router      string
-	Teams       []string
-	Ip          string
-	Cname       []string
-	Owner       string
-	TeamOwner   string
-	Plan        appPlan
-}
+type app tsuru.App
 
 type appPlan struct {
 	Cpushare int
@@ -153,20 +140,12 @@ func (t *tsuruClient) AppList() ([]tsuru.MiniApp, error) {
 }
 
 func (t *tsuruClient) AppInfo(name string) (*app, error) {
-	path := "/apps/" + name
-	resp, err := t.doRequest(path)
+	a, _, err := t.apiClient().AppApi.AppGet(context.Background(), name)
 	if err != nil {
 		return nil, err
 	}
-	var a app
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&a)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return &a, nil
+	iApp := app(a)
+	return &iApp, nil
 }
 
 func (t *tsuruClient) PoolList() ([]pool, error) {
