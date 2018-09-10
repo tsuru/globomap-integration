@@ -16,11 +16,11 @@ import (
 
 func (s *S) TestNodeOperationNode(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c.Assert(r.URL.Path, check.Equals, "/node")
+		c.Assert(r.URL.Path, check.Equals, "/1.2/node")
 
-		n1 := node{Id: "node1", Address: "https://10.20.30.40:2376"}
-		n2 := node{Id: "node2", Address: "https://10.20.30.41:2376"}
-		n3 := node{Id: "node3", Address: "https://10.20.30.42:2376"}
+		n1 := node{Address: "https://10.20.30.40:2376"}
+		n2 := node{Iaasid: "1234", Address: "https://10.20.30.41:2376"}
+		n3 := node{Address: "https://10.20.30.42:2376"}
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 	}))
 	defer server.Close()
@@ -31,16 +31,16 @@ func (s *S) TestNodeOperationNode(c *check.C) {
 	node, err := op.node()
 	c.Assert(err, check.IsNil)
 	c.Assert(node, check.NotNil)
-	c.Assert(node.Id, check.Equals, "node2")
+	c.Assert(node.Iaasid, check.Equals, "1234")
 }
 
 func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(requests)
-		c.Assert(r.URL.Path, check.Equals, "/node")
+		c.Assert(r.URL.Path, check.Equals, "/1.2/node")
 
-		n1 := node{Id: "node1", Address: "https://10.20.30.40:2376"}
+		n1 := node{Address: "https://10.20.30.40:2376"}
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
 	}))
 	defer server.Close()
@@ -60,7 +60,7 @@ func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
 
 func (s *S) TestNodeOperationNodeError(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c.Assert(r.URL.Path, check.Equals, "/node")
+		c.Assert(r.URL.Path, check.Equals, "/1.2/node")
 
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))

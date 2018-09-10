@@ -464,10 +464,10 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 				Teams:       []string{"team1"},
 			}
 			json.NewEncoder(w).Encode([]pool{p1, p2})
-		case "/node":
-			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
-			n3 := node{Pool: "pool2", IaaSID: "node3", Address: "3.3.3.3"}
-			n5 := node{Pool: "pool2", IaaSID: "node5", Address: "https://5.5.5.5:2376"}
+		case "/1.2/node":
+			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}
+			n3 := node{Pool: "pool2", Iaasid: "node3", Address: "3.3.3.3"}
+			n5 := node{Pool: "pool2", Iaasid: "node5", Address: "https://5.5.5.5:2376"}
 			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n3, n5}})
 		}
 	}))
@@ -598,8 +598,8 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 				Teams:       []string{"team1", "team2", "team3"},
 			}
 			json.NewEncoder(w).Encode([]pool{p1})
-		case "/node":
-			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
+		case "/1.2/node":
+			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}
 			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
 		}
 	}))

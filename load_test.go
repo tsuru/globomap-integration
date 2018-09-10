@@ -35,10 +35,10 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			json.NewEncoder(w).Encode(a2)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
-		case "/node":
-			n1 := node{Pool: "pool1", IaaSID: "node1", Address: "https://1.1.1.1:2376"}
-			n2 := node{Pool: "pool2", IaaSID: "node2", Address: "https://2.2.2.2:2376"}
-			n3 := node{Pool: "pool1", IaaSID: "node3", Address: "https://3.3.3.3:2376"}
+		case "/1.2/node":
+			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}
+			n2 := node{Pool: "pool2", Iaasid: "node2", Address: "https://2.2.2.2:2376"}
+			n3 := node{Pool: "pool1", Iaasid: "node3", Address: "https://3.3.3.3:2376"}
 			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 		}
 	}))
@@ -187,7 +187,7 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 			json.NewEncoder(w).Encode([]app{})
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
-		case "/node":
+		case "/1.2/node":
 			json.NewEncoder(w).Encode(nil)
 		}
 	}))
@@ -234,7 +234,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 			json.NewEncoder(w).Encode(a)
 		case "/pools":
 			json.NewEncoder(w).Encode([]pool{})
-		case "/node":
+		case "/1.2/node":
 			json.NewEncoder(w).Encode(nil)
 		}
 	}))

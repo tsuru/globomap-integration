@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -27,14 +26,6 @@ type tsuruClient struct {
 
 type app tsuru.App
 
-type appPlan struct {
-	Cpushare int
-	Memory   int
-	Name     string
-	Router   string
-	Swap     int
-}
-
 type pool struct {
 	Name        string
 	Provisioner string
@@ -43,15 +34,7 @@ type pool struct {
 	Teams       []string
 }
 
-type node struct {
-	Id       string
-	Address  string
-	Port     int
-	Protocol string
-	Pool     string
-	Status   string
-	IaaSID   string
-}
+type node tsuru.Node
 
 type event struct {
 	Target struct {
@@ -89,18 +72,11 @@ func (e *event) EndData(value interface{}) error {
 }
 
 func (n *node) Name() string {
-	return n.IaaSID
+	return n.Iaasid
 }
 
 func (n *node) Addr() string {
-	addr := n.Address
-	if n.Protocol != "" {
-		addr = fmt.Sprintf("%s://%s", n.Protocol, addr)
-	}
-	if n.Port != 0 {
-		addr = fmt.Sprintf("%s:%d", addr, n.Port)
-	}
-	return addr
+	return n.Address
 }
 
 func (n *node) IP() string {
@@ -170,26 +146,15 @@ func (t *tsuruClient) PoolList() ([]pool, error) {
 }
 
 func (t *tsuruClient) NodeList() ([]node, error) {
-	path := "/node"
-	resp, err := t.doRequest(path)
+	nodeList, _, err := t.apiClient().NodeApi.NodeList(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New(resp.Status)
+	nodes := make([]node, len(nodeList.Nodes))
+	for i := range nodeList.Nodes {
+		nodes[i] = node(nodeList.Nodes[i])
 	}
-
-	var data struct {
-		Nodes []node
-	}
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&data)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return data.Nodes, nil
+	return nodes, nil
 }
 
 func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
