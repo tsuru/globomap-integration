@@ -5,15 +5,15 @@
 package docker
 
 import (
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/provision/docker/container"
 	"github.com/tsuru/tsuru/router/rebuild"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (p *dockerProvisioner) checkContainer(container *container.Container) error {
 	if container.Available() {
-		info, err := container.NetworkInfo(p)
+		info, err := container.NetworkInfo(p.ClusterClient())
 		if err != nil {
 			return err
 		}

@@ -26,16 +26,16 @@ import (
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/safe"
 	"gopkg.in/check.v1"
+	"k8s.io/api/apps/v1beta2"
+	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
 func (s *S) TestListNodes(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	nodes, err := s.p.ListNodes([]string{})
 	c.Assert(err, check.IsNil)
 	c.Assert(nodes, check.HasLen, 2)
@@ -50,7 +50,7 @@ func (s *S) TestListNodesWithoutNodes(c *check.C) {
 }
 
 func (s *S) TestListNodesFilteringByAddress(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	nodes, err := s.p.ListNodes([]string{"192.168.99.1"})
 	c.Assert(err, check.IsNil)
 	c.Assert(nodes, check.HasLen, 1)
@@ -65,8 +65,8 @@ func (s *S) TestListNodesTimeoutShort(c *check.C) {
 		<-block
 	}))
 	defer func() { close(block); blackhole.Close() }()
-	clientForConfig = defaultClientForConfig
-	s.mockfakeNodes(c, blackhole.URL)
+	ClientForConfig = defaultClientForConfig
+	s.mock.MockfakeNodes(c, blackhole.URL)
 	a := &app.App{Name: "myapp", TeamOwner: s.team.Name}
 	err := app.CreateApp(a, s.user)
 	c.Assert(err, check.IsNil)
@@ -77,7 +77,7 @@ func (s *S) TestListNodesTimeoutShort(c *check.C) {
 }
 
 func (s *S) TestRemoveNode(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	opts := provision.RemoveNodeOptions{
 		Address: "192.168.99.1",
 	}
@@ -89,7 +89,7 @@ func (s *S) TestRemoveNode(c *check.C) {
 }
 
 func (s *S) TestRemoveNodeNotFound(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	opts := provision.RemoveNodeOptions{
 		Address: "192.168.99.99",
 	}
@@ -98,8 +98,8 @@ func (s *S) TestRemoveNodeNotFound(c *check.C) {
 }
 
 func (s *S) TestRemoveNodeWithRebalance(c *check.C) {
-	s.mockfakeNodes(c)
-	_, err := s.client.Core().Pods(s.client.Namespace()).Create(&apiv1.Pod{
+	s.mock.MockfakeNodes(c)
+	_, err := s.client.CoreV1().Pods(s.client.Namespace()).Create(&apiv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: s.client.Namespace()},
 	})
 	c.Assert(err, check.IsNil)
@@ -181,7 +181,7 @@ func (s *S) TestAddNodePrefixed(c *check.C) {
 }
 
 func (s *S) TestAddNodeExisting(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	err := s.p.AddNode(provision.AddNodeOptions{
 		Address: "n1",
 		Pool:    "Pxyz",
@@ -197,6 +197,36 @@ func (s *S) TestAddNodeExisting(c *check.C) {
 	c.Assert(n.Metadata(), check.DeepEquals, map[string]string{
 		"tsuru.io/pool": "Pxyz",
 		"tsuru.io/m1":   "v1",
+	})
+}
+
+func (s *S) TestAddNodeIaaSID(c *check.C) {
+	err := s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p1",
+		IaaSID:  "id-1",
+		Metadata: map[string]string{
+			"m1": "v1",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err := s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].Pool(), check.Equals, "p1")
+	c.Assert(nodes[0].Metadata(), check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p1",
+		"tsuru.io/iaas-id": "id-1",
+		"tsuru.io/m1":      "v1",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.ProviderID, check.Equals, "id-1")
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Labels, check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p1",
+		"tsuru.io/iaas-id": "id-1",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Annotations, check.DeepEquals, map[string]string{
+		"tsuru.io/m1": "v1",
 	})
 }
 
@@ -235,6 +265,90 @@ func (s *S) TestUpdateNode(c *check.C) {
 	})
 }
 
+func (s *S) TestUpdateNodeWithIaaSID(c *check.C) {
+	err := s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p1",
+		IaaSID:  "id-1",
+		Metadata: map[string]string{
+			"m1": "v1",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	err = s.p.UpdateNode(provision.UpdateNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p2",
+		Metadata: map[string]string{
+			"m1": "",
+			"m2": "v2",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err := s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].IaaSID(), check.Equals, "id-1")
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].Pool(), check.Equals, "p2")
+	c.Assert(nodes[0].Metadata(), check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p2",
+		"tsuru.io/iaas-id": "id-1",
+		"tsuru.io/m2":      "v2",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.ProviderID, check.Equals, "id-1")
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Labels, check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p2",
+		"tsuru.io/iaas-id": "id-1",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Annotations, check.DeepEquals, map[string]string{
+		"tsuru.io/m2": "v2",
+	})
+	// Try updating by adding the same node with other IaasID, should be ignored.
+	err = s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p2",
+		IaaSID:  "bogus",
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err = s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].IaaSID(), check.Equals, "id-1")
+	c.Assert(nodes[0].Metadata(), check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p2",
+		"tsuru.io/iaas-id": "id-1",
+		"tsuru.io/m2":      "v2",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.ProviderID, check.Equals, "id-1")
+}
+
+func (s *S) TestUpdateNodeWithIaaSIDPreviousEmpty(c *check.C) {
+	err := s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p1",
+		Metadata: map[string]string{
+			"m1": "v1",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	err = s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p2",
+		IaaSID:  "valid-iaas-id",
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err := s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].IaaSID(), check.Equals, "valid-iaas-id")
+	c.Assert(nodes[0].Metadata(), check.DeepEquals, map[string]string{
+		"tsuru.io/pool":    "p2",
+		"tsuru.io/iaas-id": "valid-iaas-id",
+		"tsuru.io/m1":      "v1",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.ProviderID, check.Equals, "valid-iaas-id")
+}
+
 func (s *S) TestUpdateNodeNoPool(c *check.C) {
 	err := s.p.AddNode(provision.AddNodeOptions{
 		Address: "my-node-addr",
@@ -269,8 +383,95 @@ func (s *S) TestUpdateNodeNoPool(c *check.C) {
 	})
 }
 
+func (s *S) TestUpdateNodeRemoveInProgressTaint(c *check.C) {
+	err := s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p1",
+		Metadata: map[string]string{
+			"m1": "v1",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	n1, err := s.client.CoreV1().Nodes().Get("my-node-addr", metav1.GetOptions{})
+	c.Assert(err, check.IsNil)
+	n1.Spec.Taints = append(n1.Spec.Taints, apiv1.Taint{
+		Key:    tsuruInProgressTaint,
+		Value:  "true",
+		Effect: apiv1.TaintEffectNoSchedule,
+	})
+	_, err = s.client.CoreV1().Nodes().Update(n1)
+	c.Assert(err, check.IsNil)
+	err = s.p.UpdateNode(provision.UpdateNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p2",
+		Metadata: map[string]string{
+			"m1": "",
+			"m2": "v2",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err := s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].Pool(), check.Equals, "p2")
+	c.Assert(nodes[0].Metadata(), check.DeepEquals, map[string]string{
+		"tsuru.io/pool": "p2",
+		"tsuru.io/m2":   "v2",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Labels, check.DeepEquals, map[string]string{
+		"tsuru.io/pool": "p2",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Annotations, check.DeepEquals, map[string]string{
+		"tsuru.io/m2": "v2",
+	})
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.Taints, check.DeepEquals, []apiv1.Taint{})
+}
+
+func (s *S) TestUpdateNodeToggleDisableTaint(c *check.C) {
+	err := s.p.AddNode(provision.AddNodeOptions{
+		Address: "my-node-addr",
+		Pool:    "p1",
+	})
+	c.Assert(err, check.IsNil)
+	err = s.p.UpdateNode(provision.UpdateNodeOptions{
+		Address: "my-node-addr",
+		Disable: true,
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err := s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.Taints, check.DeepEquals, []apiv1.Taint{
+		{Key: "tsuru.io/disabled", Effect: apiv1.TaintEffectNoSchedule},
+	})
+	err = s.p.UpdateNode(provision.UpdateNodeOptions{
+		Address: "my-node-addr",
+		Disable: true,
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err = s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.Taints, check.DeepEquals, []apiv1.Taint{
+		{Key: "tsuru.io/disabled", Effect: apiv1.TaintEffectNoSchedule},
+	})
+	err = s.p.UpdateNode(provision.UpdateNodeOptions{
+		Address: "my-node-addr",
+		Enable:  true,
+	})
+	c.Assert(err, check.IsNil)
+	nodes, err = s.p.ListNodes(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address(), check.Equals, "my-node-addr")
+	c.Assert(nodes[0].(*kubernetesNodeWrapper).node.Spec.Taints, check.DeepEquals, []apiv1.Taint{})
+}
+
 func (s *S) TestUnits(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -318,7 +519,7 @@ func (s *S) TestUnits(c *check.C) {
 }
 
 func (s *S) TestUnitsEmpty(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	a := &app.App{Name: "myapp", TeamOwner: s.team.Name}
 	err := app.CreateApp(a, s.user)
 	c.Assert(err, check.IsNil)
@@ -336,8 +537,8 @@ func (s *S) TestUnitsTimeoutShort(c *check.C) {
 		<-block
 	}))
 	defer func() { close(block); blackhole.Close() }()
-	clientForConfig = defaultClientForConfig
-	s.mockfakeNodes(c, blackhole.URL)
+	ClientForConfig = defaultClientForConfig
+	s.mock.MockfakeNodes(c, blackhole.URL)
 	a := &app.App{Name: "myapp", TeamOwner: s.team.Name}
 	err := app.CreateApp(a, s.user)
 	c.Assert(err, check.IsNil)
@@ -348,9 +549,12 @@ func (s *S) TestUnitsTimeoutShort(c *check.C) {
 }
 
 func (s *S) TestGetNode(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	host := "192.168.99.1"
 	node, err := s.p.GetNode(host)
+	c.Assert(err, check.IsNil)
+	c.Assert(node.Address(), check.Equals, host)
+	node, err = s.p.GetNode("n1")
 	c.Assert(err, check.IsNil)
 	c.Assert(node.Address(), check.Equals, host)
 	node, err = s.p.GetNode("http://doesnotexist.com")
@@ -367,7 +571,7 @@ func (s *S) TestGetNodeWithoutCluster(c *check.C) {
 }
 
 func (s *S) TestRegisterUnit(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -389,10 +593,10 @@ func (s *S) TestRegisterUnit(c *check.C) {
 }
 
 func (s *S) TestRegisterUnitDeployUnit(c *check.C) {
-	a, _, rollback := s.defaultReactions(c)
+	a, _, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
-	err := createBuildPod(buildPodParams{
-		client:           s.client.clusterClient,
+	err := createDeployPod(createPodParams{
+		client:           s.clusterClient,
 		app:              a,
 		sourceImage:      "myimg",
 		destinationImage: "destimg",
@@ -414,7 +618,7 @@ func (s *S) TestRegisterUnitDeployUnit(c *check.C) {
 }
 
 func (s *S) TestAddUnits(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -434,7 +638,7 @@ func (s *S) TestAddUnits(c *check.C) {
 }
 
 func (s *S) TestRemoveUnits(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -460,7 +664,7 @@ func (s *S) TestRemoveUnits(c *check.C) {
 }
 
 func (s *S) TestRestart(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -488,7 +692,7 @@ func (s *S) TestRestart(c *check.C) {
 }
 
 func (s *S) TestStopStart(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -517,10 +721,8 @@ func (s *S) TestStopStart(c *check.C) {
 }
 
 func (s *S) TestProvisionerDestroy(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
-	data := []byte("archivedata")
-	archive := ioutil.NopCloser(bytes.NewReader(data))
 	evt, err := event.New(&event.Opts{
 		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
 		Kind:    permission.PermAppDeploy,
@@ -528,37 +730,42 @@ func (s *S) TestProvisionerDestroy(c *check.C) {
 		Allowed: event.Allowed(permission.PermAppDeploy),
 	})
 	c.Assert(err, check.IsNil)
-	_, err = s.p.UploadDeploy(a, archive, int64(len(data)), false, evt)
+	customData := map[string]interface{}{
+		"processes": map[string]interface{}{
+			"web": "run mycmd arg1",
+		},
+	}
+	err = image.SaveImageCustomData("tsuru/app-myapp:v1", customData)
+	c.Assert(err, check.IsNil)
+	_, err = s.p.Deploy(a, "tsuru/app-myapp:v1", evt)
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	wait()
 	err = s.p.Destroy(a)
 	c.Assert(err, check.IsNil)
-	deps, err := s.client.Extensions().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
+	deps, err := s.client.AppsV1beta2().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(deps.Items, check.HasLen, 0)
-	pods, err := s.client.Core().Pods(s.client.Namespace()).List(metav1.ListOptions{})
+	pods, err := s.client.CoreV1().Pods(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(pods.Items, check.HasLen, 0)
-	replicas, err := s.client.Extensions().ReplicaSets(s.client.Namespace()).List(metav1.ListOptions{})
+	replicas, err := s.client.AppsV1beta2().ReplicaSets(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(replicas.Items, check.HasLen, 0)
-	services, err := s.client.Core().Services(s.client.Namespace()).List(metav1.ListOptions{})
+	services, err := s.client.CoreV1().Services(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(services.Items, check.HasLen, 0)
 }
 
 func (s *S) TestProvisionerDestroyNothingToDo(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	a := provisiontest.NewFakeApp("myapp", "plat", 0)
 	err := s.p.Destroy(a)
 	c.Assert(err, check.IsNil)
 }
 
 func (s *S) TestProvisionerRoutableAddresses(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
-	data := []byte("archivedata")
-	archive := ioutil.NopCloser(bytes.NewReader(data))
 	evt, err := event.New(&event.Opts{
 		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
 		Kind:    permission.PermAppDeploy,
@@ -566,7 +773,14 @@ func (s *S) TestProvisionerRoutableAddresses(c *check.C) {
 		Allowed: event.Allowed(permission.PermAppDeploy),
 	})
 	c.Assert(err, check.IsNil)
-	_, err = s.p.UploadDeploy(a, archive, int64(len(data)), false, evt)
+	customData := map[string]interface{}{
+		"processes": map[string]interface{}{
+			"web": "run mycmd arg1",
+		},
+	}
+	err = image.SaveImageCustomData("tsuru/app-myapp:v1", customData)
+	c.Assert(err, check.IsNil)
+	_, err = s.p.Deploy(a, "tsuru/app-myapp:v1", evt)
 	c.Assert(err, check.IsNil)
 	wait()
 	addrs, err := s.p.RoutableAddresses(a)
@@ -583,38 +797,8 @@ func (s *S) TestProvisionerRoutableAddresses(c *check.C) {
 	})
 }
 
-func (s *S) TestUploadDeploy(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
-	defer rollback()
-	data := []byte("archivedata")
-	archive := ioutil.NopCloser(bytes.NewReader(data))
-	evt, err := event.New(&event.Opts{
-		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
-		Kind:    permission.PermAppDeploy,
-		Owner:   s.token,
-		Allowed: event.Allowed(permission.PermAppDeploy),
-	})
-	c.Assert(err, check.IsNil)
-	img, err := s.p.UploadDeploy(a, archive, int64(len(data)), false, evt)
-	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
-	c.Assert(img, check.Equals, "tsuru/app-myapp:v1")
-	wait()
-	deps, err := s.client.Extensions().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
-	c.Assert(err, check.IsNil)
-	c.Assert(deps.Items, check.HasLen, 2)
-	var depNames []string
-	for _, dep := range deps.Items {
-		depNames = append(depNames, dep.Name)
-	}
-	sort.Strings(depNames)
-	c.Assert(depNames, check.DeepEquals, []string{"myapp-web", "myapp-worker"})
-	units, err := s.p.Units(a)
-	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
-	c.Assert(units, check.HasLen, 2)
-}
-
-func (s *S) TestImageDeploy(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+func (s *S) TestDeploy(c *check.C) {
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	evt, err := event.New(&event.Opts{
 		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
@@ -623,63 +807,83 @@ func (s *S) TestImageDeploy(c *check.C) {
 		Allowed: event.Allowed(permission.PermAppDeploy),
 	})
 	c.Assert(err, check.IsNil)
-	s.logHook = func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"Config": {"Cmd": ["arg1"], "Entrypoint": ["run", "mycmd"], "ExposedPorts": null}}]`))
+	customData := map[string]interface{}{
+		"processes": map[string]interface{}{
+			"web": "run mycmd arg1",
+		},
 	}
-	img, err := s.p.ImageDeploy(a, "myimg", evt)
+	err = image.SaveImageCustomData("tsuru/app-myapp:v1", customData)
+	c.Assert(err, check.IsNil)
+	img, err := s.p.Deploy(a, "tsuru/app-myapp:v1", evt)
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	c.Assert(img, check.Equals, "tsuru/app-myapp:v1")
 	wait()
-	deps, err := s.client.Extensions().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
+	deps, err := s.client.AppsV1beta2().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(deps.Items, check.HasLen, 1)
 	c.Assert(deps.Items[0].Name, check.Equals, "myapp-web")
 	containers := deps.Items[0].Spec.Template.Spec.Containers
 	c.Assert(containers, check.HasLen, 1)
-	c.Assert(containers[0].Command[len(containers[0].Command)-3:], check.DeepEquals, []string{"run", "mycmd", "arg1"})
+	c.Assert(containers[0].Command[len(containers[0].Command)-3:], check.DeepEquals, []string{
+		"/bin/sh",
+		"-lc",
+		"[ -d /home/application/current ] && cd /home/application/current; curl -sSL -m15 -XPOST -d\"hostname=$(hostname)\" -o/dev/null -H\"Content-Type:application/x-www-form-urlencoded\" -H\"Authorization:bearer \" http://apps/myapp/units/register || true && exec run mycmd arg1",
+	})
 	units, err := s.p.Units(a)
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	c.Assert(units, check.HasLen, 1)
 }
 
-func (s *S) TestImageDeployWithProcfile(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+func (s *S) TestDeployBuilderImageWithRegistryAuth(c *check.C) {
+	config.Set("docker:registry", "registry.example.com")
+	defer config.Unset("docker:registry")
+	config.Set("docker:registry-auth:username", "user")
+	defer config.Unset("docker:registry-auth:username")
+	config.Set("docker:registry-auth:password", "pwd")
+	defer config.Unset("docker:registry-auth:password")
+
+	a, _, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
-	evt, err := event.New(&event.Opts{
-		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
-		Kind:    permission.PermAppDeploy,
-		Owner:   s.token,
-		Allowed: event.Allowed(permission.PermAppDeploy),
-	})
-	c.Assert(err, check.IsNil)
-	calls := 0
-	s.logHook = func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if calls == 1 {
-			w.Write([]byte(`[{"Config": {"Cmd": null, "Entrypoint": null, "ExposedPorts": null}}]`))
-		} else {
-			w.Write([]byte(`web: my awesome cmd`))
+	s.client.PrependReactor("create", "pods", func(action ktesting.Action) (handled bool, ret runtime.Object, err error) {
+		pod := action.(ktesting.CreateAction).GetObject().(*apiv1.Pod)
+		containers := pod.Spec.Containers
+		if containers[0].Name == "myapp-v1-deploy" {
+			c.Assert(containers, check.HasLen, 2)
+			sort.Slice(containers, func(i, j int) bool { return containers[i].Name < containers[j].Name })
+			cmds := cleanCmds(containers[0].Command[2])
+			c.Assert(cmds, check.Equals, `end() { touch /tmp/intercontainer/done; }
+trap end EXIT
+while [ ! -f /tmp/intercontainer/status ]; do sleep 1; done
+exit_code=$(cat /tmp/intercontainer/status)
+[ "${exit_code}" != "0" ] && exit "${exit_code}"
+id=$(docker ps -aq -f "label=io.kubernetes.container.name=myapp-v1-deploy" -f "label=io.kubernetes.pod.name=$(hostname)")
+img="registry.example.com/tsuru/app-myapp:v1"
+echo
+echo '---- Building application image ----'
+docker commit "${id}" "${img}" >/dev/null
+sz=$(docker history "${img}" | head -2 | tail -1 | grep -E -o '[0-9.]+\s[a-zA-Z]+\s*$' | sed 's/[[:space:]]*$//g')
+echo " ---> Sending image to repository (${sz})"
+docker login -u "user" -p "pwd" "registry.example.com"
+docker push registry.example.com/tsuru/app-myapp:v1
+docker tag registry.example.com/tsuru/app-myapp:v1 registry.example.com/tsuru/app-myapp:latest
+docker push registry.example.com/tsuru/app-myapp:latest`)
 		}
-	}
-	img, err := s.p.ImageDeploy(a, "myimg", evt)
-	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
-	c.Assert(img, check.Equals, "tsuru/app-myapp:v1")
-	c.Assert(calls, check.Equals, 2)
-	wait()
-	deps, err := s.client.Extensions().Deployments(s.client.Namespace()).List(metav1.ListOptions{})
+		return false, nil, nil
+	})
+	evt, err := event.New(&event.Opts{
+		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
+		Kind:    permission.PermAppDeploy,
+		Owner:   s.token,
+		Allowed: event.Allowed(permission.PermAppDeploy),
+	})
 	c.Assert(err, check.IsNil)
-	c.Assert(deps.Items, check.HasLen, 1)
-	c.Assert(deps.Items[0].Name, check.Equals, "myapp-web")
-	containers := deps.Items[0].Spec.Template.Spec.Containers
-	c.Assert(containers, check.HasLen, 1)
-	c.Assert(containers[0].Command[len(containers[0].Command)-1], check.Matches, `.*my awesome cmd$`)
-	units, err := s.p.Units(a)
+	img, err := s.p.Deploy(a, "registry.example.com/tsuru/app-myapp:v1-builder", evt)
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
-	c.Assert(units, check.HasLen, 1)
+	c.Assert(img, check.Equals, "registry.example.com/tsuru/app-myapp:v1")
 }
 
 func (s *S) TestUpgradeNodeContainer(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	c1 := nodecontainer.NodeContainerConfig{
 		Name: "bs",
 		Config: docker.Config{
@@ -703,21 +907,21 @@ func (s *S) TestUpgradeNodeContainer(c *check.C) {
 	buf := &bytes.Buffer{}
 	err = s.p.UpgradeNodeContainer("bs", "", buf)
 	c.Assert(err, check.IsNil)
-	daemons, err := s.client.Extensions().DaemonSets(s.client.Namespace()).List(metav1.ListOptions{})
+	daemons, err := s.client.AppsV1beta2().DaemonSets(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(daemons.Items, check.HasLen, 3)
 }
 
 func (s *S) TestRemoveNodeContainer(c *check.C) {
-	s.mockfakeNodes(c)
-	_, err := s.client.Extensions().DaemonSets(s.client.Namespace()).Create(&v1beta1.DaemonSet{
+	s.mock.MockfakeNodes(c)
+	_, err := s.client.AppsV1beta2().DaemonSets(s.client.Namespace()).Create(&v1beta2.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "node-container-bs-pool-p1",
 			Namespace: s.client.Namespace(),
 		},
 	})
 	c.Assert(err, check.IsNil)
-	_, err = s.client.Core().Pods(s.client.Namespace()).Create(&apiv1.Pod{
+	_, err = s.client.CoreV1().Pods(s.client.Namespace()).Create(&apiv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "node-container-bs-pool-p1-xyz",
 			Namespace: s.client.Namespace(),
@@ -733,16 +937,16 @@ func (s *S) TestRemoveNodeContainer(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = s.p.RemoveNodeContainer("bs", "p1", ioutil.Discard)
 	c.Assert(err, check.IsNil)
-	daemons, err := s.client.Extensions().DaemonSets(s.client.Namespace()).List(metav1.ListOptions{})
+	daemons, err := s.client.AppsV1beta2().DaemonSets(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(daemons.Items, check.HasLen, 0)
-	pods, err := s.client.Core().Pods(s.client.Namespace()).List(metav1.ListOptions{})
+	pods, err := s.client.CoreV1().Pods(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(pods.Items, check.HasLen, 0)
 }
 
 func (s *S) TestShell(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -767,18 +971,18 @@ func (s *S) TestShell(c *check.C) {
 	})
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	rollback()
-	c.Assert(s.stream["myapp-web"].stdin, check.Equals, "echo test")
+	c.Assert(s.mock.Stream["myapp-web"].Stdin, check.Equals, "echo test")
 	var sz remotecommand.TerminalSize
-	err = json.Unmarshal([]byte(s.stream["myapp-web"].resize), &sz)
+	err = json.Unmarshal([]byte(s.mock.Stream["myapp-web"].Resize), &sz)
 	c.Assert(err, check.IsNil)
 	c.Assert(sz, check.DeepEquals, remotecommand.TerminalSize{Width: 99, Height: 42})
-	c.Assert(s.stream["myapp-web"].urls, check.HasLen, 1)
-	c.Assert(s.stream["myapp-web"].urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
-	c.Assert(s.stream["myapp-web"].urls[0].Query()["command"], check.DeepEquals, []string{"/usr/bin/env", "TERM=xterm", "bash", "-l"})
+	c.Assert(s.mock.Stream["myapp-web"].Urls, check.HasLen, 1)
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Query()["command"], check.DeepEquals, []string{"/usr/bin/env", "TERM=xterm", "bash", "-l"})
 }
 
 func (s *S) TestShellSpecificUnit(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -803,17 +1007,17 @@ func (s *S) TestShellSpecificUnit(c *check.C) {
 	})
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	rollback()
-	c.Assert(s.stream["myapp-web"].stdin, check.Equals, "echo test")
+	c.Assert(s.mock.Stream["myapp-web"].Stdin, check.Equals, "echo test")
 	var sz remotecommand.TerminalSize
-	err = json.Unmarshal([]byte(s.stream["myapp-web"].resize), &sz)
+	err = json.Unmarshal([]byte(s.mock.Stream["myapp-web"].Resize), &sz)
 	c.Assert(err, check.IsNil)
 	c.Assert(sz, check.DeepEquals, remotecommand.TerminalSize{Width: 99, Height: 42})
-	c.Assert(s.stream["myapp-web"].urls, check.HasLen, 1)
-	c.Assert(s.stream["myapp-web"].urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-2-2/exec")
+	c.Assert(s.mock.Stream["myapp-web"].Urls, check.HasLen, 1)
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-2-2/exec")
 }
 
 func (s *S) TestShellSpecificUnitNotFound(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -840,7 +1044,7 @@ func (s *S) TestShellSpecificUnitNotFound(c *check.C) {
 }
 
 func (s *S) TestShellNoUnits(c *check.C) {
-	a, _, rollback := s.defaultReactions(c)
+	a, _, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	buf := safe.NewBuffer([]byte("echo test"))
 	conn := &provisiontest.FakeConn{Buf: buf}
@@ -854,7 +1058,7 @@ func (s *S) TestShellNoUnits(c *check.C) {
 }
 
 func (s *S) TestExecuteCommand(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -874,15 +1078,15 @@ func (s *S) TestExecuteCommand(c *check.C) {
 	rollback()
 	c.Assert(stdout.String(), check.Equals, "stdout datastdout data")
 	c.Assert(stderr.String(), check.Equals, "stderr datastderr data")
-	c.Assert(s.stream["myapp-web"].urls, check.HasLen, 2)
-	c.Assert(s.stream["myapp-web"].urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
-	c.Assert(s.stream["myapp-web"].urls[1].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-2-2/exec")
-	c.Assert(s.stream["myapp-web"].urls[0].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
-	c.Assert(s.stream["myapp-web"].urls[1].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
+	c.Assert(s.mock.Stream["myapp-web"].Urls, check.HasLen, 2)
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
+	c.Assert(s.mock.Stream["myapp-web"].Urls[1].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-2-2/exec")
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
+	c.Assert(s.mock.Stream["myapp-web"].Urls[1].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
 }
 
 func (s *S) TestExecuteCommandOnce(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -902,13 +1106,13 @@ func (s *S) TestExecuteCommandOnce(c *check.C) {
 	rollback()
 	c.Assert(stdout.String(), check.Equals, "stdout data")
 	c.Assert(stderr.String(), check.Equals, "stderr data")
-	c.Assert(s.stream["myapp-web"].urls, check.HasLen, 1)
-	c.Assert(s.stream["myapp-web"].urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
-	c.Assert(s.stream["myapp-web"].urls[0].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
+	c.Assert(s.mock.Stream["myapp-web"].Urls, check.HasLen, 1)
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-web-pod-1-1/exec")
+	c.Assert(s.mock.Stream["myapp-web"].Urls[0].Query()["command"], check.DeepEquals, []string{"/bin/sh", "-lc", "mycmd", "arg1", "arg2"})
 }
 
 func (s *S) TestExecuteCommandIsolated(c *check.C) {
-	a, _, rollback := s.defaultReactions(c)
+	a, _, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{
@@ -922,17 +1126,30 @@ func (s *S) TestExecuteCommandIsolated(c *check.C) {
 	stdout, stderr := safe.NewBuffer(nil), safe.NewBuffer(nil)
 	err = s.p.ExecuteCommandIsolated(stdout, stderr, a, "mycmd", "arg1", "arg2")
 	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
-	c.Assert(stdout.String(), check.Equals, "my log message")
-	c.Assert(stderr.String(), check.Equals, "")
-	c.Assert(s.stream["myapp-isolated-run"].urls, check.HasLen, 1)
-	c.Assert(s.stream["myapp-isolated-run"].urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-isolated-run/log")
-	pods, err := s.client.Core().Pods(s.client.Namespace()).List(metav1.ListOptions{})
+	c.Assert(stdout.String(), check.Equals, "stdout data")
+	c.Assert(stderr.String(), check.Equals, "stderr data")
+	c.Assert(s.mock.Stream["myapp-isolated-run"].Urls, check.HasLen, 1)
+	c.Assert(s.mock.Stream["myapp-isolated-run"].Urls[0].Path, check.DeepEquals, "/api/v1/namespaces/default/pods/myapp-isolated-run/attach")
+	pods, err := s.client.CoreV1().Pods(s.client.Namespace()).List(metav1.ListOptions{})
 	c.Assert(err, check.IsNil)
 	c.Assert(pods.Items, check.HasLen, 0)
+	account, err := s.client.CoreV1().ServiceAccounts(s.client.Namespace()).Get("app-myapp", metav1.GetOptions{})
+	c.Assert(err, check.IsNil)
+	c.Assert(account, check.DeepEquals, &apiv1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "app-myapp",
+			Namespace: s.client.Namespace(),
+			Labels: map[string]string{
+				"tsuru.io/is-tsuru":    "true",
+				"tsuru.io/app-name":    "myapp",
+				"tsuru.io/provisioner": "kubernetes",
+			},
+		},
+	})
 }
 
 func (s *S) TestExecuteCommandIsolatedPodFailed(c *check.C) {
-	a, _, rollback := s.defaultReactions(c)
+	a, _, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	s.client.PrependReactor("create", "pods", func(action ktesting.Action) (handled bool, ret runtime.Object, err error) {
 		pod, ok := action.(ktesting.CreateAction).GetObject().(*apiv1.Pod)
@@ -955,7 +1172,7 @@ func (s *S) TestExecuteCommandIsolatedPodFailed(c *check.C) {
 }
 
 func (s *S) TestStartupMessage(c *check.C) {
-	s.mockfakeNodes(c)
+	s.mock.MockfakeNodes(c)
 	msg, err := s.p.StartupMessage()
 	c.Assert(err, check.IsNil)
 	c.Assert(msg, check.Equals, `Kubernetes provisioner on cluster "c1" - https://clusteraddr:
@@ -970,7 +1187,7 @@ func (s *S) TestStartupMessage(c *check.C) {
 }
 
 func (s *S) TestSleepStart(c *check.C) {
-	a, wait, rollback := s.defaultReactions(c)
+	a, wait, rollback := s.mock.DefaultReactions(c)
 	defer rollback()
 	imgName := "myapp:v1"
 	err := image.SaveImageCustomData(imgName, map[string]interface{}{

@@ -10,16 +10,17 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
-	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/db"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/router"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
+	appTypes "github.com/tsuru/tsuru/types/app"
 	"github.com/tsuru/tsuru/validation"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 var (
@@ -31,16 +32,12 @@ var (
 	ErrPoolHasNoTeam                  = errors.New("no team found for pool")
 	ErrPoolHasNoRouter                = errors.New("no router found for pool")
 	ErrPoolHasNoService               = errors.New("no service found for pool")
-
-	ErrInvalidConstraintType = errors.Errorf("invalid constraint type. Valid types are: %s", strings.Join(validConstraintTypes, ","))
-	validConstraintTypes     = []string{"team", "router", "service"}
 )
 
 type Pool struct {
 	Name        string `bson:"_id"`
 	Default     bool
 	Provisioner string
-	Builder     string
 }
 
 type AddPoolOptions struct {
@@ -49,15 +46,12 @@ type AddPoolOptions struct {
 	Default     bool
 	Force       bool
 	Provisioner string
-	Builder     string
 }
 
 type UpdatePoolOptions struct {
-	Default     *bool
-	Public      *bool
-	Force       bool
-	Provisioner string
-	Builder     string
+	Default *bool
+	Public  *bool
+	Force   bool
 }
 
 func (p *Pool) GetProvisioner() (provision.Provisioner, error) {
@@ -72,7 +66,7 @@ func (p *Pool) GetTeams() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c := allowedValues["team"]; len(c) > 0 {
+	if c := allowedValues[ConstraintTypeTeam]; len(c) > 0 {
 		return c, nil
 	}
 	return nil, ErrPoolHasNoTeam
@@ -83,7 +77,7 @@ func (p *Pool) GetServices() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c := allowedValues["service"]; len(c) > 0 {
+	if c := allowedValues[ConstraintTypeService]; len(c) > 0 {
 		return c, nil
 	}
 	return nil, ErrPoolHasNoService
@@ -94,29 +88,29 @@ func (p *Pool) GetRouters() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c := allowedValues["router"]; len(c) > 0 {
+	if c := allowedValues[ConstraintTypeRouter]; len(c) > 0 {
 		return c, nil
 	}
 	return nil, ErrPoolHasNoRouter
 }
 
 func (p *Pool) GetDefaultRouter() (string, error) {
-	constraints, err := getConstraintsForPool(p.Name, "router")
+	constraints, err := getConstraintsForPool(p.Name, ConstraintTypeRouter)
 	if err != nil {
 		return "", err
 	}
-	constraint := constraints["router"]
+	constraint := constraints[ConstraintTypeRouter]
 	if constraint == nil || len(constraint.Values) == 0 {
 		return router.Default()
 	}
 	if constraint.Blacklist || strings.Contains(constraint.Values[0], "*") {
-		var allowed map[string][]string
+		var allowed map[poolConstraintType][]string
 		allowed, err = p.allowedValues()
 		if err != nil {
 			return "", err
 		}
-		if len(allowed["router"]) == 1 {
-			return allowed["router"][0], nil
+		if len(allowed[ConstraintTypeRouter]) == 1 {
+			return allowed[ConstraintTypeRouter][0], nil
 		}
 		return router.Default()
 	}
@@ -132,7 +126,26 @@ func (p *Pool) GetDefaultRouter() (string, error) {
 	return router.Default()
 }
 
-func (p *Pool) allowedValues() (map[string][]string, error) {
+func (p *Pool) ValidateRouters(routers []appTypes.AppRouter) error {
+	availableRouters, err := p.GetRouters()
+	if err != nil {
+		return &tsuruErrors.ValidationError{Message: err.Error()}
+	}
+	possibleMap := make(map[string]struct{}, len(availableRouters))
+	for _, r := range availableRouters {
+		possibleMap[r] = struct{}{}
+	}
+	for _, appRouter := range routers {
+		_, ok := possibleMap[appRouter.Name]
+		if !ok {
+			msg := fmt.Sprintf("router %q is not available for pool %q. Available routers are: %q", appRouter.Name, p.Name, strings.Join(availableRouters, ", "))
+			return &tsuruErrors.ValidationError{Message: msg}
+		}
+	}
+	return nil
+}
+
+func (p *Pool) allowedValues() (map[poolConstraintType][]string, error) {
 	teams, err := teamsNames()
 	if err != nil {
 		return nil, err
@@ -145,23 +158,23 @@ func (p *Pool) allowedValues() (map[string][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	resolved := map[string][]string{
-		"router":  routers,
-		"service": services,
-		"team":    teams,
+	resolved := map[poolConstraintType][]string{
+		ConstraintTypeRouter:  routers,
+		ConstraintTypeService: services,
+		ConstraintTypeTeam:    teams,
 	}
-	constraints, err := getConstraintsForPool(p.Name, "team", "router", "service")
+	constraints, err := getConstraintsForPool(p.Name, ConstraintTypeTeam, ConstraintTypeRouter, ConstraintTypeService)
 	if err != nil {
 		return nil, err
 	}
 	for k, v := range constraints {
 		var names []string
 		switch k {
-		case "team":
+		case ConstraintTypeTeam:
 			names = teams
-		case "router":
+		case ConstraintTypeRouter:
 			names = routers
-		case "service":
+		case ConstraintTypeService:
 			names = services
 		}
 		var validNames []string
@@ -188,7 +201,7 @@ func routersNames() ([]string, error) {
 }
 
 func teamsNames() ([]string, error) {
-	teams, err := auth.ListTeams()
+	teams, err := servicemanager.Team.List()
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +225,7 @@ func servicesNames() ([]string, error) {
 }
 
 func (p *Pool) MarshalJSON() ([]byte, error) {
-	teams, err := getExactConstraintForPool(p.Name, "team")
+	teams, err := getExactConstraintForPool(p.Name, ConstraintTypeTeam)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +238,7 @@ func (p *Pool) MarshalJSON() ([]byte, error) {
 	result["public"] = teams.AllowsAll()
 	result["default"] = p.Default
 	result["provisioner"] = p.Provisioner
-	result["teams"] = resolvedConstraints["team"]
+	result["teams"] = resolvedConstraints[ConstraintTypeTeam]
 	result["allowed"] = resolvedConstraints
 	return json.Marshal(&result)
 }
@@ -267,7 +280,7 @@ func AddPool(opts AddPoolOptions) error {
 		return err
 	}
 	if opts.Public || opts.Default {
-		return SetPoolConstraint(&PoolConstraint{PoolExpr: opts.Name, Field: "team", Values: []string{"*"}})
+		return SetPoolConstraint(&PoolConstraint{PoolExpr: opts.Name, Field: ConstraintTypeTeam, Values: []string{"*"}})
 	}
 	return nil
 }
@@ -335,7 +348,7 @@ func AddTeamsToPool(poolName string, teams []string) error {
 	if err != nil {
 		return err
 	}
-	teamConstraint, err := getExactConstraintForPool(poolName, "team")
+	teamConstraint, err := getExactConstraintForPool(poolName, ConstraintTypeTeam)
 	if err != nil && err != mgo.ErrNotFound {
 		return err
 	}
@@ -350,7 +363,7 @@ func AddTeamsToPool(poolName string, teams []string) error {
 			return errors.New("Team already exists in pool.")
 		}
 	}
-	return appendPoolConstraint(poolName, "team", teams...)
+	return appendPoolConstraint(poolName, ConstraintTypeTeam, teams...)
 }
 
 func RemoveTeamsFromPool(poolName string, teams []string) error {
@@ -367,14 +380,14 @@ func RemoveTeamsFromPool(poolName string, teams []string) error {
 	if err != nil {
 		return err
 	}
-	constraint, err := getExactConstraintForPool(poolName, "team")
+	constraint, err := getExactConstraintForPool(poolName, ConstraintTypeTeam)
 	if err != nil && err != mgo.ErrNotFound {
 		return err
 	}
 	if constraint != nil && constraint.Blacklist {
 		return errors.New("Unable to remove teams from blacklist constraint")
 	}
-	return removePoolConstraint(poolName, "team", teams...)
+	return removePoolConstraint(poolName, ConstraintTypeTeam, teams...)
 }
 
 func ListPools(names ...string) ([]Pool, error) {
@@ -385,12 +398,16 @@ func ListAllPools() ([]Pool, error) {
 	return listPools(nil)
 }
 
+func ListPublicPools() ([]Pool, error) {
+	return getPoolsSatisfyConstraints(true, ConstraintTypeTeam, "*")
+}
+
 func ListPossiblePools(teams []string) ([]Pool, error) {
-	return getPoolsSatisfyConstraints(false, "team", teams...)
+	return getPoolsSatisfyConstraints(false, ConstraintTypeTeam, teams...)
 }
 
 func ListPoolsForTeam(team string) ([]Pool, error) {
-	return getPoolsSatisfyConstraints(true, "team", team)
+	return getPoolsSatisfyConstraints(true, ConstraintTypeTeam, team)
 }
 
 func listPools(query bson.M) ([]Pool, error) {
@@ -405,6 +422,23 @@ func listPools(query bson.M) ([]Pool, error) {
 		return nil, err
 	}
 	return pools, nil
+}
+
+func GetProvisionerForPool(name string) (provision.Provisioner, error) {
+	prov := poolCache.Get(name)
+	if prov != nil {
+		return prov, nil
+	}
+	p, err := GetPoolByName(name)
+	if err != nil {
+		return nil, err
+	}
+	prov, err = p.GetProvisioner()
+	if err != nil {
+		return nil, err
+	}
+	poolCache.Set(name, prov)
+	return prov, nil
 }
 
 // GetPoolByName finds a pool by name
@@ -463,19 +497,16 @@ func PoolUpdate(name string, opts UpdatePoolOptions) error {
 		query["default"] = *opts.Default
 	}
 	if (opts.Public != nil && *opts.Public) || (opts.Default != nil && *opts.Default) {
-		errConstraint := SetPoolConstraint(&PoolConstraint{PoolExpr: name, Field: "team", Values: []string{"*"}})
+		errConstraint := SetPoolConstraint(&PoolConstraint{PoolExpr: name, Field: ConstraintTypeTeam, Values: []string{"*"}})
 		if errConstraint != nil {
 			return err
 		}
 	}
 	if (opts.Public != nil && !*opts.Public) || (opts.Default != nil && !*opts.Default) {
-		errConstraint := removePoolConstraint(name, "team", "*")
+		errConstraint := removePoolConstraint(name, ConstraintTypeTeam, "*")
 		if errConstraint != nil {
 			return err
 		}
-	}
-	if opts.Provisioner != "" {
-		query["provisioner"] = opts.Provisioner
 	}
 	if len(query) == 0 {
 		return nil

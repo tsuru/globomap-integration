@@ -22,6 +22,7 @@ import (
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/repository"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"github.com/tsuru/tsuru/volume"
 )
@@ -34,7 +35,7 @@ const (
 var createDisabledErr = &errors.HTTP{Code: http.StatusUnauthorized, Message: createDisabledMsg}
 
 func handleAuthError(err error) error {
-	if err == auth.ErrUserNotFound {
+	if err == authTypes.ErrUserNotFound {
 		return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
 	}
 	switch err.(type) {
@@ -222,7 +223,7 @@ func resetPassword(w http.ResponseWriter, r *http.Request) (err error) {
 	defer func() { evt.Done(err) }()
 	u, err := auth.GetUserByEmail(email)
 	if err != nil {
-		if err == auth.ErrUserNotFound {
+		if err == authTypes.ErrUserNotFound {
 			return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
 		}
 		return err
@@ -273,7 +274,7 @@ func updateTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 	if !allowed {
 		return permission.ErrUnauthorized
 	}
-	_, err = auth.GetTeam(name)
+	_, err = servicemanager.Team.FindByName(name)
 	if err != nil {
 		if err == authTypes.ErrTeamNotFound {
 			return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
@@ -295,7 +296,8 @@ func updateTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 	if err != nil {
 		return err
 	}
-	err = auth.CreateTeam(changeRequest.NewName, u)
+	user := authTypes.User(*u)
+	err = servicemanager.Team.Create(changeRequest.NewName, &user)
 	if err != nil {
 		return err
 	}
@@ -304,7 +306,7 @@ func updateTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 		if err == nil {
 			return
 		}
-		rollbackErr := auth.RemoveTeam(changeRequest.NewName)
+		rollbackErr := servicemanager.Team.Remove(changeRequest.NewName)
 		if rollbackErr != nil {
 			log.Errorf("error rolling back team creation from %v to %v", name, changeRequest.NewName)
 		}
@@ -323,7 +325,7 @@ func updateTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 		}
 		toRollback = append(toRollback, fn)
 	}
-	return auth.RemoveTeam(name)
+	return servicemanager.Team.Remove(name)
 }
 
 // title: team create
@@ -359,7 +361,8 @@ func createTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 	if err != nil {
 		return err
 	}
-	err = auth.CreateTeam(name, u)
+	user := authTypes.User(*u)
+	err = servicemanager.Team.Create(name, &user)
 	switch err {
 	case authTypes.ErrInvalidTeamName:
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
@@ -400,9 +403,9 @@ func removeTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 		return err
 	}
 	defer func() { evt.Done(err) }()
-	err = auth.RemoveTeam(name)
+	err = servicemanager.Team.Remove(name)
 	if err != nil {
-		if _, ok := err.(*auth.ErrTeamStillUsed); ok {
+		if _, ok := err.(*authTypes.ErrTeamStillUsed); ok {
 			msg := fmt.Sprintf("This team cannot be removed because there are still references to it:\n%s", err)
 			return &errors.HTTP{Code: http.StatusForbidden, Message: msg}
 		}
@@ -424,7 +427,7 @@ func removeTeam(w http.ResponseWriter, r *http.Request, t auth.Token) (err error
 //   401: Unauthorized
 func teamList(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 	permsForTeam := permission.PermissionRegistry.PermissionsWithContextType(permission.CtxTeam)
-	teams, err := auth.ListTeams()
+	teams, err := servicemanager.Team.List()
 	if err != nil {
 		return err
 	}
@@ -456,6 +459,79 @@ func teamList(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 			"name":        name,
 			"permissions": permissions,
 		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(result)
+}
+
+// title: team info
+// path: /teams/{name}
+// method: GET
+// produce: application/json
+// responses:
+//   200: Info team
+//   404: Not found
+//   401: Unauthorized
+func teamInfo(w http.ResponseWriter, r *http.Request, t auth.Token) error {
+	teamName := r.URL.Query().Get(":name")
+	team, err := servicemanager.Team.FindByName(teamName)
+	if err != nil {
+		return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+	}
+	canRead := permission.Check(t, permission.PermTeamRead)
+	if !canRead {
+		return permission.ErrUnauthorized
+	}
+	apps, err := app.List(&app.Filter{
+		Extra:     map[string][]string{"teams": {team.Name}},
+		TeamOwner: team.Name})
+	if err != nil {
+		return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+	}
+	pools, err := pool.ListPoolsForTeam(team.Name)
+	if err != nil {
+		return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+	}
+	users, err := auth.ListUsers()
+	if err != nil {
+		return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+	}
+	cachedRoles := make(map[string]permission.Role)
+	includedUsers := make([]*apiUser, 0)
+	for _, user := range users {
+		for _, roleInstance := range user.Roles {
+			role, ok := cachedRoles[roleInstance.Name]
+			if !ok {
+				roleFound, err := permission.FindRole(roleInstance.Name)
+				if err != nil {
+					return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+				}
+				cachedRoles[roleInstance.Name] = roleFound
+				role = cachedRoles[roleInstance.Name]
+			}
+			if role.ContextType == permission.CtxGlobal || (role.ContextType == permission.CtxTeam && roleInstance.ContextValue == team.Name) {
+				canInclude := permission.Check(t, permission.PermTeam)
+				if canInclude {
+					roleMap := make(map[string]*permission.Role)
+					perms, err := t.Permissions()
+					if err != nil {
+						return &errors.HTTP{Code: http.StatusNotFound, Message: err.Error()}
+					}
+					userData, err := createAPIUser(perms, &user, roleMap, canInclude)
+					if err != nil {
+						return &errors.HTTP{Code: http.StatusInternalServerError, Message: err.Error()}
+					}
+					includedUsers = append(includedUsers, userData)
+					break
+				}
+			}
+		}
+	}
+	result := map[string]interface{}{
+		"name":  team.Name,
+		"users": includedUsers,
+		"pools": pools,
+		"apps":  apps,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(result)
@@ -504,7 +580,7 @@ func addKeyToUser(w http.ResponseWriter, r *http.Request, t auth.Token) (err err
 		return err
 	}
 	err = u.AddKey(key, force)
-	if err == auth.ErrKeyDisabled || err == repository.ErrUserNotFound {
+	if err == authTypes.ErrKeyDisabled || err == repository.ErrUserNotFound {
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
 	}
 	if err == repository.ErrKeyAlreadyExists {
@@ -551,7 +627,7 @@ func removeKeyFromUser(w http.ResponseWriter, r *http.Request, t auth.Token) (er
 		return err
 	}
 	err = u.RemoveKey(key)
-	if err == auth.ErrKeyDisabled {
+	if err == authTypes.ErrKeyDisabled {
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
 	}
 	if err == repository.ErrKeyNotFound {
@@ -574,7 +650,7 @@ func listKeys(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 		return err
 	}
 	keys, err := u.ListKeys()
-	if err == auth.ErrKeyDisabled {
+	if err == authTypes.ErrKeyDisabled {
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
 	}
 	if err != nil {

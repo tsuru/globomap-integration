@@ -5,17 +5,15 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/auth/native"
 	"github.com/tsuru/tsuru/builder"
-	"github.com/tsuru/tsuru/builder/fake"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"github.com/tsuru/tsuru/provision"
@@ -27,9 +25,11 @@ import (
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	"github.com/tsuru/tsuru/router/rebuild"
 	"github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
 )
 
@@ -41,9 +41,15 @@ type S struct {
 	team        authTypes.Team
 	user        *auth.User
 	provisioner *provisiontest.FakeProvisioner
+	builder     *builder.MockBuilder
 	defaultPlan appTypes.Plan
 	Pool        string
 	zeroLock    map[string]interface{}
+	mockService struct {
+		Team     *authTypes.MockTeamService
+		Plan     *appTypes.MockPlanService
+		Platform *appTypes.MockPlatformService
+	}
 }
 
 var _ = check.Suite(&S{})
@@ -83,8 +89,6 @@ func (s *S) createUserAndTeam(c *check.C) {
 	err := s.user.Create()
 	c.Assert(err, check.IsNil)
 	s.team = authTypes.Team{Name: "tsuruteam"}
-	err = auth.TeamService().Insert(s.team)
-	c.Assert(err, check.IsNil)
 }
 
 var nativeScheme = auth.Scheme(native.NativeScheme{})
@@ -93,7 +97,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	err := config.ReadConfigFile("testdata/config.yaml")
 	c.Assert(err, check.IsNil)
 	config.Set("log:disable-syslog", true)
-	config.Set("queue:mongo-url", "127.0.0.1:27017")
+	config.Set("queue:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("queue:mongo-database", "queue_app_pkg_tests")
 	config.Set("queue:mongo-polling-interval", 0.01)
 	config.Set("docker:registry", "registry.somewhere")
@@ -104,8 +108,6 @@ func (s *S) SetUpSuite(c *check.C) {
 	s.logConn, err = db.LogConn()
 	c.Assert(err, check.IsNil)
 	s.provisioner = provisiontest.ProvisionerInstance
-	builder.DefaultBuilder = "fake"
-	builder.Register("fake", fake.NewFakeBuilder())
 	provision.DefaultProvisioner = "fake"
 	AuthScheme = nativeScheme
 	data, err := json.Marshal(AppLock{})
@@ -134,6 +136,7 @@ func (s *S) SetUpTest(c *check.C) {
 	routertest.HCRouter.Reset()
 	routertest.TLSRouter.Reset()
 	routertest.OptsRouter.Reset()
+	pool.ResetCache()
 	err := rebuild.RegisterTask(func(appName string) (rebuild.RebuildApp, error) {
 		a, err := GetByName(appName)
 		if err == ErrAppNotFound {
@@ -147,9 +150,6 @@ func (s *S) SetUpTest(c *check.C) {
 	repositorytest.Reset()
 	dbtest.ClearAllCollections(s.conn.Apps().Database)
 	s.createUserAndTeam(c)
-	platform := appTypes.Platform{Name: "python"}
-	PlatformService().Insert(platform)
-	PlatformService().Insert(appTypes.Platform{Name: "heimerdinger"})
 	s.defaultPlan = appTypes.Plan{
 		Name:     "default-plan",
 		Memory:   1024,
@@ -157,11 +157,59 @@ func (s *S) SetUpTest(c *check.C) {
 		CpuShare: 100,
 		Default:  true,
 	}
-	err = PlanService().Insert(s.defaultPlan)
-	c.Assert(err, check.IsNil)
 	s.Pool = "pool1"
 	opts := pool.AddPoolOptions{Name: s.Pool, Default: true}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
 	repository.Manager().CreateUser(s.user.Email)
+	s.builder = &builder.MockBuilder{}
+	builder.Register("fake", s.builder)
+	builder.DefaultBuilder = "fake"
+	setupMocks(s)
+}
+
+func (s *S) TearDownTest(c *check.C) {
+	GetAppRouterUpdater().Shutdown(context.Background())
+}
+
+func setupMocks(s *S) {
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+		OnFindByName: func(name string) (*authTypes.Team, error) {
+			if name == s.team.Name {
+				return &authTypes.Team{Name: s.team.Name}, nil
+			}
+			return nil, authTypes.ErrTeamNotFound
+		},
+		OnFindByNames: func(names []string) ([]authTypes.Team, error) {
+			if len(names) == 1 && names[0] == s.team.Name {
+				return []authTypes.Team{{Name: s.team.Name}}, nil
+			}
+			return []authTypes.Team{}, nil
+		},
+	}
+
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{s.defaultPlan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &s.defaultPlan, nil
+		},
+	}
+
+	s.mockService.Platform = &appTypes.MockPlatformService{
+		OnFindByName: func(name string) (*appTypes.Platform, error) {
+			if name == "python" || name == "heimerdinger" {
+				return &appTypes.Platform{Name: name}, nil
+			}
+			return nil, appTypes.ErrPlatformNotFound
+		},
+	}
+
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
+	servicemanager.Platform = s.mockService.Platform
 }

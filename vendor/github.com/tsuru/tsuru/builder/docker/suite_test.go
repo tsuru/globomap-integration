@@ -22,6 +22,7 @@ import (
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/quota"
 	"github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
@@ -38,6 +39,10 @@ type S struct {
 	provisioner *provisiontest.FakeProvisioner
 	server      *dtesting.DockerServer
 	port        string
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&S{})
@@ -50,11 +55,12 @@ func (s *S) SetUpSuite(c *check.C) {
 	s.port = "8888"
 	config.Set("log:disable-syslog", true)
 	config.Set("auth:hash-cost", bcrypt.MinCost)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "builder_docker_tests_s")
 	config.Set("routers:fake:type", "fake")
 	config.Set("routers:fake:default", true)
 	config.Set("docker:run-cmd:port", s.port)
+	config.Set("host", "tsuru.io")
 	var err error
 	s.conn, err = db.Conn()
 	c.Assert(err, check.IsNil)
@@ -81,13 +87,6 @@ func (s *S) SetUpTest(c *check.C) {
 		Provisioner: "fake",
 	})
 	c.Assert(err, check.IsNil)
-	p := appTypes.Plan{
-		Name:     "default",
-		Default:  true,
-		CpuShare: 100,
-	}
-	err = app.SavePlan(p)
-	c.Assert(err, check.IsNil)
 	s.b = &dockerBuilder{}
 	s.server, err = dtesting.NewServer("127.0.0.1:0", nil, nil)
 	c.Assert(err, check.IsNil)
@@ -97,10 +96,31 @@ func (s *S) SetUpTest(c *check.C) {
 	_, err = nativeScheme.Create(s.user)
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "admin"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	s.token, err = nativeScheme.Login(map[string]string{"email": s.user.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+		OnFindByName: func(_ string) (*authTypes.Team, error) {
+			return &authTypes.Team{Name: s.team.Name}, nil
+		},
+	}
+	plan := appTypes.Plan{
+		Name:     "default",
+		Default:  true,
+		CpuShare: 100,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{plan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &plan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
 }
 
 func (s *S) TearDownTest(c *check.C) {

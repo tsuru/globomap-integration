@@ -18,6 +18,7 @@ import (
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/provision"
+	"github.com/tsuru/tsuru/provision/docker/container"
 	"github.com/tsuru/tsuru/provision/dockercommon"
 )
 
@@ -26,7 +27,7 @@ const (
 	archiveFileName = "archive.tar.gz"
 )
 
-func (b *dockerBuilder) buildPipeline(p provision.BuilderDeploy, client provision.BuilderDockerClient, app provision.App, tarFile io.Reader, evt *event.Event) (string, error) {
+func (b *dockerBuilder) buildPipeline(p provision.BuilderDeployDockerClient, client provision.BuilderDockerClient, app provision.App, tarFile io.Reader, evt *event.Event, imageTag string) (string, error) {
 	actions := []*action.Action{
 		&createContainer,
 		&uploadToContainer,
@@ -36,7 +37,7 @@ func (b *dockerBuilder) buildPipeline(p provision.BuilderDeploy, client provisio
 	}
 	pipeline := action.NewPipeline(actions...)
 	imageName := image.GetBuildImage(app)
-	buildingImage, err := image.AppNewBuilderImageName(app.GetName())
+	buildingImage, err := image.AppNewBuilderImageName(app.GetName(), app.GetTeamOwner(), imageTag)
 	if err != nil {
 		return "", log.WrapError(errors.Errorf("error getting new image name for app %s", app.GetName()))
 	}
@@ -56,8 +57,9 @@ func (b *dockerBuilder) buildPipeline(p provision.BuilderDeploy, client provisio
 		event:         evt,
 		provisioner:   p,
 		tarFile:       tarFile,
+		isDeploy:      true,
 	}
-	err = pipeline.Execute(args)
+	err = container.RunPipelineWithRetry(pipeline, args)
 	if err != nil {
 		log.Errorf("error on execute build pipeline for app %s - %s", app.GetName(), err)
 		return "", err

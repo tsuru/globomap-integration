@@ -14,6 +14,7 @@ import (
 
 	"github.com/fsouza/go-dockerclient"
 	"github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/app"
@@ -24,7 +25,6 @@ import (
 	"github.com/tsuru/tsuru/provision/pool"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestSchedulerSchedule(c *check.C) {
@@ -80,6 +80,118 @@ func (s *S) TestSchedulerSchedule(c *check.C) {
 	node, err = scheduler.Schedule(clusterInstance, &opts, &container.SchedulerOpts{AppName: a2.Name, ProcessName: "web"})
 	c.Assert(err, check.IsNil)
 	c.Check(node.Address, check.Equals, localURL)
+}
+
+func (s *S) TestSchedulerScheduleFilteringNodes(c *check.C) {
+	a1 := app.App{Name: "impius", Teams: []string{"tsuruteam", "nodockerforme"}, Pool: "pool1"}
+	a2 := app.App{Name: "mirror", Teams: []string{"tsuruteam"}, Pool: "pool1"}
+	a3 := app.App{Name: "dedication", Teams: []string{"nodockerforme"}, Pool: "pool1"}
+	cont1 := container.Container{Container: types.Container{ID: "1", Name: "impius1", AppName: a1.Name}}
+	cont2 := container.Container{Container: types.Container{ID: "2", Name: "mirror1", AppName: a2.Name}}
+	cont3 := container.Container{Container: types.Container{ID: "3", Name: "dedication1", AppName: a3.Name}}
+	err := s.conn.Apps().Insert(a1, a2, a3)
+	c.Assert(err, check.IsNil)
+	p := pool.Pool{Name: "pool1"}
+	o := pool.AddPoolOptions{Name: p.Name}
+	err = pool.AddPool(o)
+	c.Assert(err, check.IsNil)
+	err = pool.AddTeamsToPool(p.Name, []string{
+		"tsuruteam",
+		"nodockerforme",
+	})
+	c.Assert(err, check.IsNil)
+	contColl := s.p.Collection()
+	defer contColl.Close()
+	err = contColl.Insert(
+		cont1, cont2, cont3,
+	)
+	c.Assert(err, check.IsNil)
+	scheduler := segregatedScheduler{provisioner: s.p}
+	clusterInstance, err := cluster.New(&scheduler, &cluster.MapStorage{}, "")
+	s.p.cluster = clusterInstance
+	c.Assert(err, check.IsNil)
+	server1, err := testing.NewServer("127.0.0.1:0", nil, nil)
+	c.Assert(err, check.IsNil)
+	defer server1.Stop()
+	server2, err := testing.NewServer("localhost:0", nil, nil)
+	c.Assert(err, check.IsNil)
+	defer server2.Stop()
+	err = clusterInstance.Register(cluster.Node{
+		Address:  server1.URL(),
+		Metadata: map[string]string{"pool": "pool1"},
+	})
+	c.Assert(err, check.IsNil)
+	localURL := strings.Replace(server2.URL(), "127.0.0.1", "localhost", -1)
+	err = clusterInstance.Register(cluster.Node{
+		Address:  localURL,
+		Metadata: map[string]string{"pool": "pool1"},
+	})
+	c.Assert(err, check.IsNil)
+	opts := docker.CreateContainerOptions{Name: cont1.Name}
+	schedOpts := &container.SchedulerOpts{
+		AppName:     a1.Name,
+		ProcessName: "web",
+		FilterNodes: []string{localURL},
+	}
+	node, err := scheduler.Schedule(clusterInstance, &opts, schedOpts)
+	c.Assert(err, check.IsNil)
+	c.Check(node.Address, check.Equals, localURL)
+}
+
+func (s *S) TestFilterNodes(c *check.C) {
+	tests := []struct {
+		nodes    []cluster.Node
+		filter   map[string]struct{}
+		expected []cluster.Node
+	}{
+		{
+			nodes: []cluster.Node{
+				{Address: "n1"},
+				{Address: "n3"},
+				{Address: "n2"},
+				{Address: "n4"},
+			},
+			filter: map[string]struct{}{
+				"n1": {},
+				"n2": {},
+			},
+			expected: []cluster.Node{
+				{Address: "n1"},
+				{Address: "n2"},
+			},
+		},
+		{
+			nodes: []cluster.Node{
+				{Address: "n1"},
+				{Address: "n3"},
+				{Address: "n2"},
+				{Address: "n4"},
+			},
+			filter: nil,
+			expected: []cluster.Node{
+				{Address: "n1"},
+				{Address: "n3"},
+				{Address: "n2"},
+				{Address: "n4"},
+			},
+		},
+		{
+			nodes: []cluster.Node{
+				{Address: "n1"},
+				{Address: "n3"},
+				{Address: "n2"},
+				{Address: "n4"},
+			},
+			filter: map[string]struct{}{
+				"n5": {},
+			},
+			expected: []cluster.Node{},
+		},
+	}
+	for _, tt := range tests {
+		newNodes := filterNodes(tt.nodes, tt.filter)
+		c.Assert(newNodes, check.DeepEquals, tt.expected)
+	}
 }
 
 func (s *S) TestSchedulerScheduleChangesContainerName(c *check.C) {
@@ -448,7 +560,8 @@ func (s *S) TestSchedulerScheduleWithMemoryAwarenessWithAutoScaleDisabledForPool
 }
 
 func (s *S) TestChooseNodeDistributesNodesEqually(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(10))
+	originalMaxProcs := runtime.GOMAXPROCS(10)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	nodes := []cluster.Node{
 		{Address: "http://server1:1234"},
 		{Address: "http://server2:1234"},
@@ -847,7 +960,7 @@ func (s *S) TestGetRemovableContainer(c *check.C) {
 	cont, err := scheduler.GetRemovableContainer(a1.Name, "web")
 	c.Assert(err, check.IsNil)
 	c.Assert(cont, check.Equals, cont1.ID)
-	err = cont1.Remove(s.p)
+	err = cont1.Remove(s.p.ClusterClient(), s.p.ActionLimiter())
 	c.Assert(err, check.IsNil)
 	_, err = scheduler.GetRemovableContainer(a1.Name, "web")
 	c.Assert(err, check.NotNil)

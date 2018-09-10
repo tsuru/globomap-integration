@@ -92,7 +92,7 @@ func (s *S) TestClusterInitClient(c *check.C) {
 	}
 	err := c1.Save()
 	c.Assert(err, check.IsNil)
-	cli, err := newClusterClient(&c1)
+	cli, err := NewClusterClient(&c1)
 	c.Assert(err, check.IsNil)
 	c.Assert(cli.Interface, check.NotNil)
 	c.Assert(cli.restConfig, check.NotNil)
@@ -135,7 +135,7 @@ func (s *S) TestClusterClientSetTimeout(c *check.C) {
 		Default:     true,
 		Provisioner: provisionerName,
 	}
-	client, err := newClusterClient(&c1)
+	client, err := NewClusterClient(&c1)
 	c.Assert(err, check.IsNil)
 	client.SetTimeout(time.Hour)
 	c.Assert(client.restConfig.Timeout, check.Equals, time.Hour)
@@ -143,15 +143,34 @@ func (s *S) TestClusterClientSetTimeout(c *check.C) {
 
 func (s *S) TestClusterNamespace(c *check.C) {
 	c1 := cluster.Cluster{Addresses: []string{"addr1"}, CustomData: map[string]string{"namespace": "x"}}
-	client, err := newClusterClient(&c1)
+	client, err := NewClusterClient(&c1)
 	c.Assert(err, check.IsNil)
 	c.Assert(client.Namespace(), check.Equals, "x")
 	c1 = cluster.Cluster{Addresses: []string{"addr1"}, CustomData: map[string]string{"namespace": ""}}
-	client, err = newClusterClient(&c1)
+	client, err = NewClusterClient(&c1)
 	c.Assert(err, check.IsNil)
 	c.Assert(client.Namespace(), check.Equals, "default")
 	c1 = cluster.Cluster{Addresses: []string{"addr1"}}
-	client, err = newClusterClient(&c1)
+	client, err = NewClusterClient(&c1)
 	c.Assert(err, check.IsNil)
 	c.Assert(client.Namespace(), check.Equals, "default")
+}
+
+func (s *S) TestClusterOvercommitFactor(c *check.C) {
+	c1 := cluster.Cluster{Addresses: []string{"addr1"}, CustomData: map[string]string{
+		"overcommit-factor":         "2",
+		"my-pool:overcommit-factor": "3",
+		"invalid:overcommit-factor": "a",
+	}}
+	client, err := NewClusterClient(&c1)
+	c.Assert(err, check.IsNil)
+	ovf, err := client.OvercommitFactor("my-pool")
+	c.Assert(err, check.IsNil)
+	c.Assert(ovf, check.Equals, int64(3))
+	ovf, err = client.OvercommitFactor("global")
+	c.Assert(err, check.IsNil)
+	c.Assert(ovf, check.Equals, int64(2))
+	ovf, err = client.OvercommitFactor("invalid")
+	c.Assert(err, check.ErrorMatches, ".*invalid syntax.*")
+	c.Assert(ovf, check.Equals, int64(0))
 }

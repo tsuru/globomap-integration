@@ -22,11 +22,11 @@ import (
 	"github.com/tsuru/tsuru/provision/cluster"
 	"github.com/tsuru/tsuru/provision/servicecommon"
 	"github.com/tsuru/tsuru/set"
+	apiv1 "k8s.io/api/core/v1"
+	policy "k8s.io/api/policy/v1beta1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
-	policy "k8s.io/client-go/pkg/apis/policy/v1beta1"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
@@ -44,19 +44,17 @@ type kubernetesProvisioner struct{}
 
 var (
 	_ provision.Provisioner              = &kubernetesProvisioner{}
-	_ provision.UploadDeployer           = &kubernetesProvisioner{}
 	_ provision.ShellProvisioner         = &kubernetesProvisioner{}
 	_ provision.NodeProvisioner          = &kubernetesProvisioner{}
 	_ provision.NodeContainerProvisioner = &kubernetesProvisioner{}
 	_ provision.ExecutableProvisioner    = &kubernetesProvisioner{}
 	_ provision.MessageProvisioner       = &kubernetesProvisioner{}
 	_ provision.SleepableProvisioner     = &kubernetesProvisioner{}
-	_ provision.ImageDeployer            = &kubernetesProvisioner{}
 	_ provision.VolumeProvisioner        = &kubernetesProvisioner{}
-	// _ provision.ArchiveDeployer          = &kubernetesProvisioner{}
+	_ provision.BuilderDeploy            = &kubernetesProvisioner{}
+	_ provision.BuilderDeployKubeClient  = &kubernetesProvisioner{}
 	// _ provision.InitializableProvisioner = &kubernetesProvisioner{}
 	// _ provision.RollbackableDeployer     = &kubernetesProvisioner{}
-	// _ provision.RebuildableDeployer      = &kubernetesProvisioner{}
 	// _ provision.OptionalLogsProvisioner  = &kubernetesProvisioner{}
 	// _ provision.UnitStatusProvisioner    = &kubernetesProvisioner{}
 	// _ provision.NodeRebalanceProvisioner = &kubernetesProvisioner{}
@@ -68,6 +66,10 @@ func init() {
 	provision.Register(provisionerName, func() (provision.Provisioner, error) {
 		return &kubernetesProvisioner{}, nil
 	})
+}
+
+func GetProvisioner() *kubernetesProvisioner {
+	return &kubernetesProvisioner{}
 }
 
 type kubernetesConfig struct {
@@ -216,7 +218,7 @@ var stateMap = map[apiv1.PodPhase]provision.Status{
 	apiv1.PodUnknown:   provision.StatusError,
 }
 
-func (p *kubernetesProvisioner) podsToUnits(client *clusterClient, pods []apiv1.Pod, baseApp provision.App, baseNode *apiv1.Node) ([]provision.Unit, error) {
+func (p *kubernetesProvisioner) podsToUnits(client *ClusterClient, pods []apiv1.Pod, baseApp provision.App, baseNode *apiv1.Node) ([]provision.Unit, error) {
 	var err error
 	if len(pods) == 0 {
 		return nil, nil
@@ -235,8 +237,8 @@ func (p *kubernetesProvisioner) podsToUnits(client *clusterClient, pods []apiv1.
 	for i, pod := range pods {
 		l := labelSetFromMeta(&pod.ObjectMeta)
 		node, ok := nodeMap[pod.Spec.NodeName]
-		if !ok {
-			node, err = client.Core().Nodes().Get(pod.Spec.NodeName, metav1.GetOptions{})
+		if !ok && pod.Spec.NodeName != "" {
+			node, err = client.CoreV1().Nodes().Get(pod.Spec.NodeName, metav1.GetOptions{})
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
@@ -287,7 +289,7 @@ func (p *kubernetesProvisioner) podsToUnits(client *clusterClient, pods []apiv1.
 			AppName:     l.AppName(),
 			ProcessName: appProcess,
 			Type:        l.AppPlatform(),
-			IP:          tsuruNet.URLToHost(wrapper.Address()),
+			IP:          wrapper.ip(),
 			Status:      stateMap[pod.Status.Phase],
 			Address:     url,
 		}
@@ -295,7 +297,19 @@ func (p *kubernetesProvisioner) podsToUnits(client *clusterClient, pods []apiv1.
 	return units, nil
 }
 
-func (p *kubernetesProvisioner) Units(a provision.App) ([]provision.Unit, error) {
+func (p *kubernetesProvisioner) Units(apps ...provision.App) ([]provision.Unit, error) {
+	var units []provision.Unit
+	for _, a := range apps {
+		appUnits, err := p.units(a)
+		if err != nil {
+			return nil, err
+		}
+		units = append(units, appUnits...)
+	}
+	return units, nil
+}
+
+func (p *kubernetesProvisioner) units(a provision.App) ([]provision.Unit, error) {
 	client, err := clusterForPool(a.GetPool())
 	if err != nil {
 		return nil, err
@@ -315,7 +329,7 @@ func (p *kubernetesProvisioner) Units(a provision.App) ([]provision.Unit, error)
 	if err != nil {
 		return nil, err
 	}
-	pods, err := client.Core().Pods(client.Namespace()).List(metav1.ListOptions{
+	pods, err := client.CoreV1().Pods(client.Namespace()).List(metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(l.ToAppSelector())).String(),
 	})
 	if err != nil {
@@ -352,7 +366,7 @@ func (p *kubernetesProvisioner) RoutableAddresses(a provision.App) ([]url.URL, e
 		Pool:   a.GetPool(),
 		Prefix: tsuruLabelPrefix,
 	}).ToNodeByPoolSelector()
-	nodes, err := client.Core().Nodes().List(metav1.ListOptions{
+	nodes, err := client.CoreV1().Nodes().List(metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(nodeSelector).String(),
 	})
 	if err != nil {
@@ -374,7 +388,7 @@ func (p *kubernetesProvisioner) RegisterUnit(a provision.App, unitID string, cus
 	if err != nil {
 		return err
 	}
-	pod, err := client.Core().Pods(client.Namespace()).Get(unitID, metav1.GetOptions{})
+	pod, err := client.CoreV1().Pods(client.Namespace()).Get(unitID, metav1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
 			return &provision.UnitNotFoundError{ID: unitID}
@@ -402,7 +416,7 @@ func (p *kubernetesProvisioner) RegisterUnit(a provision.App, unitID string, cus
 func (p *kubernetesProvisioner) ListNodes(addressFilter []string) ([]provision.Node, error) {
 	var nodes []provision.Node
 	kubeConf := getKubeConfig()
-	err := forEachCluster(func(c *clusterClient) error {
+	err := forEachCluster(func(c *ClusterClient) error {
 		err := c.SetTimeout(kubeConf.APIShortTimeout)
 		if err != nil {
 			return err
@@ -423,13 +437,13 @@ func (p *kubernetesProvisioner) ListNodes(addressFilter []string) ([]provision.N
 	return nodes, nil
 }
 
-func (p *kubernetesProvisioner) listNodesForCluster(cluster *clusterClient, addressFilter []string) ([]provision.Node, error) {
+func (p *kubernetesProvisioner) listNodesForCluster(cluster *ClusterClient, addressFilter []string) ([]provision.Node, error) {
 	var nodes []provision.Node
 	var addressSet set.Set
 	if len(addressFilter) > 0 {
 		addressSet = set.FromSlice(addressFilter)
 	}
-	nodeList, err := cluster.Core().Nodes().List(metav1.ListOptions{})
+	nodeList, err := cluster.CoreV1().Nodes().List(metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +468,7 @@ func (p *kubernetesProvisioner) GetNode(address string) (provision.Node, error) 
 	return node, nil
 }
 
-func setNodeMetadata(node *apiv1.Node, pool string, meta map[string]string) {
+func setNodeMetadata(node *apiv1.Node, pool, iaasID string, meta map[string]string) {
 	if node.Labels == nil {
 		node.Labels = map[string]string{}
 	}
@@ -469,15 +483,20 @@ func setNodeMetadata(node *apiv1.Node, pool string, meta map[string]string) {
 			node.Annotations[k] = v
 		}
 	}
-	if pool != "" {
-		baseNodeLabels := provision.NodeLabels(provision.NodeLabelsOpts{
-			Pool:   pool,
-			Prefix: tsuruLabelPrefix,
-		})
-		for k, v := range baseNodeLabels.ToLabels() {
-			delete(node.Annotations, k)
-			node.Labels[k] = v
+	baseNodeLabels := provision.NodeLabels(provision.NodeLabelsOpts{
+		IaaSID: iaasID,
+		Pool:   pool,
+		Prefix: tsuruLabelPrefix,
+	})
+	for k, v := range baseNodeLabels.ToLabels() {
+		if v == "" {
+			continue
 		}
+		delete(node.Annotations, k)
+		node.Labels[k] = v
+	}
+	if node.Spec.ProviderID == "" {
+		node.Spec.ProviderID = iaasID
 	}
 }
 
@@ -492,17 +511,17 @@ func (p *kubernetesProvisioner) AddNode(opts provision.AddNodeOptions) error {
 			Name: hostAddr,
 		},
 	}
-	setNodeMetadata(node, opts.Pool, opts.Metadata)
-	_, err = client.Core().Nodes().Create(node)
+	setNodeMetadata(node, opts.Pool, opts.IaaSID, opts.Metadata)
+	_, err = client.CoreV1().Nodes().Create(node)
 	if k8sErrors.IsAlreadyExists(err) {
-		return p.UpdateNode(provision.UpdateNodeOptions{
+		return p.internalNodeUpdate(provision.UpdateNodeOptions{
 			Address:  hostAddr,
 			Metadata: opts.Metadata,
 			Pool:     opts.Pool,
-		})
+		}, opts.IaaSID)
 	}
 	if err == nil {
-		go refreshNodeTaints(client, hostAddr)
+		servicecommon.RebuildRoutesPoolApps(opts.Pool)
 	}
 	return err
 }
@@ -515,17 +534,17 @@ func (p *kubernetesProvisioner) RemoveNode(opts provision.RemoveNodeOptions) err
 	node := nodeWrapper.node
 	if opts.Rebalance {
 		node.Spec.Unschedulable = true
-		_, err = client.Core().Nodes().Update(node)
+		_, err = client.CoreV1().Nodes().Update(node)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 		var pods []apiv1.Pod
-		pods, err = podsFromNode(client, node.Name)
+		pods, err = podsFromNode(client, node.Name, "")
 		if err != nil {
 			return err
 		}
 		for _, pod := range pods {
-			err = client.Core().Pods(client.Namespace()).Evict(&policy.Eviction{
+			err = client.CoreV1().Pods(client.Namespace()).Evict(&policy.Eviction{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      pod.Name,
 					Namespace: client.Namespace(),
@@ -536,10 +555,11 @@ func (p *kubernetesProvisioner) RemoveNode(opts provision.RemoveNodeOptions) err
 			}
 		}
 	}
-	err = client.Core().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
+	err = client.CoreV1().Nodes().Delete(node.Name, &metav1.DeleteOptions{})
 	if err != nil {
 		return errors.WithStack(err)
 	}
+	servicecommon.RebuildRoutesPoolApps(nodeWrapper.Pool())
 	return nil
 }
 
@@ -547,31 +567,27 @@ func (p *kubernetesProvisioner) NodeForNodeData(nodeData provision.NodeStatusDat
 	return provision.FindNodeByAddrs(p, nodeData.Addrs)
 }
 
-func (p *kubernetesProvisioner) findNodeByAddress(address string) (*clusterClient, *kubernetesNodeWrapper, error) {
+func (p *kubernetesProvisioner) findNodeByAddress(address string) (*ClusterClient, *kubernetesNodeWrapper, error) {
 	var (
 		foundNode    *kubernetesNodeWrapper
-		foundCluster *clusterClient
+		foundCluster *ClusterClient
 	)
-	err := forEachCluster(func(c *clusterClient) error {
+	err := forEachCluster(func(c *ClusterClient) error {
 		if foundNode != nil {
 			return nil
 		}
-		nodeList, err := c.Core().Nodes().List(metav1.ListOptions{})
-		if err != nil {
-			return err
-		}
-		for i := range nodeList.Items {
-			nodeWrapper := &kubernetesNodeWrapper{
-				node:    &nodeList.Items[i],
+		node, err := getNodeByAddr(c, address)
+		if err == nil {
+			foundNode = &kubernetesNodeWrapper{
+				node:    node,
 				prov:    p,
 				cluster: c,
 			}
-			if address == nodeWrapper.node.Name ||
-				address == nodeWrapper.Address() {
-				foundNode = nodeWrapper
-				foundCluster = c
-				break
-			}
+			foundCluster = c
+			return nil
+		}
+		if err != provision.ErrNodeNotFound {
+			return err
 		}
 		return nil
 	})
@@ -588,70 +604,77 @@ func (p *kubernetesProvisioner) findNodeByAddress(address string) (*clusterClien
 }
 
 func (p *kubernetesProvisioner) UpdateNode(opts provision.UpdateNodeOptions) error {
+	return p.internalNodeUpdate(opts, "")
+}
+
+func (p *kubernetesProvisioner) internalNodeUpdate(opts provision.UpdateNodeOptions, iaasID string) error {
 	client, nodeWrapper, err := p.findNodeByAddress(opts.Address)
 	if err != nil {
 		return err
 	}
+	if nodeWrapper.IaaSID() != "" {
+		iaasID = ""
+	}
 	node := nodeWrapper.node
-	if opts.Disable {
-		node.Spec.Unschedulable = true
-	} else if opts.Enable {
-		node.Spec.Unschedulable = false
+	shouldRemove := map[string]bool{
+		tsuruInProgressTaint:   true,
+		tsuruNodeDisabledTaint: opts.Enable,
 	}
-	setNodeMetadata(node, opts.Pool, opts.Metadata)
-	_, err = client.Core().Nodes().Update(node)
-	if err == nil {
-		go refreshNodeTaints(client, opts.Address)
+	taints := node.Spec.Taints
+	var isDisabled bool
+	for i := 0; i < len(taints); i++ {
+		if taints[i].Key == tsuruNodeDisabledTaint {
+			isDisabled = true
+		}
+		if remove := shouldRemove[taints[i].Key]; remove {
+			taints[i] = taints[len(taints)-1]
+			taints = taints[:len(taints)-1]
+			i--
+		}
 	}
+	if !isDisabled && opts.Disable {
+		taints = append(taints, apiv1.Taint{
+			Key:    tsuruNodeDisabledTaint,
+			Effect: apiv1.TaintEffectNoSchedule,
+		})
+	}
+	node.Spec.Taints = taints
+	setNodeMetadata(node, opts.Pool, iaasID, opts.Metadata)
+	_, err = client.CoreV1().Nodes().Update(node)
 	return err
 }
 
-func (p *kubernetesProvisioner) ImageDeploy(a provision.App, imageID string, evt *event.Event) (string, error) {
+func (p *kubernetesProvisioner) Deploy(a provision.App, buildImageID string, evt *event.Event) (string, error) {
 	client, err := clusterForPool(a.GetPool())
 	if err != nil {
 		return "", err
 	}
-	if !strings.Contains(imageID, ":") {
-		imageID = fmt.Sprintf("%s:latest", imageID)
-	}
-	fmt.Fprintln(evt, "---- Pulling image to tsuru ----")
-	newImage, err := image.AppNewImageName(a.GetName())
-	if err != nil {
-		return "", err
-	}
-	imageInspect, err := imageTagAndPush(client, a, imageID, newImage)
-	if err != nil {
-		return "", err
-	}
-	if len(imageInspect.Config.ExposedPorts) > 1 {
-		return "", errors.Errorf("too many ports exposed in Dockerfile, only one allowed: %+v", imageInspect.Config.ExposedPorts)
-	}
-	procfileRaw, err := procfileInspectPod(client, a, imageID)
-	if err != nil {
-		return "", err
-	}
-	procfile := image.GetProcessesFromProcfile(procfileRaw)
-	if len(procfile) == 0 {
-		fmt.Fprintln(evt, " ---> Procfile not found, using entrypoint and cmd")
-		cmds := append(imageInspect.Config.Entrypoint, imageInspect.Config.Cmd...)
-		if len(cmds) == 0 {
-			return "", errors.New("neither Procfile nor entrypoint and cmd set")
+	newImage := buildImageID
+	if strings.HasSuffix(buildImageID, "-builder") {
+		newImage, err = image.AppNewImageName(a.GetName())
+		if err != nil {
+			return "", err
 		}
-		procfile["web"] = cmds
-	}
-	for k, v := range procfile {
-		fmt.Fprintf(evt, " ---> Process %q found with commands: %q\n", k, v)
-	}
-	imageData := image.ImageMetadata{
-		Name:      newImage,
-		Processes: procfile,
-	}
-	for k := range imageInspect.Config.ExposedPorts {
-		imageData.ExposedPort = k
-	}
-	err = imageData.Save()
-	if err != nil {
-		return "", err
+		var deployPodName string
+		deployPodName, err = deployPodNameForApp(a)
+		if err != nil {
+			return "", err
+		}
+		defer cleanupPod(client, deployPodName)
+		params := createPodParams{
+			app:              a,
+			client:           client,
+			podName:          deployPodName,
+			sourceImage:      buildImageID,
+			destinationImage: newImage,
+			attachOutput:     evt,
+			attachInput:      strings.NewReader("."),
+			inputFile:        "/dev/null",
+		}
+		err = createDeployPod(params)
+		if err != nil {
+			return "", err
+		}
 	}
 	manager := &serviceManager{
 		client: client,
@@ -664,55 +687,13 @@ func (p *kubernetesProvisioner) ImageDeploy(a provision.App, imageID string, evt
 	return newImage, nil
 }
 
-func (p *kubernetesProvisioner) UploadDeploy(a provision.App, archiveFile io.ReadCloser, fileSize int64, build bool, evt *event.Event) (string, error) {
-	defer archiveFile.Close()
-	if build {
-		return "", errors.New("running UploadDeploy with build=true is not yet supported")
-	}
-	baseImage := image.GetBuildImage(a)
-	buildingImage, err := image.AppNewImageName(a.GetName())
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	deployPodName, err := deployPodNameForApp(a)
-	if err != nil {
-		return "", err
-	}
-	client, err := clusterForPool(a.GetPool())
-	if err != nil {
-		return "", err
-	}
-	defer cleanupPod(client, deployPodName)
-	params := buildPodParams{
-		app:              a,
-		client:           client,
-		sourceImage:      baseImage,
-		destinationImage: buildingImage,
-		attachInput:      archiveFile,
-		attachOutput:     evt,
-	}
-	err = createBuildPod(params)
-	if err != nil {
-		return "", err
-	}
-	manager := &serviceManager{
-		client: client,
-		writer: evt,
-	}
-	err = servicecommon.RunServicePipeline(manager, a, buildingImage, nil)
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	return buildingImage, nil
-}
-
 func (p *kubernetesProvisioner) UpgradeNodeContainer(name string, pool string, writer io.Writer) error {
 	m := nodeContainerManager{}
 	return servicecommon.UpgradeNodeContainer(&m, name, pool, writer)
 }
 
 func (p *kubernetesProvisioner) RemoveNodeContainer(name string, pool string, writer io.Writer) error {
-	err := forEachCluster(func(cluster *clusterClient) error {
+	err := forEachCluster(func(cluster *ClusterClient) error {
 		return cleanupDaemonSet(cluster, name, pool)
 	})
 	if err == cluster.ErrNoCluster {
@@ -752,7 +733,7 @@ func (p *kubernetesProvisioner) ExecuteCommand(stdout, stderr io.Writer, a provi
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	pods, err := client.Core().Pods(client.Namespace()).List(metav1.ListOptions{
+	pods, err := client.CoreV1().Pods(client.Namespace()).List(metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(l.ToAppSelector())).String(),
 	})
 	if err != nil {
@@ -785,7 +766,7 @@ func (p *kubernetesProvisioner) ExecuteCommandOnce(stdout, stderr io.Writer, app
 	})
 }
 
-func runIsolatedCmdPod(client *clusterClient, a provision.App, out io.Writer, cmds []string) error {
+func runIsolatedCmdPod(client *ClusterClient, a provision.App, out, errW io.Writer, cmds []string) error {
 	baseName := execCommandPodNameForApp(a)
 	labels, err := provision.ServiceLabels(provision.ServiceLabelsOpts{
 		App: a,
@@ -810,12 +791,13 @@ func runIsolatedCmdPod(client *clusterClient, a provision.App, out io.Writer, cm
 	return runPod(runSinglePodArgs{
 		client: client,
 		stdout: out,
+		stderr: errW,
 		labels: labels,
-		cmds:   cmds,
+		cmd:    strings.Join(cmds, " "),
 		envs:   envs,
 		name:   baseName,
 		image:  imgName,
-		pool:   a.GetPool(),
+		app:    a,
 	})
 }
 
@@ -824,8 +806,8 @@ func (p *kubernetesProvisioner) ExecuteCommandIsolated(stdout, stderr io.Writer,
 	if err != nil {
 		return err
 	}
-	cmds := append([]string{"/bin/sh", "-c", cmd}, args...)
-	return runIsolatedCmdPod(client, a, stdout, cmds)
+	cmds := append([]string{cmd}, args...)
+	return runIsolatedCmdPod(client, a, stdout, stderr, cmds)
 }
 
 func (p *kubernetesProvisioner) StartupMessage() (string, error) {

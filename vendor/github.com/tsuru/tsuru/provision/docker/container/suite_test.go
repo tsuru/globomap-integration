@@ -13,9 +13,9 @@ import (
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
-	"github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/docker/types"
+	"github.com/tsuru/tsuru/provision/dockercommon"
 	"github.com/tsuru/tsuru/router/routertest"
 	"gopkg.in/check.v1"
 )
@@ -27,9 +27,10 @@ func Test(t *testing.T) {
 var _ = check.Suite(&S{})
 
 type S struct {
-	p      *fakeDockerProvisioner
-	server *dtesting.DockerServer
-	user   string
+	cli     *dockercommon.PullAndCreateClient
+	limiter provision.ActionLimiter
+	server  *dtesting.DockerServer
+	user    string
 }
 
 func (s *S) SetUpSuite(c *check.C) {
@@ -38,7 +39,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("database:driver", "mongodb")
 	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "docker_provision_container_tests")
-	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017")
+	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("docker:cluster:mongo-database", "docker_provision_container_tests_cluster_stor")
 	config.Set("docker:run-cmd:port", "8888")
 	config.Set("docker:user", s.user)
@@ -53,8 +54,10 @@ func (s *S) SetUpTest(c *check.C) {
 	dbtest.ClearAllCollections(conn.Apps().Database)
 	s.server, err = dtesting.NewServer("127.0.0.1:0", nil, nil)
 	c.Assert(err, check.IsNil)
-	s.p, err = newFakeDockerProvisioner(s.server.URL())
+	cli, err := docker.NewClient(s.server.URL())
 	c.Assert(err, check.IsNil)
+	s.cli = &dockercommon.PullAndCreateClient{Client: cli}
+	s.limiter = &provision.LocalLimiter{}
 }
 
 func (s *S) TearDownTest(c *check.C) {
@@ -70,7 +73,7 @@ func (s *S) TearDownSuite(c *check.C) {
 
 func (s *S) removeTestContainer(c *Container) error {
 	routertest.FakeRouter.RemoveBackend(c.AppName)
-	return c.Remove(s.p)
+	return c.Remove(s.cli, s.limiter)
 }
 
 type newContainerOpts struct {
@@ -79,9 +82,9 @@ type newContainerOpts struct {
 	ProcessName string
 }
 
-func (s *S) newContainer(opts newContainerOpts, p *fakeDockerProvisioner) (*Container, error) {
-	if p == nil {
-		p = s.p
+func (s *S) newContainer(opts newContainerOpts, cli *dockercommon.PullAndCreateClient) (*Container, error) {
+	if cli == nil {
+		cli = s.cli
 	}
 	container := Container{
 		Container: types.Container{
@@ -104,7 +107,7 @@ func (s *S) newContainer(opts newContainerOpts, p *fakeDockerProvisioner) (*Cont
 	if container.Image == "" {
 		container.Image = "tsuru/python:latest"
 	}
-	routertest.FakeRouter.AddBackend(container.AppName)
+	routertest.FakeRouter.AddBackend(routertest.FakeApp{Name: container.AppName})
 	routertest.FakeRouter.AddRoutes(container.AppName, []*url.URL{container.Address()})
 	ports := map[docker.Port]struct{}{
 		docker.Port(provision.WebProcessDefaultPort() + "/tcp"): {},
@@ -114,20 +117,14 @@ func (s *S) newContainer(opts newContainerOpts, p *fakeDockerProvisioner) (*Cont
 		Cmd:          []string{"ps"},
 		ExposedPorts: ports,
 	}
-	err := p.Cluster().PullImage(docker.PullImageOptions{Repository: container.Image}, docker.AuthConfiguration{})
+	err := cli.PullImage(docker.PullImageOptions{Repository: container.Image}, docker.AuthConfiguration{})
 	if err != nil {
 		return nil, err
 	}
-	_, c, err := p.Cluster().CreateContainer(docker.CreateContainerOptions{Config: &config}, net.StreamInactivityTimeout)
+	c, _, err := cli.PullAndCreateContainer(docker.CreateContainerOptions{Config: &config}, nil)
 	if err != nil {
 		return nil, err
 	}
 	container.ID = c.ID
-	coll := p.Collection()
-	defer coll.Close()
-	err = coll.Insert(container)
-	if err != nil {
-		return nil, err
-	}
 	return &container, nil
 }

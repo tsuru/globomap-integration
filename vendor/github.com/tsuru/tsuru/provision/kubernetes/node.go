@@ -5,27 +5,33 @@
 package kubernetes
 
 import (
-	"strings"
-
+	tsuruNet "github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
+	apiv1 "k8s.io/api/core/v1"
 )
 
 type kubernetesNodeWrapper struct {
 	node    *apiv1.Node
 	prov    *kubernetesProvisioner
-	cluster *clusterClient
+	cluster *ClusterClient
 }
 
 var (
 	_ provision.Node = &kubernetesNodeWrapper{}
 )
 
+func (n *kubernetesNodeWrapper) IaaSID() string {
+	return labelSetFromMeta(&n.node.ObjectMeta).NodeIaaSID()
+}
+
 func (n *kubernetesNodeWrapper) Pool() string {
 	return labelSetFromMeta(&n.node.ObjectMeta).NodePool()
 }
 
 func (n *kubernetesNodeWrapper) Address() string {
+	if n.node == nil {
+		return ""
+	}
 	for _, addr := range n.node.Status.Addresses {
 		if addr.Type == apiv1.NodeInternalIP {
 			return addr.Address
@@ -46,43 +52,24 @@ func (n *kubernetesNodeWrapper) Status() string {
 	return "Invalid"
 }
 
-func filterMap(m map[string]string, includeDotted bool) map[string]string {
-	for k := range m {
-		if strings.HasPrefix(k, tsuruLabelPrefix) {
-			continue
-		}
-		if includeDotted != strings.Contains(k, ".") {
-			delete(m, k)
-		}
-	}
-	return m
+func (n *kubernetesNodeWrapper) Metadata() map[string]string {
+	return labelSetFromMeta(&n.node.ObjectMeta).NodeMetadata()
 }
 
-func (n *kubernetesNodeWrapper) Metadata() map[string]string {
-	return filterMap(n.allMetadata(), false)
+func (n *kubernetesNodeWrapper) MetadataNoPrefix() map[string]string {
+	return labelSetFromMeta(&n.node.ObjectMeta).NodeMetadataNoPrefix()
 }
 
 func (n *kubernetesNodeWrapper) ExtraData() map[string]string {
-	filteredMap := filterMap(n.allMetadata(), true)
+	var clusterName string
 	if n.cluster != nil {
-		filteredMap[provision.LabelClusterMetadata] = n.cluster.Name
+		clusterName = n.cluster.Name
 	}
-	return filteredMap
-}
-
-func (n *kubernetesNodeWrapper) allMetadata() map[string]string {
-	metadata := make(map[string]string, len(n.node.Labels)+len(n.node.Annotations))
-	for k, v := range n.node.Annotations {
-		metadata[k] = v
-	}
-	for k, v := range n.node.Labels {
-		metadata[k] = v
-	}
-	return metadata
+	return labelSetFromMeta(&n.node.ObjectMeta).NodeExtraData(clusterName)
 }
 
 func (n *kubernetesNodeWrapper) Units() ([]provision.Unit, error) {
-	pods, err := podsFromNode(n.cluster, n.node.Name)
+	pods, err := appPodsFromNode(n.cluster, n.node.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -91,4 +78,11 @@ func (n *kubernetesNodeWrapper) Units() ([]provision.Unit, error) {
 
 func (n *kubernetesNodeWrapper) Provisioner() provision.NodeProvisioner {
 	return n.prov
+}
+
+func (n *kubernetesNodeWrapper) ip() string {
+	if n.node == nil {
+		return ""
+	}
+	return tsuruNet.URLToHost(n.Address())
 }

@@ -58,6 +58,7 @@ func (s *S) TestProcessLabels(c *check.C) {
 		Labels: map[string]string{
 			"is-tsuru":     "true",
 			"is-stopped":   "false",
+			"is-deploy":    "false",
 			"app-name":     "myapp",
 			"app-process":  "p1",
 			"app-platform": "cobol",
@@ -135,6 +136,7 @@ func (s *S) TestNodeContainerLabels(c *check.C) {
 
 func (s *S) TestNodeLabels(c *check.C) {
 	opts := provision.NodeLabelsOpts{
+		IaaSID:       "vm-1234",
 		Addr:         "localhost:80",
 		Pool:         "mypool",
 		CustomLabels: map[string]string{"data": "1"},
@@ -142,10 +144,32 @@ func (s *S) TestNodeLabels(c *check.C) {
 	}
 	c.Assert(provision.NodeLabels(opts), check.DeepEquals, &provision.LabelSet{
 		Labels: map[string]string{
-			"tsuru-internal-node-addr": "localhost:80",
-			"pool": "mypool",
-			"data": "1",
+			"internal-node-addr": "localhost:80",
+			"pool":               "mypool",
+			"data":               "1",
+			"iaas-id":            "vm-1234",
 		},
 		Prefix: "myprefix",
 	})
+}
+
+func (s *S) TestLabelSet_WithoutAppReplicas(c *check.C) {
+	config.Set("routers:fake:type", "fake")
+	defer config.Unset("routers")
+	a := provisiontest.NewFakeApp("myapp", "cobol", 0)
+	opts := provision.ServiceLabelsOpts{
+		App:      a,
+		Replicas: 3,
+		Process:  "p1",
+		ServiceLabelExtendedOpts: provision.ServiceLabelExtendedOpts{
+			BuildImage:  "myimg",
+			IsBuild:     true,
+			Provisioner: "kubernetes",
+			Builder:     "docker",
+		},
+	}
+	ls, err := provision.ServiceLabels(opts)
+	c.Assert(err, check.IsNil)
+	c.Assert(ls.Labels["app-process-replicas"], check.Equals, "3")
+	c.Assert(ls.WithoutAppReplicas().Labels["app-process-replicas"], check.Equals, "")
 }

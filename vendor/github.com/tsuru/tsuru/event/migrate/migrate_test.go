@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
@@ -20,24 +21,28 @@ import (
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	_ "github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) { check.TestingT(t) }
 
 type S struct {
-	user *auth.User
-	team *authTypes.Team
+	user        *auth.User
+	team        *authTypes.Team
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&S{})
 
 func (s *S) SetUpTest(c *check.C) {
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_events_migrate_tests")
 	conn, err := db.Conn()
 	c.Assert(err, check.IsNil)
@@ -46,7 +51,16 @@ func (s *S) SetUpTest(c *check.C) {
 	c.Assert(err, check.IsNil)
 	config.Set("routers:fake:type", "fake")
 	config.Set("routers:fake:default", true)
-	err = app.SavePlan(appTypes.Plan{Name: "default", CpuShare: 100, Default: true})
+	plan := appTypes.Plan{Name: "default", CpuShare: 100, Default: true}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{plan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &plan, nil
+		},
+	}
+	servicemanager.Plan = s.mockService.Plan
 	c.Assert(err, check.IsNil)
 	nativeScheme := auth.ManagedScheme(native.NativeScheme{})
 	app.AuthScheme = nativeScheme
@@ -54,19 +68,27 @@ func (s *S) SetUpTest(c *check.C) {
 	_, err = nativeScheme.Create(s.user)
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "angra"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	provision.DefaultProvisioner = "fake"
 	provisiontest.ProvisionerInstance.Reset()
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{*s.team}, nil
+		},
+		OnFindByName: func(_ string) (*authTypes.Team, error) {
+			return s.team, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
 }
 
 func (s *S) TestMigrateRCEventsNoApp(c *check.C) {
-	now := time.Unix(time.Now().Unix(), 0)
+	now := time.Unix(time.Now().Unix(), 0).UTC()
 	id := bson.NewObjectId()
 	var expected event.Event
+	expected.Init()
 	expected.UniqueID = id
 	expected.Target = event.Target{Type: event.TargetTypeApp, Value: "a1"}
 	expected.Owner = event.Owner{Type: event.OwnerTypeUser, Name: "u1"}
@@ -83,9 +105,10 @@ func (s *S) TestMigrateRCEventsWithApp(c *check.C) {
 	a := app.App{Name: "a1", Platform: "zend", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
-	now := time.Unix(time.Now().Unix(), 0)
+	now := time.Unix(time.Now().Unix(), 0).UTC()
 	id := bson.NewObjectId()
 	var expected event.Event
+	expected.Init()
 	expected.UniqueID = id
 	expected.Target = event.Target{Type: event.TargetTypeApp, Value: "a1"}
 	expected.Owner = event.Owner{Type: event.OwnerTypeUser, Name: "u1"}
@@ -104,9 +127,10 @@ func (s *S) TestMigrateRCEventsWithApp(c *check.C) {
 }
 
 func (s *S) TestMigrateRCEventsInvalidTarget(c *check.C) {
-	now := time.Unix(time.Now().Unix(), 0)
+	now := time.Unix(time.Now().Unix(), 0).UTC()
 	id := bson.NewObjectId()
 	var expected event.Event
+	expected.Init()
 	expected.UniqueID = id
 	expected.Target = event.Target{Type: "some-invalid-target", Value: "a1"}
 	expected.Owner = event.Owner{Type: event.OwnerTypeUser, Name: "u1"}

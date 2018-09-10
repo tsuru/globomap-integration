@@ -11,11 +11,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ajg/form"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/api/context"
-	"github.com/tsuru/tsuru/api/types"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/bind"
 	"github.com/tsuru/tsuru/auth"
@@ -32,8 +33,9 @@ import (
 	"github.com/tsuru/tsuru/router"
 	"github.com/tsuru/tsuru/router/rebuild"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
+	apiTypes "github.com/tsuru/tsuru/types/api"
 	appTypes "github.com/tsuru/tsuru/types/app"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func appTarget(appName string) event.Target {
@@ -95,43 +97,51 @@ func appDelete(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 	keepAliveWriter := tsuruIo.NewKeepAliveWriter(w, 30*time.Second, "")
 	defer keepAliveWriter.Stop()
 	writer := &tsuruIo.SimpleJsonMessageEncoderWriter{Encoder: json.NewEncoder(keepAliveWriter)}
+	evt.SetLogWriter(writer)
 	w.Header().Set("Content-Type", "application/x-json-stream")
-	return app.Delete(&a, writer)
+	return app.Delete(&a, evt, requestIDHeader(r))
 }
 
 // miniApp is a minimal representation of the app, created to make appList
 // faster and transmit less data.
 type miniApp struct {
-	Name      string            `json:"name"`
-	Pool      string            `json:"pool"`
-	TeamOwner string            `json:"teamowner"`
-	Plan      appTypes.Plan     `json:"plan"`
-	Units     []provision.Unit  `json:"units"`
-	CName     []string          `json:"cname"`
-	IP        string            `json:"ip"`
-	Lock      provision.AppLock `json:"lock"`
-	Tags      []string          `json:"tags"`
-	Error     string            `json:"error,omitempty"`
+	Name      string               `json:"name"`
+	Pool      string               `json:"pool"`
+	TeamOwner string               `json:"teamowner"`
+	Plan      appTypes.Plan        `json:"plan"`
+	Units     []provision.Unit     `json:"units"`
+	CName     []string             `json:"cname"`
+	IP        string               `json:"ip"`
+	Routers   []appTypes.AppRouter `json:"routers"`
+	Lock      provision.AppLock    `json:"lock"`
+	Tags      []string             `json:"tags"`
+	Error     string               `json:"error,omitempty"`
 }
 
-func minifyApp(app app.App) (miniApp, error) {
-	var unitsError string
-	units, err := app.Units()
-	if err != nil {
-		unitsError = fmt.Sprintf("unable to list app units: %+v", err)
+func minifyApp(app app.App, unitData app.AppUnitsResponse) (miniApp, error) {
+	var errorStr string
+	if unitData.Err != nil {
+		errorStr = unitData.Err.Error()
 	}
-	return miniApp{
+	if unitData.Units == nil {
+		unitData.Units = []provision.Unit{}
+	}
+	ma := miniApp{
 		Name:      app.Name,
 		Pool:      app.Pool,
 		Plan:      app.Plan,
 		TeamOwner: app.TeamOwner,
-		Units:     units,
+		Units:     unitData.Units,
 		CName:     app.CName,
-		IP:        app.IP,
+		Routers:   app.Routers,
 		Lock:      &app.Lock,
 		Tags:      app.Tags,
-		Error:     unitsError,
-	}, nil
+		Error:     errorStr,
+	}
+	if len(ma.Routers) > 0 {
+		ma.IP = ma.Routers[0].Address
+	}
+	return ma, nil
 }
 
 func appFilterByContext(contexts []permission.PermissionContext, filter *app.Filter) *app.Filter {
@@ -203,10 +213,14 @@ func appList(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
+	appUnits, err := app.Units(apps)
+	if err != nil {
+		return err
+	}
 	w.Header().Set("Content-Type", "application/json")
 	miniApps := make([]miniApp, len(apps))
 	for i, app := range apps {
-		miniApps[i], err = minifyApp(app)
+		miniApps[i], err = minifyApp(app, appUnits[app.Name])
 		if err != nil {
 			return err
 		}
@@ -286,7 +300,7 @@ func createApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 			if err != permission.ErrTooManyTeams {
 				return err
 			}
-			teams, listErr := auth.ListTeams()
+			teams, listErr := servicemanager.Team.List()
 			if listErr != nil {
 				return listErr
 			}
@@ -307,7 +321,7 @@ func createApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 		return err
 	}
 	if a.Platform != "" {
-		platform, errPlat := app.GetPlatform(a.Platform)
+		platform, errPlat := servicemanager.Platform.FindByName(a.Platform)
 		if errPlat != nil {
 			return errPlat
 		}
@@ -359,10 +373,16 @@ func createApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 	if err != nil {
 		return err
 	}
-	msg := map[string]string{
+	msg := map[string]interface{}{
 		"status":         "success",
 		"repository_url": repo.ReadWriteURL,
-		"ip":             a.IP,
+	}
+	addrs, err := a.GetAddresses()
+	if err != nil {
+		return err
+	}
+	if len(addrs) > 0 {
+		msg["ip"] = addrs[0]
 	}
 	jsonMsg, err := json.Marshal(msg)
 	if err != nil {
@@ -381,6 +401,7 @@ func createApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 // produce: application/x-json-stream
 // responses:
 //   200: App updated
+//   400: Invalid new pool
 //   401: Unauthorized
 //   404: Not found
 func updateApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error) {
@@ -411,6 +432,9 @@ func updateApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 		return err
 	}
 	var wantedPerms []*permission.PermissionScheme
+	if updateData.Router != "" || len(updateData.RouterOpts) > 0 {
+		return &errors.HTTP{Code: http.StatusBadRequest, Message: "updating router was deprecated, please add the wanted router and remove the old one"}
+	}
 	if updateData.Description != "" {
 		wantedPerms = append(wantedPerms, permission.PermAppUpdateDescription)
 	}
@@ -426,9 +450,6 @@ func updateApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 	if updateData.TeamOwner != "" {
 		wantedPerms = append(wantedPerms, permission.PermAppUpdateTeamowner)
 	}
-	if updateData.Router != "" {
-		wantedPerms = append(wantedPerms, permission.PermAppUpdateRouter)
-	}
 	if updateData.Platform != "" {
 		wantedPerms = append(wantedPerms, permission.PermAppUpdatePlatform)
 		updateData.UpdatePlatform = true
@@ -436,11 +457,8 @@ func updateApp(w http.ResponseWriter, r *http.Request, t auth.Token) (err error)
 	if updateData.UpdatePlatform {
 		wantedPerms = append(wantedPerms, permission.PermAppUpdateImageReset)
 	}
-	if len(updateData.RouterOpts) > 0 {
-		wantedPerms = append(wantedPerms, permission.PermAppUpdateRouterOpts)
-	}
 	if len(wantedPerms) == 0 {
-		msg := "Neither the description, plan, pool, router, team owner or platform were set. You must define at least one."
+		msg := "Neither the description, plan, pool, team owner or platform were set. You must define at least one."
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: msg}
 	}
 	for _, perm := range wantedPerms {
@@ -646,6 +664,7 @@ func setNodeStatus(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 	}
 	var hostInput provision.NodeStatusData
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&hostInput, r.Form)
 	if err != nil {
@@ -695,7 +714,7 @@ func grantAppAccess(w http.ResponseWriter, r *http.Request, t auth.Token) (err e
 		return err
 	}
 	defer func() { evt.Done(err) }()
-	team, err := auth.TeamService().FindByName(teamName)
+	team, err := servicemanager.Team.FindByName(teamName)
 	if err != nil {
 		return &errors.HTTP{Code: http.StatusNotFound, Message: "Team not found"}
 	}
@@ -739,7 +758,7 @@ func revokeAppAccess(w http.ResponseWriter, r *http.Request, t auth.Token) (err 
 		return err
 	}
 	defer func() { evt.Done(err) }()
-	team, err := auth.TeamService().FindByName(teamName)
+	team, err := servicemanager.Team.FindByName(teamName)
 	if err != nil || team == nil {
 		return &errors.HTTP{Code: http.StatusNotFound, Message: "Team not found"}
 	}
@@ -868,7 +887,7 @@ func setEnv(w http.ResponseWriter, r *http.Request, t auth.Token) (err error) {
 	if err != nil {
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
 	}
-	var e types.Envs
+	var e apiTypes.Envs
 	dec := form.NewDecoder(nil)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&e, r.Form)
@@ -1231,7 +1250,7 @@ func bindServiceInstance(w http.ResponseWriter, r *http.Request, t auth.Token) (
 	keepAliveWriter := tsuruIo.NewKeepAliveWriter(w, 30*time.Second, "")
 	defer keepAliveWriter.Stop()
 	writer := &tsuruIo.SimpleJsonMessageEncoderWriter{Encoder: json.NewEncoder(keepAliveWriter)}
-	err = instance.BindApp(a, !noRestart, writer)
+	err = instance.BindApp(a, !noRestart, writer, evt, requestIDHeader(r))
 	if err != nil {
 		return err
 	}
@@ -1293,7 +1312,7 @@ func unbindServiceInstance(w http.ResponseWriter, r *http.Request, t auth.Token)
 	keepAliveWriter := tsuruIo.NewKeepAliveWriter(w, 30*time.Second, "")
 	defer keepAliveWriter.Stop()
 	writer := &tsuruIo.SimpleJsonMessageEncoderWriter{Encoder: json.NewEncoder(keepAliveWriter)}
-	err = instance.UnbindApp(a, !noRestart, writer)
+	err = instance.UnbindApp(a, !noRestart, writer, evt, requestIDHeader(r))
 	if err != nil {
 		return err
 	}
@@ -1484,8 +1503,11 @@ func swap(w http.ResponseWriter, r *http.Request, t auth.Token) (err error) {
 	if !allowed1 || !allowed2 {
 		return permission.ErrUnauthorized
 	}
-	evt1, err := event.New(&event.Opts{
-		Target:     appTarget(app1Name),
+	evt, err := event.New(&event.Opts{
+		Target: appTarget(app1Name),
+		ExtraTargets: []event.ExtraTarget{
+			{Target: appTarget(app2Name), Lock: true},
+		},
 		Kind:       permission.PermAppUpdateSwap,
 		Owner:      t,
 		CustomData: event.FormToCustomData(r.Form),
@@ -1494,18 +1516,7 @@ func swap(w http.ResponseWriter, r *http.Request, t auth.Token) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { evt1.Done(err) }()
-	evt2, err := event.New(&event.Opts{
-		Target:     appTarget(app2Name),
-		Kind:       permission.PermAppUpdateSwap,
-		Owner:      t,
-		CustomData: event.FormToCustomData(r.Form),
-		Allowed:    event.Allowed(permission.PermAppReadEvents, contextsForApp(app2)...),
-	})
-	if err != nil {
-		return err
-	}
-	defer func() { evt2.Done(err) }()
+	defer func() { evt.Done(err) }()
 	// compare apps by platform type and number of units
 	if forceSwap == "false" {
 		if app1.Platform != app2.Platform {
@@ -1648,6 +1659,12 @@ func forceDeleteLock(w http.ResponseWriter, r *http.Request, t auth.Token) (err 
 	return nil
 }
 
+func isDeployAgentUA(r *http.Request) bool {
+	ua := strings.ToLower(r.UserAgent())
+	return strings.HasPrefix(ua, "go-http-client") ||
+		strings.HasPrefix(ua, "tsuru-deploy-agent")
+}
+
 // title: register unit
 // path: /apps/{app}/units/register
 // method: POST
@@ -1669,7 +1686,11 @@ func registerUnit(w http.ResponseWriter, r *http.Request, t auth.Token) error {
 	if !allowed {
 		return permission.ErrUnauthorized
 	}
-	if r.Header.Get("X-Agent-Version") == "" {
+	if isDeployAgentUA(r) && r.Header.Get("X-Agent-Version") == "" {
+		// Filtering the user-agent is not pretty, but it's safer than doing
+		// the header check for every request, otherwise calling directly the
+		// API would always fail without this header that only makes sense to
+		// the agent.
 		msgError := fmt.Sprintf("Please contact admin. %s platform is using outdated deploy-agent version, minimum required version is 0.2.4", a.GetPlatform())
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: msgError}
 	}
@@ -1758,7 +1779,7 @@ func appRebuildRoutes(w http.ResponseWriter, r *http.Request, t auth.Token) (err
 	if err != nil {
 		return err
 	}
-	result := &rebuild.RebuildRoutesResult{}
+	result := map[string]rebuild.RebuildRoutesResult{}
 	defer func() { evt.DoneCustomData(err, result) }()
 	w.Header().Set("Content-Type", "application/json")
 	result, err = rebuild.RebuildRoutes(&a, dry)

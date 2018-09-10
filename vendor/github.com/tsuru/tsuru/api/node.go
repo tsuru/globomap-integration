@@ -26,7 +26,7 @@ import (
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/pool"
-	"gopkg.in/mgo.v2"
+	apiTypes "github.com/tsuru/tsuru/types/api"
 )
 
 func validateNodeAddress(address string) error {
@@ -53,7 +53,7 @@ func addNodeForParams(p provision.NodeProvisioner, params provision.AddNodeOptio
 		address = params.Metadata["address"]
 		delete(params.Metadata, "address")
 	} else {
-		desc, _ := iaas.Describe(params.Metadata["iaas"])
+		desc, _ := iaas.Describe(params.Metadata[provision.IaaSMetadataName])
 		response["description"] = desc
 		m, err := iaas.CreateMachine(params.Metadata)
 		if err != nil {
@@ -63,8 +63,10 @@ func addNodeForParams(p provision.NodeProvisioner, params provision.AddNodeOptio
 		params.CaCert = m.CaCert
 		params.ClientCert = m.ClientCert
 		params.ClientKey = m.ClientKey
+		params.IaaSID = m.Id
 	}
-	prov, _, err := provision.FindNode(address)
+	delete(params.Metadata, provision.PoolMetadataName)
+	prov, _, err := provision.FindNodeSkipProvisioner(address, p.GetName())
 	if err != provision.ErrNodeNotFound {
 		if err == nil {
 			return "", nil, errors.Errorf("node with address %q already exists in provisioner %q", address, prov.GetName())
@@ -77,7 +79,14 @@ func addNodeForParams(p provision.NodeProvisioner, params provision.AddNodeOptio
 	}
 	params.Address = address
 	err = p.AddNode(params)
-	return address, response, err
+	if err != nil {
+		return "", nil, err
+	}
+	node, err := p.GetNode(address)
+	if err != nil {
+		return "", nil, err
+	}
+	return node.Address(), response, err
 }
 
 // title: add node
@@ -96,6 +105,7 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request, t auth.Token) (err e
 	}
 	var params provision.AddNodeOptions
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&params, r.Form)
 	if err != nil {
@@ -108,7 +118,8 @@ func addNodeHandler(w http.ResponseWriter, r *http.Request, t auth.Token) (err e
 		}
 	}
 	params.Pool = params.Metadata[provision.PoolMetadataName]
-	delete(params.Metadata, provision.PoolMetadataName)
+	params.IaaSID = params.Metadata[provision.IaaSIDMetadataName]
+	delete(params.Metadata, provision.IaaSIDMetadataName)
 	if params.Pool == "" {
 		return &tsuruErrors.HTTP{Code: http.StatusBadRequest, Message: "pool is required"}
 	}
@@ -208,18 +219,13 @@ func removeNodeHandler(w http.ResponseWriter, r *http.Request, t auth.Token) (er
 	removeIaaS, _ := strconv.ParseBool(r.URL.Query().Get("remove-iaas"))
 	if removeIaaS {
 		var m iaas.Machine
-		m, err = iaas.FindMachineByIdOrAddress(node.Metadata()["iaas-id"], net.URLToHost(address))
-		if err != nil && err != mgo.ErrNotFound {
+		m, err = iaas.FindMachineByIdOrAddress(node.IaaSID(), net.URLToHost(address))
+		if err != nil && err != iaas.ErrMachineNotFound {
 			return nil
 		}
 		return m.Destroy()
 	}
 	return nil
-}
-
-type listNodeResponse struct {
-	Nodes    []provision.NodeSpec `json:"nodes"`
-	Machines []iaas.Machine       `json:"machines"`
 }
 
 // title: list nodes
@@ -295,7 +301,7 @@ func listNodesHandler(w http.ResponseWriter, r *http.Request, t auth.Token) erro
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
-	result := listNodeResponse{
+	result := apiTypes.ListNodeResponse{
 		Nodes:    allNodes,
 		Machines: machines,
 	}
@@ -319,6 +325,7 @@ func updateNodeHandler(w http.ResponseWriter, r *http.Request, t auth.Token) (er
 	}
 	var params provision.UpdateNodeOptions
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&params, r.Form)
 	if err != nil {
@@ -524,6 +531,7 @@ func nodeHealingUpdate(w http.ResponseWriter, r *http.Request, t auth.Token) (er
 	defer func() { evt.Done(err) }()
 	var config healer.NodeHealerConfig
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&config, r.Form)
 	if err != nil {
@@ -587,6 +595,7 @@ func rebalanceNodesHandler(w http.ResponseWriter, r *http.Request, t auth.Token)
 	var params provision.RebalanceNodesOptions
 	dec := form.NewDecoder(nil)
 	dec.IgnoreUnknownKeys(true)
+	dec.IgnoreCase(true)
 	err = dec.DecodeValues(&params, r.Form)
 	if err != nil {
 		return &tsuruErrors.HTTP{
@@ -597,21 +606,25 @@ func rebalanceNodesHandler(w http.ResponseWriter, r *http.Request, t auth.Token)
 	params.Force = true
 	var permContexts []permission.PermissionContext
 	var ok bool
+	evtTarget := event.Target{Type: event.TargetTypeGlobal}
 	params.Pool, ok = params.MetadataFilter[provision.PoolMetadataName]
 	if ok {
 		delete(params.MetadataFilter, provision.PoolMetadataName)
 		permContexts = append(permContexts, permission.Context(permission.CtxPool, params.Pool))
+		evtTarget = event.Target{Type: event.TargetTypePool, Value: params.Pool}
 	}
 	if !permission.Check(t, permission.PermNodeUpdateRebalance, permContexts...) {
 		return permission.ErrUnauthorized
 	}
 	evt, err := event.New(&event.Opts{
-		Target:      event.Target{Type: event.TargetTypePool, Value: params.Pool},
-		Kind:        permission.PermNodeUpdateRebalance,
-		Owner:       t,
-		CustomData:  event.FormToCustomData(r.Form),
-		DisableLock: true,
-		Allowed:     event.Allowed(permission.PermPoolReadEvents, permContexts...),
+		Target:        evtTarget,
+		Kind:          permission.PermNodeUpdateRebalance,
+		Owner:         t,
+		CustomData:    event.FormToCustomData(r.Form),
+		DisableLock:   true,
+		Allowed:       event.Allowed(permission.PermPoolReadEvents, permContexts...),
+		Cancelable:    true,
+		AllowedCancel: event.Allowed(permission.PermAppUpdateEvents, permContexts...),
 	})
 	if err != nil {
 		return err
@@ -621,7 +634,8 @@ func rebalanceNodesHandler(w http.ResponseWriter, r *http.Request, t auth.Token)
 	keepAliveWriter := tsuruIo.NewKeepAliveWriter(w, 15*time.Second, "")
 	defer keepAliveWriter.Stop()
 	writer := &tsuruIo.SimpleJsonMessageEncoderWriter{Encoder: json.NewEncoder(keepAliveWriter)}
-	params.Writer = writer
+	evt.SetLogWriter(writer)
+	params.Event = evt
 	var provs []provision.Provisioner
 	if params.Pool != "" {
 		var p *pool.Pool
@@ -656,4 +670,61 @@ func rebalanceNodesHandler(w http.ResponseWriter, r *http.Request, t auth.Token)
 	}
 	fmt.Fprintf(writer, "Units successfully rebalanced!\n")
 	return nil
+}
+
+// title: node info
+// path: /node/{address}
+// method: GET
+// produce: application/json
+// responses:
+//   200: Ok
+//   404: Not found
+func infoNodeHandler(w http.ResponseWriter, r *http.Request, t auth.Token) error {
+	address := r.URL.Query().Get(":address")
+	if address == "" {
+		return errors.Errorf("Node address is required.")
+	}
+	_, node, err := provision.FindNode(address)
+	if err != nil {
+		if err == provision.ErrNodeNotFound {
+			return &tsuruErrors.HTTP{
+				Code:    http.StatusNotFound,
+				Message: err.Error(),
+			}
+		}
+		return err
+	}
+	spec := provision.NodeToSpec(node)
+	if spec.IaaSID == "" {
+		var machine iaas.Machine
+		machine, err = iaas.FindMachineByAddress(address)
+		if err != nil {
+			if err != iaas.ErrMachineNotFound {
+				return err
+			}
+		} else {
+			spec.IaaSID = machine.Iaas
+		}
+	}
+	nodeStatus, err := healer.HealerInstance.GetNodeStatusData(node)
+	if err != nil && err != provision.ErrNodeNotFound {
+		return &tsuruErrors.HTTP{
+			Code:    http.StatusNotFound,
+			Message: err.Error(),
+		}
+	}
+	units, err := node.Units()
+	if err != nil {
+		return &tsuruErrors.HTTP{
+			Code:    http.StatusNotFound,
+			Message: err.Error(),
+		}
+	}
+	response := apiTypes.InfoNodeResponse{
+		Node:   spec,
+		Status: nodeStatus,
+		Units:  units,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(response)
 }

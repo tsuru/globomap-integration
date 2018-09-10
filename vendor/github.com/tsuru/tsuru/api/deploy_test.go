@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/image"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/builder"
-	"github.com/tsuru/tsuru/builder/fake"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"github.com/tsuru/tsuru/event"
@@ -34,12 +34,12 @@ import (
 	"github.com/tsuru/tsuru/repository"
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	"github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type DeploySuite struct {
@@ -48,8 +48,12 @@ type DeploySuite struct {
 	token       auth.Token
 	team        *authTypes.Team
 	provisioner *provisiontest.FakeProvisioner
-	builder     *fake.FakeBuilder
+	builder     *builder.MockBuilder
 	testServer  http.Handler
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&DeploySuite{})
@@ -60,8 +64,6 @@ func (s *DeploySuite) createUserAndTeam(c *check.C) {
 	_, err := nativeScheme.Create(user)
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "tsuruteam"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	s.token = userWithPermission(c, permission.Permission{
 		Scheme:  permission.PermAppReadDeploy,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -73,7 +75,6 @@ func (s *DeploySuite) createUserAndTeam(c *check.C) {
 
 func (s *DeploySuite) reset() {
 	s.provisioner.Reset()
-	s.builder.Reset()
 	routertest.FakeRouter.Reset()
 	repositorytest.Reset()
 }
@@ -83,7 +84,7 @@ func (s *DeploySuite) SetUpSuite(c *check.C) {
 	c.Assert(err, check.IsNil)
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_deploy_api_tests")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("repo-manager", "fake")
@@ -91,8 +92,6 @@ func (s *DeploySuite) SetUpSuite(c *check.C) {
 	c.Assert(err, check.IsNil)
 	s.logConn, err = db.LogConn()
 	c.Assert(err, check.IsNil)
-	s.builder = fake.NewFakeBuilder()
-	builder.Register("fake", s.builder)
 	s.testServer = RunServer(true)
 }
 
@@ -109,12 +108,13 @@ func (s *DeploySuite) TearDownSuite(c *check.C) {
 func (s *DeploySuite) SetUpTest(c *check.C) {
 	s.provisioner = provisiontest.ProvisionerInstance
 	provision.DefaultProvisioner = "fake"
+	s.builder = &builder.MockBuilder{}
+	builder.Register("fake", s.builder)
 	builder.DefaultBuilder = "fake"
 	s.reset()
 	err := dbtest.ClearAllCollections(s.conn.Apps().Database)
 	c.Assert(err, check.IsNil)
 	s.createUserAndTeam(c)
-	app.PlatformService().Insert(appTypes.Platform{Name: "python"})
 	opts := pool.AddPoolOptions{Name: "pool1", Default: true}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
@@ -122,14 +122,42 @@ func (s *DeploySuite) SetUpTest(c *check.C) {
 	c.Assert(err, check.IsNil)
 	repository.Manager().CreateUser(user.Email)
 	config.Set("docker:router", "fake")
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+	}
+	defaultPlan := appTypes.Plan{
+		Name:     "default-plan",
+		Memory:   1024,
+		Swap:     1024,
+		CpuShare: 100,
+		Default:  true,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{defaultPlan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &defaultPlan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
 }
 
 func (s *DeploySuite) TestDeployHandler(c *check.C) {
+	var builderCalled bool
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		builderCalled = true
+		c.Assert(opts.ArchiveURL, check.Equals, "http://something.tar.gz")
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	user, _ := s.token.User()
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -141,6 +169,7 @@ func (s *DeploySuite) TestDeployHandler(c *check.C) {
 	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "text")
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	c.Assert(recorder.Body.String(), check.Equals, "Builder deploy called\nOK\n")
+	c.Assert(builderCalled, check.Equals, true)
 	c.Assert(eventtest.EventDesc{
 		Target: appTarget(a.Name),
 		Owner:  s.token.GetUserName(),
@@ -165,11 +194,15 @@ func (s *DeploySuite) TestDeployHandler(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployOriginDragAndDrop(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		c.Assert(opts.ArchiveFile, check.NotNil)
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?origin=drag-and-drop", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?origin=drag-and-drop", a.Name)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	file, err := writer.CreateFormFile("file", "archive.tar.gz")
@@ -214,7 +247,7 @@ func (s *DeploySuite) TestDeployInvalidOrigin(c *check.C) {
 	user, _ := s.token.User()
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s&origin=drag", a.Name, a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s&origin=drag", a.Name, a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -227,6 +260,9 @@ func (s *DeploySuite) TestDeployInvalidOrigin(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployOriginImage(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)
@@ -265,6 +301,9 @@ func (s *DeploySuite) TestDeployOriginImage(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployArchiveURL(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{
 		Name:      "otherapp",
@@ -274,7 +313,7 @@ func (s *DeploySuite) TestDeployArchiveURL(c *check.C) {
 	}
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s", a.Name, a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s", a.Name, a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -309,6 +348,9 @@ func (s *DeploySuite) TestDeployArchiveURL(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployUploadFile(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{
 		Name:      "otherapp",
@@ -319,7 +361,7 @@ func (s *DeploySuite) TestDeployUploadFile(c *check.C) {
 
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	file, err := writer.CreateFormFile("file", "archive.tar.gz")
@@ -360,7 +402,67 @@ func (s *DeploySuite) TestDeployUploadFile(c *check.C) {
 	}, eventtest.HasEvent)
 }
 
+func (s *DeploySuite) TestDeployUploadLargeFile(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
+	user, _ := s.token.User()
+	a := app.App{
+		Name:      "otherapp",
+		Platform:  "python",
+		Router:    "fake",
+		TeamOwner: s.team.Name,
+	}
+
+	err := app.CreateApp(&a, user)
+	c.Assert(err, check.IsNil)
+	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("file", "archive.tar.gz")
+	c.Assert(err, check.IsNil)
+	// Must be larger than 32MB to be stored in a tempfile.
+	payload := bytes.Repeat([]byte("*"), 33<<20)
+	file.Write(payload)
+	writer.Close()
+	request, err := http.NewRequest("POST", url, &body)
+	c.Assert(err, check.IsNil)
+	request.Header.Set("Content-Type", "multipart/form-data; boundary="+writer.Boundary())
+	recorder := httptest.NewRecorder()
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
+	server := RunServer(true)
+	server.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
+	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "text")
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
+	c.Assert(recorder.Body.String(), check.Equals, "Builder deploy called\nOK\n")
+	c.Assert(eventtest.EventDesc{
+		Target: appTarget(a.Name),
+		Owner:  s.token.GetUserName(),
+		Kind:   "app.deploy",
+		StartCustomData: map[string]interface{}{
+			"app.name":   a.Name,
+			"commit":     "",
+			"filesize":   33 << 20,
+			"kind":       "upload",
+			"archiveurl": "",
+			"user":       s.token.GetUserName(),
+			"image":      "",
+			"origin":     "",
+			"build":      false,
+			"rollback":   false,
+		},
+		EndCustomData: map[string]interface{}{
+			"image": "app-image",
+		},
+		LogMatches: `Builder deploy called`,
+	}, eventtest.HasEvent)
+}
+
 func (s *DeploySuite) TestDeployWithCommit(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	token, err := nativeScheme.AppLogin(app.InternalAppName)
 	c.Assert(err, check.IsNil)
 	user, _ := s.token.User()
@@ -372,7 +474,7 @@ func (s *DeploySuite) TestDeployWithCommit(c *check.C) {
 	}
 	err = app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano&commit=123"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -409,6 +511,9 @@ func (s *DeploySuite) TestDeployWithCommit(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployWithCommitUserToken(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{
 		Name:      "otherapp",
@@ -418,7 +523,7 @@ func (s *DeploySuite) TestDeployWithCommitUserToken(c *check.C) {
 	}
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano&commit=123"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -454,6 +559,9 @@ func (s *DeploySuite) TestDeployWithCommitUserToken(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployWithMessage(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	token, err := nativeScheme.AppLogin(app.InternalAppName)
 	c.Assert(err, check.IsNil)
 	user, _ := s.token.User()
@@ -465,7 +573,7 @@ func (s *DeploySuite) TestDeployWithMessage(c *check.C) {
 	}
 	err = app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&message=and when he falleth"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -501,6 +609,9 @@ func (s *DeploySuite) TestDeployWithMessage(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployWithoutPlatformFails(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	token, err := nativeScheme.AppLogin(app.InternalAppName)
 	c.Assert(err, check.IsNil)
 	user, _ := s.token.User()
@@ -511,7 +622,7 @@ func (s *DeploySuite) TestDeployWithoutPlatformFails(c *check.C) {
 	}
 	err = app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone", a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy", a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -520,10 +631,13 @@ func (s *DeploySuite) TestDeployWithoutPlatformFails(c *check.C) {
 	server := RunServer(true)
 	server.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusInternalServerError)
-	c.Assert(recorder.Body.String(), check.Equals, "can't deploy app without platform, if it's not an image or rollback\n")
+	c.Assert(recorder.Body.String(), check.Matches, "(?s).*can't deploy app without platform, if it's not an image or rollback\n")
 }
 
 func (s *DeploySuite) TestDeployDockerImage(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{Name: "myapp", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)
@@ -562,11 +676,14 @@ func (s *DeploySuite) TestDeployDockerImage(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployShouldIncrementDeployNumberOnApp(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s", a.Name, a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s", a.Name, a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -580,7 +697,7 @@ func (s *DeploySuite) TestDeployShouldIncrementDeployNumberOnApp(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployShouldReturnNotFoundWhenAppDoesNotExist(c *check.C) {
-	request, err := http.NewRequest("POST", "/apps/abc/repository/clone", strings.NewReader("archive-url=http://something.tar.gz"))
+	request, err := http.NewRequest("POST", "/apps/abc/deploy", strings.NewReader("archive-url=http://something.tar.gz"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -602,7 +719,7 @@ func (s *DeploySuite) TestDeployShouldReturnForbiddenWhenUserDoesNotHaveAccessTo
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	err = app.CreateApp(&a, adminUser)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s", a.Name, a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s", a.Name, a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -624,7 +741,7 @@ func (s *DeploySuite) TestDeployShouldReturnForbiddenWhenTokenIsntFromTheApp(c *
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.AppLogin(app2.Name)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s", app1.Name, app2.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s", app1.Name, app2.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -637,6 +754,9 @@ func (s *DeploySuite) TestDeployShouldReturnForbiddenWhenTokenIsntFromTheApp(c *
 }
 
 func (s *DeploySuite) TestDeployWithTokenForInternalAppName(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	token, err := nativeScheme.AppLogin(app.InternalAppName)
 	c.Assert(err, check.IsNil)
 	a := app.App{
@@ -648,7 +768,7 @@ func (s *DeploySuite) TestDeployWithTokenForInternalAppName(c *check.C) {
 	user, _ := s.token.User()
 	err = app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/apps/%s/repository/clone?:appname=%s", a.Name, a.Name)
+	url := fmt.Sprintf("/apps/%s/deploy?:appname=%s", a.Name, a.Name)
 	request, err := http.NewRequest("POST", url, strings.NewReader("archive-url=http://something.tar.gz&user=fulano"))
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -667,7 +787,7 @@ func (s *DeploySuite) TestDeployWithoutArchiveURL(c *check.C) {
 	a := app.App{Name: "abc", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("POST", "/apps/abc/repository/clone", nil)
+	request, err := http.NewRequest("POST", "/apps/abc/deploy", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -741,8 +861,9 @@ func (s *DeploySuite) TestDeployListNonAdmin(c *check.C) {
 	_, err := nativeScheme.Create(user)
 	c.Assert(err, check.IsNil)
 	team := authTypes.Team{Name: "newteam"}
-	err = auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: team.Name}}, nil
+	}
 	_, token := permissiontest.CustomUserWithPermission(c, nativeScheme, "apponlyg1", permission.Permission{
 		Scheme:  permission.PermAppReadDeploy,
 		Context: permission.Context(permission.CtxApp, "g1"),
@@ -952,9 +1073,6 @@ func (s *DeploySuite) TestDeployInfoByNonAdminUser(c *check.C) {
 	app.AuthScheme = nativeScheme
 	_, err = nativeScheme.Create(user)
 	c.Assert(err, check.IsNil)
-	team := authTypes.Team{Name: "team"}
-	err = auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": user.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
@@ -977,7 +1095,7 @@ func (s *DeploySuite) TestDeployInfoByNonAdminUser(c *check.C) {
 
 func (s *DeploySuite) TestDeployInfoByNonAuthenticated(c *check.C) {
 	recorder := httptest.NewRecorder()
-	url := fmt.Sprintf("/deploys/xpto")
+	url := "/deploys/xpto"
 	request, err := http.NewRequest("GET", url, nil)
 	c.Assert(err, check.IsNil)
 	server := RunServer(true)
@@ -991,8 +1109,9 @@ func (s *DeploySuite) TestDeployInfoByUserWithoutAccess(c *check.C) {
 	_, err := nativeScheme.Create(user)
 	c.Assert(err, check.IsNil)
 	team := authTypes.Team{Name: "team"}
-	err = auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: team.Name}}, nil
+	}
 	a := app.App{Name: "g1", Platform: "python", TeamOwner: team.Name}
 	err = app.CreateApp(&a, user)
 	c.Assert(err, check.IsNil)
@@ -1274,6 +1393,10 @@ func (s *DeploySuite) TestDiffDeployWhenUserDoesNotHaveAccessToApp(c *check.C) {
 }
 
 func (s *DeploySuite) TestDeployRebuildHandler(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		c.Assert(opts.Rebuild, check.Equals, true)
+		return "tsuruteam/app-otherapp:mytag", nil
+	}
 	user, _ := s.token.User()
 	a := app.App{Name: "otherapp", Platform: "python", TeamOwner: s.team.Name}
 	err := app.CreateApp(&a, user)

@@ -5,6 +5,7 @@
 package container
 
 import (
+	"context"
 	"crypto"
 	"fmt"
 	"io"
@@ -16,32 +17,25 @@ import (
 	"github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
-	"github.com/tsuru/docker-cluster/cluster"
-	"github.com/tsuru/tsuru/db/storage"
+	"github.com/tsuru/tsuru/action"
+	"github.com/tsuru/tsuru/app/image"
+	tsuruErrors "github.com/tsuru/tsuru/errors"
+	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/log"
-	"github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/docker/types"
 	"github.com/tsuru/tsuru/provision/dockercommon"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
 }
 
-type DockerProvisioner interface {
-	Cluster() *cluster.Cluster
-	Collection() *storage.Collection
-	PushImage(name, tag string) error
-	ActionLimiter() provision.ActionLimiter
-	GetNodeByHost(host string) (cluster.Node, error)
-}
-
 type SchedulerOpts struct {
 	AppName       string
 	ProcessName   string
 	UpdateName    bool
+	FilterNodes   []string
 	ActionLimiter provision.ActionLimiter
 	LimiterDone   func()
 }
@@ -54,8 +48,55 @@ func (e *SchedulerError) Error() string {
 	return fmt.Sprintf("error in scheduler: %s", e.Base)
 }
 
+type StartError struct {
+	Base error
+}
+
+func (e *StartError) Error() string {
+	return fmt.Sprintf("error in start container: %v", e.Base)
+}
+
 type Container struct {
 	types.Container `bson:",inline"`
+}
+
+type ContainerState string
+
+type ContainerCtxKey struct{}
+
+var (
+	ContainerStateRemoved   = ContainerState("removed")
+	ContainerStateNewStatus = ContainerState("status")
+	ContainerStateImageSet  = ContainerState("image")
+)
+
+type ContainerStateClient interface {
+	SetContainerState(*Container, ContainerState) error
+}
+
+const (
+	maxStartRetries = 4
+)
+
+func RunPipelineWithRetry(pipe *action.Pipeline, args interface{}) error {
+	retryCount := maxStartRetries
+	multi := tsuruErrors.NewMultiError()
+	var err error
+	for ; retryCount >= 0; retryCount-- {
+		err = pipe.Execute(args)
+		if err == nil {
+			break
+		}
+		multi.Add(err)
+		_, isStartError := errors.Cause(err).(*StartError)
+		if !isStartError {
+			break
+		}
+	}
+	if err != nil {
+		return multi.ToError()
+	}
+	return nil
 }
 
 func (c *Container) ShortID() string {
@@ -81,14 +122,18 @@ type CreateArgs struct {
 	ImageID          string
 	Commands         []string
 	App              provision.App
-	Provisioner      DockerProvisioner
+	Client           provision.BuilderDockerClient
 	DestinationHosts []string
 	ProcessName      string
 	Deploy           bool
 	Building         bool
+	Event            *event.Event
 }
 
 func (c *Container) Create(args *CreateArgs) error {
+	if len(args.DestinationHosts) > 0 {
+		c.HostAddr = args.DestinationHosts[0]
+	}
 	var exposedPorts map[docker.Port]struct{}
 	if !args.Deploy {
 		if c.ExposedPort == "" {
@@ -110,6 +155,7 @@ func (c *Container) Create(args *CreateArgs) error {
 		App:         args.App,
 		Process:     c.ProcessName,
 		Provisioner: "docker",
+		IsDeploy:    args.Deploy,
 	})
 	if err != nil {
 		return err
@@ -131,26 +177,14 @@ func (c *Container) Create(args *CreateArgs) error {
 	}
 	c.addEnvsToConfig(args, strings.TrimSuffix(c.ExposedPort, "/tcp"), &conf)
 	opts := docker.CreateContainerOptions{Name: c.Name, Config: &conf, HostConfig: hostConf}
-	var nodeList []string
-	if len(args.DestinationHosts) > 0 {
-		var node cluster.Node
-		node, err = args.Provisioner.GetNodeByHost(args.DestinationHosts[0])
-		if err != nil {
-			return err
-		}
-		nodeList = []string{node.Address}
+	ctx := context.WithValue(context.Background(), ContainerCtxKey{}, c)
+	if args.Event != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = args.Event.CancelableContext(ctx)
+		defer cancel()
 	}
-	schedulerOpts := &SchedulerOpts{
-		AppName:       args.App.GetName(),
-		ProcessName:   args.ProcessName,
-		UpdateName:    true,
-		ActionLimiter: args.Provisioner.ActionLimiter(),
-	}
-	addr, cont, err := args.Provisioner.Cluster().CreateContainerSchedulerOpts(opts, schedulerOpts, net.StreamInactivityTimeout, nodeList...)
-	hostAddr := net.URLToHost(addr)
-	if schedulerOpts.LimiterDone != nil {
-		schedulerOpts.LimiterDone()
-	}
+	opts.Context = ctx
+	cont, hostAddr, err := args.Client.PullAndCreateContainer(opts, nil)
 	if err != nil {
 		log.Errorf("error on creating container in docker %s - %s", c.AppName, err)
 		return err
@@ -181,9 +215,9 @@ type NetworkInfo struct {
 	IP           string
 }
 
-func (c *Container) NetworkInfo(p DockerProvisioner) (NetworkInfo, error) {
+func (c *Container) NetworkInfo(client provision.BuilderDockerClient) (NetworkInfo, error) {
 	var netInfo NetworkInfo
-	dockerContainer, err := p.Cluster().InspectContainer(c.ID)
+	dockerContainer, err := client.InspectContainer(c.ID)
 	if err != nil {
 		return netInfo, err
 	}
@@ -207,55 +241,51 @@ func (c *Container) ExpectedStatus() provision.Status {
 	return provision.Status(c.Status)
 }
 
-func (c *Container) SetStatus(p DockerProvisioner, status provision.Status, updateDB bool) error {
+func (c *Container) SetStatus(client provision.BuilderDockerClient, status provision.Status, triggerCallback bool) error {
 	c.Status = status.String()
 	c.LastStatusUpdate = time.Now().In(time.UTC)
 	if c.Status != provision.StatusError.String() {
 		c.StatusBeforeError = c.Status
 	}
-	updateData := bson.M{
-		"status":            c.Status,
-		"statusbeforeerror": c.StatusBeforeError,
-		"laststatusupdate":  c.LastStatusUpdate,
-	}
 	if c.Status == provision.StatusStarted.String() ||
 		c.Status == provision.StatusStarting.String() ||
 		c.Status == provision.StatusStopped.String() {
 		c.LastSuccessStatusUpdate = c.LastStatusUpdate
-		updateData["lastsuccessstatusupdate"] = c.LastSuccessStatusUpdate
 	}
-	if !updateDB {
+	if !triggerCallback {
 		return nil
 	}
-	coll := p.Collection()
-	defer coll.Close()
-	return coll.Update(bson.M{"id": c.ID, "status": bson.M{"$ne": provision.StatusBuilding.String()}}, bson.M{"$set": updateData})
+	return c.setState(client, ContainerStateNewStatus)
 }
 
-func (c *Container) SetImage(p DockerProvisioner, imageID string) error {
+func (c *Container) setState(client provision.BuilderDockerClient, s ContainerState) error {
+	if stateCli, ok := client.(ContainerStateClient); ok {
+		return stateCli.SetContainerState(c, s)
+	}
+	return nil
+}
+
+func (c *Container) SetImage(client provision.BuilderDockerClient, imageID string) error {
 	c.Image = imageID
-	coll := p.Collection()
-	defer coll.Close()
-	return coll.Update(bson.M{"id": c.ID}, c)
+	return c.setState(client, ContainerStateImageSet)
 }
 
-func (c *Container) Remove(p DockerProvisioner) error {
+func (c *Container) Remove(client provision.BuilderDockerClient, limiter provision.ActionLimiter) error {
 	log.Debugf("Removing container %s from docker", c.ID)
-	err := c.Stop(p)
+	err := c.Stop(client, limiter)
 	if err != nil {
 		log.Errorf("error on stop unit %s - %s", c.ID, err)
 	}
-	done := p.ActionLimiter().Start(c.HostAddr)
-	err = p.Cluster().RemoveContainer(docker.RemoveContainerOptions{ID: c.ID})
+	done := limiter.Start(c.HostAddr)
+	err = client.RemoveContainer(docker.RemoveContainerOptions{ID: c.ID})
 	done()
 	if err != nil {
 		log.Errorf("Failed to remove container from docker: %s", err)
 	}
 	log.Debugf("Removing container %s from database", c.ID)
-	coll := p.Collection()
-	defer coll.Close()
-	if err := coll.Remove(bson.M{"id": c.ID}); err != nil {
-		log.Errorf("Failed to remove container from database: %s", err)
+	err = c.setState(client, ContainerStateRemoved)
+	if err != nil {
+		log.Errorf("Failed to set new container state: %s", err)
 	}
 	return nil
 }
@@ -266,7 +296,11 @@ type Pty struct {
 	Term   string
 }
 
-func (c *Container) Shell(p DockerProvisioner, stdin io.Reader, stdout, stderr io.Writer, pty Pty) error {
+func (c *Container) Shell(client provision.BuilderDockerClient, stdin io.Reader, stdout, stderr io.Writer, pty Pty) error {
+	execClient, ok := client.(provision.ExecDockerClient)
+	if !ok {
+		return errors.Errorf("exec is not supported on client %T", client)
+	}
 	cmds := []string{"/usr/bin/env", "TERM=" + pty.Term, "bash", "-l"}
 	execCreateOpts := docker.CreateExecOptions{
 		AttachStdin:  true,
@@ -276,7 +310,7 @@ func (c *Container) Shell(p DockerProvisioner, stdin io.Reader, stdout, stderr i
 		Container:    c.ID,
 		Tty:          true,
 	}
-	exec, err := p.Cluster().CreateExec(execCreateOpts)
+	exec, err := execClient.CreateExec(execCreateOpts)
 	if err != nil {
 		return err
 	}
@@ -289,21 +323,21 @@ func (c *Container) Shell(p DockerProvisioner, stdin io.Reader, stdout, stderr i
 	}
 	errs := make(chan error, 1)
 	go func() {
-		errs <- p.Cluster().StartExec(exec.ID, c.ID, startExecOptions)
+		errs <- execClient.StartExec(exec.ID, startExecOptions)
 	}()
-	execInfo, err := p.Cluster().InspectExec(exec.ID, c.ID)
+	execInfo, err := execClient.InspectExec(exec.ID)
 	for !execInfo.Running && err == nil {
 		select {
 		case startErr := <-errs:
 			return startErr
 		default:
-			execInfo, err = p.Cluster().InspectExec(exec.ID, c.ID)
+			execInfo, err = execClient.InspectExec(exec.ID)
 		}
 	}
 	if err != nil {
 		return err
 	}
-	p.Cluster().ResizeExecTTY(exec.ID, c.ID, pty.Height, pty.Width)
+	execClient.ResizeExecTTY(exec.ID, pty.Height, pty.Width)
 	return <-errs
 }
 
@@ -315,7 +349,11 @@ func (e *execErr) Error() string {
 	return fmt.Sprintf("unexpected exit code: %d", e.code)
 }
 
-func (c *Container) Exec(p DockerProvisioner, stdout, stderr io.Writer, cmd string, args ...string) error {
+func (c *Container) Exec(client provision.BuilderDockerClient, stdout, stderr io.Writer, cmd string, args ...string) error {
+	execClient, ok := client.(provision.ExecDockerClient)
+	if !ok {
+		return errors.Errorf("exec is not supported on client %T", client)
+	}
 	cmds := []string{"/bin/bash", "-lc", cmd}
 	cmds = append(cmds, args...)
 	execCreateOpts := docker.CreateExecOptions{
@@ -326,7 +364,7 @@ func (c *Container) Exec(p DockerProvisioner, stdout, stderr io.Writer, cmd stri
 		Cmd:          cmds,
 		Container:    c.ID,
 	}
-	exec, err := p.Cluster().CreateExec(execCreateOpts)
+	exec, err := execClient.CreateExec(execCreateOpts)
 	if err != nil {
 		return err
 	}
@@ -334,11 +372,11 @@ func (c *Container) Exec(p DockerProvisioner, stdout, stderr io.Writer, cmd stri
 		OutputStream: stdout,
 		ErrorStream:  stderr,
 	}
-	err = p.Cluster().StartExec(exec.ID, c.ID, startExecOptions)
+	err = execClient.StartExec(exec.ID, startExecOptions)
 	if err != nil {
 		return err
 	}
-	execData, err := p.Cluster().InspectExec(exec.ID, c.ID)
+	execData, err := execClient.InspectExec(exec.ID)
 	if err != nil {
 		return err
 	}
@@ -350,22 +388,29 @@ func (c *Container) Exec(p DockerProvisioner, stdout, stderr io.Writer, cmd stri
 
 // Commits commits the container, creating an image in Docker. It then returns
 // the image identifier for usage in future container creation.
-func (c *Container) Commit(p DockerProvisioner, writer io.Writer) (string, error) {
+func (c *Container) Commit(client provision.BuilderDockerClient, limiter provision.ActionLimiter, writer io.Writer, isDeploy bool) (string, error) {
 	log.Debugf("committing container %s", c.ID)
-	parts := strings.Split(c.BuildingImage, ":")
-	if len(parts) < 2 {
-		return "", log.WrapError(errors.Errorf("error parsing image name, not enough parts: %s", c.BuildingImage))
-	}
-	repository := strings.Join(parts[:len(parts)-1], ":")
-	tag := parts[len(parts)-1]
+	repository, tag := image.SplitImageName(c.BuildingImage)
 	opts := docker.CommitContainerOptions{Container: c.ID, Repository: repository, Tag: tag}
-	done := p.ActionLimiter().Start(c.HostAddr)
-	image, err := p.Cluster().CommitContainer(opts)
+	done := limiter.Start(c.HostAddr)
+	image, err := client.CommitContainer(opts)
 	done()
 	if err != nil {
 		return "", log.WrapError(errors.Wrapf(err, "error in commit container %s", c.ID))
 	}
-	imgHistory, err := p.Cluster().ImageHistory(c.BuildingImage)
+	tags := []string{tag}
+	if isDeploy && tag != "latest" {
+		tags = append(tags, "latest")
+		err = client.TagImage(fmt.Sprintf("%s:%s", repository, tag), docker.TagImageOptions{
+			Repo:  repository,
+			Tag:   "latest",
+			Force: true,
+		})
+		if err != nil {
+			return "", log.WrapError(errors.Wrapf(err, "error in tag container %s", c.ID))
+		}
+	}
+	imgHistory, err := client.ImageHistory(c.BuildingImage)
 	imgSize := ""
 	if err == nil && len(imgHistory) > 0 {
 		fullSize := imgHistory[0].Size
@@ -376,57 +421,60 @@ func (c *Container) Commit(p DockerProvisioner, writer io.Writer) (string, error
 	}
 	fmt.Fprintf(writer, " ---> Sending image to repository %s\n", imgSize)
 	log.Debugf("image %s generated from container %s", image.ID, c.ID)
-	maxTry, _ := config.GetInt("docker:registry-max-try")
-	if maxTry <= 0 {
-		maxTry = 3
-	}
-	for i := 0; i < maxTry; i++ {
-		err = p.PushImage(repository, tag)
-		if err != nil {
-			fmt.Fprintf(writer, "Could not send image, trying again. Original error: %s\n", err.Error())
-			log.Errorf("error in push image %s: %s", c.BuildingImage, err)
-			time.Sleep(time.Second)
-			continue
+	for _, tag := range tags {
+		maxTry, _ := config.GetInt("docker:registry-max-try")
+		if maxTry <= 0 {
+			maxTry = 3
 		}
-		break
-	}
-	if err != nil {
-		return "", log.WrapError(errors.Wrapf(err, "error in push image %s", c.BuildingImage))
+		for i := 0; i < maxTry; i++ {
+			err = dockercommon.PushImage(client, repository, tag, dockercommon.RegistryAuthConfig())
+			if err != nil {
+				fmt.Fprintf(writer, "Could not send image, trying again. Original error: %s\n", err.Error())
+				log.Errorf("error in push image %s: %s", c.BuildingImage, err)
+				time.Sleep(time.Second)
+				continue
+			}
+			break
+		}
+		if err != nil {
+			return "", log.WrapError(errors.Wrapf(err, "error in push image %s", c.BuildingImage))
+		}
 	}
 	return c.BuildingImage, nil
 }
 
-func (c *Container) Sleep(p DockerProvisioner) error {
+func (c *Container) Sleep(client provision.BuilderDockerClient, limiter provision.ActionLimiter) error {
 	if c.Status != provision.StatusStarted.String() && c.Status != provision.StatusStarting.String() {
 		return errors.Errorf("container %s is not starting or started", c.ID)
 	}
-	done := p.ActionLimiter().Start(c.HostAddr)
-	err := p.Cluster().StopContainer(c.ID, 10)
+	done := limiter.Start(c.HostAddr)
+	err := client.StopContainer(c.ID, 10)
 	done()
 	if err != nil {
 		log.Errorf("error on stop container %s: %s", c.ID, err)
 	}
-	return c.SetStatus(p, provision.StatusAsleep, true)
+	return c.SetStatus(client, provision.StatusAsleep, true)
 }
 
-func (c *Container) Stop(p DockerProvisioner) error {
+func (c *Container) Stop(client provision.BuilderDockerClient, limiter provision.ActionLimiter) error {
 	if c.Status == provision.StatusStopped.String() {
 		return nil
 	}
-	done := p.ActionLimiter().Start(c.HostAddr)
-	err := p.Cluster().StopContainer(c.ID, 10)
+	done := limiter.Start(c.HostAddr)
+	err := client.StopContainer(c.ID, 10)
 	done()
 	if err != nil {
 		log.Errorf("error on stop container %s: %s", c.ID, err)
 	}
-	c.SetStatus(p, provision.StatusStopped, true)
+	c.SetStatus(client, provision.StatusStopped, true)
 	return nil
 }
 
 type StartArgs struct {
-	Provisioner DockerProvisioner
-	App         provision.App
-	Deploy      bool
+	Client  provision.BuilderDockerClient
+	Limiter provision.ActionLimiter
+	App     provision.App
+	Deploy  bool
 }
 
 func (c *Container) hostConfig(app provision.App, isDeploy bool) (*docker.HostConfig, error) {
@@ -481,21 +529,21 @@ func (c *Container) hostConfig(app provision.App, isDeploy bool) (*docker.HostCo
 }
 
 func (c *Container) Start(args *StartArgs) error {
-	done := args.Provisioner.ActionLimiter().Start(c.HostAddr)
-	err := args.Provisioner.Cluster().StartContainer(c.ID, nil)
+	done := args.Limiter.Start(c.HostAddr)
+	err := args.Client.StartContainer(c.ID, nil)
 	done()
 	if err != nil {
-		return err
+		return &StartError{Base: err}
 	}
 	initialStatus := provision.StatusStarting
 	if args.Deploy {
 		initialStatus = provision.StatusBuilding
 	}
-	return c.SetStatus(args.Provisioner, initialStatus, false)
+	return c.SetStatus(args.Client, initialStatus, false)
 }
 
-func (c *Container) Logs(p DockerProvisioner, w io.Writer) (int, error) {
-	container, err := p.Cluster().InspectContainer(c.ID)
+func (c *Container) Logs(client provision.BuilderDockerClient, w io.Writer) (int, error) {
+	container, err := client.InspectContainer(c.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -509,7 +557,7 @@ func (c *Container) Logs(p DockerProvisioner, w io.Writer) (int, error) {
 		RawTerminal:  container.Config.Tty,
 		Stream:       true,
 	}
-	return SafeAttachWaitContainer(p, opts)
+	return SafeAttachWaitContainer(client, opts)
 }
 
 func (c *Container) AsUnit(a provision.App) provision.Unit {
@@ -544,16 +592,15 @@ type waitResult struct {
 
 var safeAttachInspectTimeout = 20 * time.Second
 
-func SafeAttachWaitContainer(p DockerProvisioner, opts docker.AttachToContainerOptions) (int, error) {
-	cluster := p.Cluster()
+func SafeAttachWaitContainer(client provision.BuilderDockerClient, opts docker.AttachToContainerOptions) (int, error) {
 	resultCh := make(chan waitResult, 1)
 	go func() {
-		err := cluster.AttachToContainer(opts)
+		err := client.AttachToContainer(opts)
 		if err != nil {
 			resultCh <- waitResult{err: err}
 			return
 		}
-		status, err := cluster.WaitContainer(opts.Container)
+		status, err := client.WaitContainer(opts.Container)
 		resultCh <- waitResult{status: status, err: err}
 	}()
 	for {
@@ -562,7 +609,7 @@ func SafeAttachWaitContainer(p DockerProvisioner, opts docker.AttachToContainerO
 			return result.status, result.err
 		case <-time.After(safeAttachInspectTimeout):
 		}
-		contData, err := cluster.InspectContainer(opts.Container)
+		contData, err := client.InspectContainer(opts.Container)
 		if err != nil {
 			return 0, err
 		}

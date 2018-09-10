@@ -16,7 +16,6 @@ import (
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/auth/native"
-	fakebuilder "github.com/tsuru/tsuru/builder/fake"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"github.com/tsuru/tsuru/provision"
@@ -24,6 +23,7 @@ import (
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/quota"
 	"github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
@@ -32,14 +32,17 @@ import (
 )
 
 type S struct {
-	p          *swarmProvisioner
-	b          *fakebuilder.FakeBuilder
-	conn       *db.Storage
-	user       *auth.User
-	team       *authTypes.Team
-	token      auth.Token
-	clusterSrv *dockerTesting.DockerServer
-	clusterCli *clusterClient
+	p           *swarmProvisioner
+	conn        *db.Storage
+	user        *auth.User
+	team        *authTypes.Team
+	token       auth.Token
+	clusterSrv  *dockerTesting.DockerServer
+	clusterCli  *clusterClient
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&S{})
@@ -52,12 +55,13 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "provision_swarm_tests_s")
 	config.Set("routers:fake:type", "fake")
 	config.Set("routers:fake:default", true)
 	config.Set("docker:registry", "registry.tsuru.io")
 	config.Set("host", "http://tsuruhost")
+	config.Set("docker:repository-namespace", "tsuru")
 	var err error
 	s.conn, err = db.Conn()
 	c.Assert(err, check.IsNil)
@@ -75,27 +79,43 @@ func (s *S) SetUpTest(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = pool.AddPool(pool.AddPoolOptions{Name: "bonehunters", Default: true, Provisioner: "swarm"})
 	c.Assert(err, check.IsNil)
-	p := appTypes.Plan{
-		Name:     "default",
-		Default:  true,
-		CpuShare: 100,
-	}
-	err = app.SavePlan(p)
-	c.Assert(err, check.IsNil)
 	s.p = &swarmProvisioner{}
 	err = s.p.Initialize()
 	c.Assert(err, check.IsNil)
-	s.b = &fakebuilder.FakeBuilder{}
 	s.user = &auth.User{Email: "whiskeyjack@genabackis.com", Password: "123456", Quota: quota.Unlimited}
 	nativeScheme := auth.ManagedScheme(native.NativeScheme{})
 	app.AuthScheme = nativeScheme
 	_, err = nativeScheme.Create(s.user)
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "admin"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	s.token, err = nativeScheme.Login(map[string]string{"email": s.user.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{*s.team}, nil
+		},
+		OnFindByName: func(_ string) (*authTypes.Team, error) {
+			return s.team, nil
+		},
+		OnFindByNames: func(_ []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+	}
+	plan := appTypes.Plan{
+		Name:     "default",
+		Default:  true,
+		CpuShare: 100,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{plan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &plan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
 }
 
 func (s *S) TearDownTest(c *check.C) {

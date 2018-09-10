@@ -10,16 +10,18 @@ import (
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"github.com/tsuru/tsuru/router/routertest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
 )
 
 type S struct {
-	conn    *db.Storage
-	service *Service
-	team    *authTypes.Team
-	user    *auth.User
+	conn            *db.Storage
+	service         *Service
+	team            *authTypes.Team
+	user            *auth.User
+	mockTeamService *authTypes.MockTeamService
 }
 
 var _ = check.Suite(&S{})
@@ -50,31 +52,31 @@ var HasAccessTo check.Checker = &hasAccessToChecker{}
 func (s *S) SetUpSuite(c *check.C) {
 	var err error
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_service_test")
 	s.conn, err = db.Conn()
 	c.Assert(err, check.IsNil)
-	dbtest.ClearAllCollections(s.conn.Apps().Database)
-	s.user = &auth.User{Email: "cidade@raul.com"}
-	err = s.user.Create()
-	c.Assert(err, check.IsNil)
-	if err != nil {
-		c.Fail()
-	}
 }
 
 func (s *S) SetUpTest(c *check.C) {
 	routertest.FakeRouter.Reset()
-	s.team = &authTypes.Team{Name: "Raul"}
-	err := auth.TeamService().Insert(*s.team)
+	dbtest.ClearAllCollections(s.conn.Apps().Database)
+	s.user = &auth.User{Email: "cidade@raul.com"}
+	err := s.user.Create()
 	c.Assert(err, check.IsNil)
+	s.team = &authTypes.Team{Name: "raul"}
+	s.mockTeamService = &authTypes.MockTeamService{
+		OnFindByName: func(name string) (*authTypes.Team, error) {
+			return s.team, nil
+		},
+		OnFindByNames: func(names []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{*s.team}, nil
+		},
+	}
+	servicemanager.Team = s.mockTeamService
 }
 
 func (s *S) TearDownSuite(c *check.C) {
 	s.conn.Services().Database.DropDatabase()
 	s.conn.Close()
-}
-
-func (s *S) TearDownTest(c *check.C) {
-	dbtest.ClearAllCollections(s.conn.Apps().Database)
 }

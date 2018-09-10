@@ -9,11 +9,15 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/storage"
+	tsuruErrors "github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/iaas"
 	"github.com/tsuru/tsuru/log"
@@ -21,8 +25,6 @@ import (
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/scopedconfig"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 const (
@@ -94,11 +96,33 @@ func newNodeHealer(args nodeHealerArgs) *NodeHealer {
 	return healer
 }
 
+func removeNodeTryRebalance(node provision.Node, newAddr string) error {
+	var buf bytes.Buffer
+	addr := node.Address()
+	err := node.Provisioner().RemoveNode(provision.RemoveNodeOptions{
+		Address:   addr,
+		Rebalance: true,
+		Writer:    &buf,
+	})
+	if err != nil {
+		log.Errorf("Unable to move containers, skipping containers healing %q -> %q: %s: %s", addr, newAddr, err, buf.String())
+	}
+	err = node.Provisioner().RemoveNode(provision.RemoveNodeOptions{
+		Address: addr,
+	})
+	if err != nil && err != provision.ErrNodeNotFound {
+		err = errors.Wrapf(err, "Unable to remove node %s from provisioner", addr)
+		log.Errorf("%v", err)
+		return err
+	}
+	return nil
+}
+
 func (h *NodeHealer) healNode(node provision.Node) (*provision.NodeSpec, error) {
 	failingAddr := node.Address()
 	// Copy metadata to ensure underlying data structure is not modified.
 	newNodeMetadata := map[string]string{}
-	for k, v := range node.Metadata() {
+	for k, v := range node.MetadataNoPrefix() {
 		newNodeMetadata[k] = v
 	}
 	failingHost := net.URLToHost(failingAddr)
@@ -107,7 +131,7 @@ func (h *NodeHealer) healNode(node provision.Node) (*provision.NodeSpec, error) 
 	if isHealthNode {
 		failures = healthNode.FailureCount()
 	}
-	machine, err := iaas.CreateMachineForIaaS(newNodeMetadata["iaas"], newNodeMetadata)
+	machine, err := iaas.CreateMachineForIaaS(newNodeMetadata[provision.IaaSMetadataName], newNodeMetadata)
 	if err != nil {
 		if isHealthNode {
 			healthNode.ResetFailures()
@@ -123,8 +147,13 @@ func (h *NodeHealer) healNode(node provision.Node) (*provision.NodeSpec, error) 
 		return nil, errors.Wrapf(err, "Can't auto-heal after %d failures for node %s: error unregistering old node", failures, failingHost)
 	}
 	newAddr := machine.FormatNodeAddress()
+	removeBefore := newAddr == failingAddr
+	if removeBefore {
+		removeNodeTryRebalance(node, newAddr)
+	}
 	log.Debugf("New machine created during healing process: %s - Waiting for docker to start...", newAddr)
 	createOpts := provision.AddNodeOptions{
+		IaaSID:     machine.Id,
 		Address:    newAddr,
 		Metadata:   newNodeMetadata,
 		Pool:       node.Pool(),
@@ -145,46 +174,43 @@ func (h *NodeHealer) healNode(node provision.Node) (*provision.NodeSpec, error) 
 	nodeSpec := provision.NodeToSpec(node)
 	nodeSpec.Address = newAddr
 	nodeSpec.Metadata = newNodeMetadata
-	var buf bytes.Buffer
-	err = node.Provisioner().RemoveNode(provision.RemoveNodeOptions{
-		Address:   failingAddr,
-		Rebalance: true,
-		Writer:    &buf,
-	})
-	if err != nil {
-		log.Errorf("Unable to move containers, skipping containers healing %q -> %q: %s: %s", failingHost, machine.Address, err, buf.String())
+	nodeSpec.IaaSID = machine.Id
+	multiErr := tsuruErrors.NewMultiError()
+	if !removeBefore {
+		err = removeNodeTryRebalance(node, newAddr)
+		if err != nil {
+			multiErr.Add(err)
+		}
 	}
 	err = h.RemoveNode(node)
 	if err != nil {
 		log.Errorf("Unable to remove node %s status from healer: %s", node.Address(), err)
 	}
-	failingMachine, err := iaas.FindMachineByIdOrAddress(node.Metadata()["iaas-id"], failingHost)
-	if err != nil {
-		return &nodeSpec, errors.Wrapf(err, "Unable to find failing machine %s in IaaS", failingHost)
-	}
-	err = failingMachine.Destroy()
-	if err != nil {
-		return &nodeSpec, errors.Wrapf(err, "Unable to destroy machine %s from IaaS", failingHost)
-	}
-	err = node.Provisioner().RemoveNode(provision.RemoveNodeOptions{
-		Address: failingAddr,
-	})
-	if err != nil && err != provision.ErrNodeNotFound {
-		return &nodeSpec, errors.Wrapf(err, "Unable to remove node %s from provisioner", failingHost)
+	failingMachine, err := iaas.FindMachineById(node.IaaSID())
+	if err == nil {
+		err = failingMachine.Destroy()
+		if err != nil {
+			multiErr.Add(errors.Wrapf(err, "Unable to destroy machine %s from IaaS", failingHost))
+		}
+	} else if err != iaas.ErrMachineNotFound {
+		multiErr.Add(errors.Wrapf(err, "Unable to find failing machine %s in IaaS", failingHost))
 	}
 	log.Debugf("Done auto-healing node %q, node %q created in its place.", failingHost, machine.Address)
-	return &nodeSpec, nil
+	return &nodeSpec, multiErr.ToError()
 }
 
 func (h *NodeHealer) tryHealingNode(node provision.Node, reason string, lastCheck *NodeChecks) error {
-	_, hasIaas := node.Metadata()["iaas"]
+	_, hasIaas := node.MetadataNoPrefix()[provision.IaaSMetadataName]
 	if !hasIaas {
 		log.Debugf("node %q doesn't have IaaS information, healing (%s) won't run on it.", node.Address(), reason)
 		return nil
 	}
 	poolName := node.Pool()
 	evt, err := event.NewInternal(&event.Opts{
-		Target:       event.Target{Type: event.TargetTypeNode, Value: node.Address()},
+		Target: event.Target{Type: event.TargetTypeNode, Value: node.Address()},
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: event.TargetTypePool, Value: poolName}},
+		},
 		InternalKind: "healer",
 		CustomData: NodeHealerCustomData{
 			Node:      provision.NodeToSpec(node),
@@ -203,6 +229,10 @@ func (h *NodeHealer) tryHealingNode(node provision.Node, reason string, lastChec
 	var createdNode *provision.NodeSpec
 	var evtErr error
 	defer func() {
+		if createdNode != nil {
+			evt.ExtraTargets = append(evt.ExtraTargets,
+				event.ExtraTarget{Target: event.Target{Type: event.TargetTypeNode, Value: createdNode.Address}})
+		}
 		var updateErr error
 		if evtErr == nil && createdNode == nil {
 			updateErr = evt.Abort()
@@ -282,6 +312,20 @@ func allNodes() ([]provision.Node, error) {
 		}
 	}
 	return nodes, nil
+}
+
+func (h *NodeHealer) GetNodeStatusData(node provision.Node) (NodeStatusData, error) {
+	var nodeStatus NodeStatusData
+	coll, err := nodeDataCollection()
+	if err != nil {
+		return nodeStatus, errors.Wrap(err, "unable to get node data collection")
+	}
+	defer coll.Close()
+	err = coll.FindId(node.Address()).One(&nodeStatus)
+	if err != nil {
+		return nodeStatus, provision.ErrNodeNotFound
+	}
+	return nodeStatus, nil
 }
 
 func (h *NodeHealer) UpdateNodeData(node provision.Node, checks []provision.NodeCheckResult) error {
@@ -398,6 +442,8 @@ func (h *NodeHealer) shouldHealNode(node provision.Node) (bool, error) {
 	return count > 0, nil
 }
 
+var localSkip uint64
+
 func (h *NodeHealer) findNodesForHealing() ([]NodeStatusData, map[string]provision.Node, error) {
 	nodes, err := allNodes()
 	if err != nil {
@@ -457,6 +503,12 @@ func (h *NodeHealer) findNodesForHealing() ([]NodeStatusData, map[string]provisi
 	err = coll.Find(bson.M{"$or": query}).All(&nodesStatus)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "unable to find nodes to heal")
+	}
+	if len(nodesStatus) > 0 {
+		pivot := atomic.AddUint64(&localSkip, 1) % uint64(len(nodesStatus))
+		// Rotate the queried slice on pivot index to avoid the same node to always
+		// be selected.
+		nodesStatus = append(nodesStatus[pivot:], nodesStatus[:pivot]...)
 	}
 	return nodesStatus, nodesAddrMap, nil
 }

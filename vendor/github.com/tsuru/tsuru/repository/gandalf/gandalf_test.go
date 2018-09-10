@@ -6,6 +6,7 @@ package gandalf
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"testing"
 
@@ -45,6 +46,7 @@ func (s *GandalfSuite) SetUpSuite(c *check.C) {
 }
 
 func (s *GandalfSuite) TearDownSuite(c *check.C) {
+	app.GetAppRouterUpdater().Shutdown(context.Background())
 	s.server.Stop()
 	conn, err := db.Conn()
 	c.Assert(err, check.IsNil)
@@ -106,8 +108,6 @@ func (s *GandalfSuite) TestSync(c *check.C) {
 	err = manager.CreateUser(user1.Email)
 	c.Assert(err, check.IsNil)
 	team := authTypes.Team{Name: "superteam"}
-	err = auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
 	app1 := app.App{Name: "myapp", Teams: []string{team.Name}}
 	app2 := app.App{Name: "yourapp", Teams: []string{team.Name}}
 	app3 := app.App{Name: "hisapp", Teams: []string{team.Name}}

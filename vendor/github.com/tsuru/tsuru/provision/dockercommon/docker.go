@@ -5,33 +5,54 @@
 package dockercommon
 
 import (
-	"fmt"
 	"io"
-	"strings"
 	"time"
+
+	"context"
 
 	"github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
-	"github.com/tsuru/tsuru/app/image"
+	"github.com/tsuru/docker-cluster/cluster"
 	tsuruIo "github.com/tsuru/tsuru/io"
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/net"
+	tsuruNet "github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/safe"
-	"golang.org/x/net/context"
 )
 
 const (
 	JsonFileLogDriver = "json-file"
 )
 
-type ClientWithTimeout struct {
+type PullAndCreateClient struct {
 	*docker.Client
 }
 
-func (c *ClientWithTimeout) SetTimeout(timeout time.Duration) {
+var _ provision.BuilderDockerClient = &PullAndCreateClient{}
+var _ provision.ExecDockerClient = &PullAndCreateClient{}
+
+func (c *PullAndCreateClient) SetTimeout(timeout time.Duration) {
 	c.Client.HTTPClient.Timeout = timeout
+}
+
+func (c *PullAndCreateClient) PullAndCreateContainer(opts docker.CreateContainerOptions, w io.Writer) (*docker.Container, string, error) {
+	if w != nil {
+		w = &tsuruIo.DockerErrorCheckWriter{W: w}
+	}
+	pullOpts := docker.PullImageOptions{
+		Repository:        opts.Config.Image,
+		OutputStream:      w,
+		InactivityTimeout: tsuruNet.StreamInactivityTimeout,
+		RawJSONStream:     true,
+	}
+	err := c.Client.PullImage(pullOpts, RegistryAuthConfig())
+	if err != nil {
+		return nil, "", err
+	}
+	cont, err := c.Client.CreateContainer(opts)
+	return cont, net.URLToHost(c.Client.Endpoint()), err
 }
 
 type Client interface {
@@ -57,72 +78,6 @@ func DownloadFromContainer(client Client, contID string, filePath string) (io.Re
 		}
 	}()
 	return reader, nil
-}
-
-type PrepareImageArgs struct {
-	Client      Client
-	App         provision.App
-	ProcfileRaw string
-	ImageID     string
-	Out         io.Writer
-}
-
-func PrepareImageForDeploy(args PrepareImageArgs) (string, error) {
-	fmt.Fprintf(args.Out, "---- Inspecting image %q ----\n", args.ImageID)
-	procfile := image.GetProcessesFromProcfile(args.ProcfileRaw)
-	imageInspect, err := args.Client.InspectImage(args.ImageID)
-	if err != nil {
-		return "", err
-	}
-	if len(procfile) == 0 {
-		fmt.Fprintln(args.Out, "  ---> Procfile not found, using entrypoint and cmd")
-		procfile["web"] = append(imageInspect.Config.Entrypoint, imageInspect.Config.Cmd...)
-	}
-	for k, v := range procfile {
-		fmt.Fprintf(args.Out, "  ---> Process %q found with commands: %q\n", k, v)
-	}
-	newImage, err := image.AppNewImageName(args.App.GetName())
-	if err != nil {
-		return "", err
-	}
-	imageInfo := strings.Split(newImage, ":")
-	repo, tag := strings.Join(imageInfo[:len(imageInfo)-1], ":"), imageInfo[len(imageInfo)-1]
-	err = args.Client.TagImage(args.ImageID, docker.TagImageOptions{Repo: repo, Tag: tag, Force: true})
-	if err != nil {
-		return "", err
-	}
-	registry, err := config.GetString("docker:registry")
-	if err != nil {
-		return "", err
-	}
-	fmt.Fprintf(args.Out, "---- Pushing image %q to tsuru ----\n", newImage)
-	pushOpts := docker.PushImageOptions{
-		Name:              repo,
-		Tag:               tag,
-		Registry:          registry,
-		OutputStream:      &tsuruIo.DockerErrorCheckWriter{W: args.Out},
-		InactivityTimeout: net.StreamInactivityTimeout,
-		RawJSONStream:     true,
-	}
-	err = args.Client.PushImage(pushOpts, RegistryAuthConfig())
-	if err != nil {
-		return "", err
-	}
-	imageData := image.ImageMetadata{
-		Name:      newImage,
-		Processes: procfile,
-	}
-	if len(imageInspect.Config.ExposedPorts) > 1 {
-		return "", errors.New("Too many ports. You should especify which one you want to.")
-	}
-	for k := range imageInspect.Config.ExposedPorts {
-		imageData.ExposedPort = string(k)
-	}
-	err = imageData.Save()
-	if err != nil {
-		return "", err
-	}
-	return newImage, nil
 }
 
 func WaitDocker(client *docker.Client) error {
@@ -171,6 +126,9 @@ func PushImage(client Client, name, tag string, authconfig docker.AuthConfigurat
 			OutputStream:      &buf,
 			InactivityTimeout: net.StreamInactivityTimeout,
 		}
+		if authconfig == (docker.AuthConfiguration{}) {
+			authconfig = RegistryAuthConfig()
+		}
 		err = client.PushImage(pushOpts, authconfig)
 		if err != nil {
 			log.Errorf("[docker] Failed to push image %q (%s): %s", name, err, buf.String())
@@ -187,4 +145,17 @@ func RegistryAuthConfig() docker.AuthConfiguration {
 	authConfig.Password, _ = config.GetString("docker:registry-auth:password")
 	authConfig.ServerAddress, _ = config.GetString("docker:registry")
 	return authConfig
+}
+
+func GetNodeByHost(c *cluster.Cluster, host string) (cluster.Node, error) {
+	nodes, err := c.UnfilteredNodes()
+	if err != nil {
+		return cluster.Node{}, err
+	}
+	for _, node := range nodes {
+		if net.URLToHost(node.Address) == host {
+			return node, nil
+		}
+	}
+	return cluster.Node{}, errors.Errorf("node with host %q not found", host)
 }

@@ -23,6 +23,16 @@ var OptsRouter = optsRouter{
 	Opts:       make(map[string]map[string]string),
 }
 
+var InfoRouter = infoRouter{
+	fakeRouter: newFakeRouter(),
+	Info:       make(map[string]string),
+}
+
+var StatusRouter = statusRouter{
+	fakeRouter: newFakeRouter(),
+	Status:     router.BackendStatusReady,
+}
+
 var TLSRouter = tlsRouter{
 	fakeRouter: newFakeRouter(),
 	Certs:      make(map[string]string),
@@ -36,6 +46,8 @@ func init() {
 	router.Register("fake-hc", createHCRouter)
 	router.Register("fake-tls", createTLSRouter)
 	router.Register("fake-opts", createOptsRouter)
+	router.Register("fake-info", createInfoRouter)
+	router.Register("fake-status", createStatusRouter)
 }
 
 func createRouter(name, prefix string) (router.Router, error) {
@@ -54,16 +66,31 @@ func createOptsRouter(name, prefix string) (router.Router, error) {
 	return &OptsRouter, nil
 }
 
+func createInfoRouter(name, prefix string) (router.Router, error) {
+	return &InfoRouter, nil
+}
+
+func createStatusRouter(name, prefix string) (router.Router, error) {
+	return &StatusRouter, nil
+}
+
 func newFakeRouter() fakeRouter {
 	return fakeRouter{cnames: make(map[string]string), backends: make(map[string][]string), failuresByIp: make(map[string]bool), healthcheck: make(map[string]router.HealthcheckData), mutex: &sync.Mutex{}}
 }
 
 type fakeRouter struct {
 	backends     map[string][]string
+	backendAddrs map[string]string
 	cnames       map[string]string
 	failuresByIp map[string]bool
 	healthcheck  map[string]router.HealthcheckData
 	mutex        *sync.Mutex
+}
+
+var _ router.Router = &fakeRouter{}
+
+func (r *fakeRouter) GetName() string {
+	return "fake"
 }
 
 func (r *fakeRouter) FailForIp(ip string) {
@@ -147,7 +174,8 @@ func (r *fakeRouter) HasRoute(name, address string) bool {
 	return false
 }
 
-func (r *fakeRouter) AddBackend(name string) error {
+func (r *fakeRouter) AddBackend(app router.App) error {
+	name := app.GetName()
 	if r.HasBackend(name) {
 		return router.ErrBackendExists
 	}
@@ -158,9 +186,12 @@ func (r *fakeRouter) AddBackend(name string) error {
 }
 
 func (r *fakeRouter) RemoveBackend(name string) error {
+	r.mutex.Lock()
 	if r.failuresByIp[name] {
+		r.mutex.Unlock()
 		return ErrForcedFailure
 	}
+	r.mutex.Unlock()
 	backendName, err := router.Retrieve(name)
 	if err != nil {
 		return err
@@ -240,9 +271,12 @@ func (r *fakeRouter) RemoveRoutes(name string, addresses []*url.URL) error {
 }
 
 func (r *fakeRouter) SetCName(cname, name string) error {
+	r.mutex.Lock()
 	if r.failuresByIp[cname] {
+		r.mutex.Unlock()
 		return ErrForcedFailure
 	}
+	r.mutex.Unlock()
 	backendName, err := router.Retrieve(name)
 	if err != nil {
 		return err
@@ -263,9 +297,12 @@ func (r *fakeRouter) SetCName(cname, name string) error {
 }
 
 func (r *fakeRouter) UnsetCName(cname, name string) error {
+	r.mutex.Lock()
 	if r.failuresByIp[cname] {
+		r.mutex.Unlock()
 		return ErrForcedFailure
 	}
+	r.mutex.Unlock()
 	backendName, err := router.Retrieve(name)
 	if err != nil {
 		return err
@@ -282,14 +319,29 @@ func (r *fakeRouter) UnsetCName(cname, name string) error {
 	return nil
 }
 
+func (r *fakeRouter) SetBackendAddr(name, addr string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if r.backendAddrs == nil {
+		r.backendAddrs = make(map[string]string)
+	}
+	r.backendAddrs[name] = addr
+}
+
 func (r *fakeRouter) Addr(name string) (string, error) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if r.failuresByIp[r.GetName()+name] || r.failuresByIp[name] {
+		return "", ErrForcedFailure
+	}
 	backendName, err := router.Retrieve(name)
 	if err != nil {
 		return "", err
 	}
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
 	if _, ok := r.backends[backendName]; ok {
+		if r.backendAddrs != nil && r.backendAddrs[backendName] != "" {
+			return r.backendAddrs[backendName], nil
+		}
 		return fmt.Sprintf("%s.fakerouter.com", backendName), nil
 	}
 	return "", router.ErrBackendNotFound
@@ -298,6 +350,7 @@ func (r *fakeRouter) Addr(name string) (string, error) {
 func (r *fakeRouter) Reset() {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
+	r.backendAddrs = nil
 	r.backends = make(map[string][]string)
 	r.failuresByIp = make(map[string]bool)
 	r.cnames = make(map[string]string)
@@ -328,6 +381,8 @@ type hcRouter struct {
 	err error
 }
 
+var _ router.CustomHealthcheckRouter = &hcRouter{}
+
 func (r *hcRouter) SetErr(err error) {
 	r.err = err
 }
@@ -355,25 +410,38 @@ func (r *fakeRouter) SetHealthcheck(name string, data router.HealthcheckData) er
 	return nil
 }
 
+func (r *fakeRouter) RemoveHealthcheck(name string) error {
+	backendName, err := router.Retrieve(name)
+	if err != nil {
+		return err
+	}
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	delete(r.healthcheck, backendName)
+	return nil
+}
+
 type tlsRouter struct {
 	fakeRouter
 	Certs map[string]string
 	Keys  map[string]string
 }
 
-func (r *tlsRouter) AddCertificate(cname, certificate, key string) error {
+var _ router.TLSRouter = &tlsRouter{}
+
+func (r *tlsRouter) AddCertificate(app router.App, cname, certificate, key string) error {
 	r.Certs[cname] = certificate
 	r.Keys[cname] = key
 	return nil
 }
 
-func (r *tlsRouter) RemoveCertificate(cname string) error {
+func (r *tlsRouter) RemoveCertificate(app router.App, cname string) error {
 	delete(r.Certs, cname)
 	delete(r.Keys, cname)
 	return nil
 }
 
-func (r *tlsRouter) GetCertificate(cname string) (string, error) {
+func (r *tlsRouter) GetCertificate(app router.App, cname string) (string, error) {
 	data, ok := r.Certs[cname]
 	if !ok {
 		return "", router.ErrCertificateNotFound
@@ -381,17 +449,61 @@ func (r *tlsRouter) GetCertificate(cname string) (string, error) {
 	return data, nil
 }
 
+func (r *tlsRouter) Addr(name string) (string, error) {
+	addr, err := r.fakeRouter.Addr(name)
+	if err != nil {
+		return "", err
+	}
+	return strings.Replace(addr, ".fakerouter.com", ".faketlsrouter.com", -1), nil
+}
+
 type optsRouter struct {
 	fakeRouter
 	Opts map[string]map[string]string
 }
 
-func (r *optsRouter) AddBackendOpts(name string, opts map[string]string) error {
-	r.Opts[name] = opts
-	return r.fakeRouter.AddBackend(name)
+var _ router.OptsRouter = &optsRouter{}
+
+func (r *optsRouter) AddBackendOpts(app router.App, opts map[string]string) error {
+	r.Opts[app.GetName()] = opts
+	return r.fakeRouter.AddBackend(app)
 }
 
-func (r *optsRouter) UpdateBackendOpts(name string, opts map[string]string) error {
-	r.Opts[name] = opts
+func (r *optsRouter) UpdateBackendOpts(app router.App, opts map[string]string) error {
+	r.Opts[app.GetName()] = opts
 	return nil
+}
+
+type infoRouter struct {
+	fakeRouter
+	Info map[string]string
+}
+
+var _ router.InfoRouter = &infoRouter{}
+
+func (r *infoRouter) GetInfo() (map[string]string, error) {
+	return r.Info, nil
+}
+
+func (r *infoRouter) Reset() {
+	r.fakeRouter.Reset()
+	r.Info = make(map[string]string)
+}
+
+type statusRouter struct {
+	fakeRouter
+	Status       router.BackendStatus
+	StatusDetail string
+}
+
+var _ router.StatusRouter = &statusRouter{}
+
+func (r *statusRouter) GetBackendStatus(name string) (router.BackendStatus, string, error) {
+	return r.Status, r.StatusDetail, nil
+}
+
+func (r *statusRouter) Reset() {
+	r.fakeRouter.Reset()
+	r.Status = router.BackendStatusReady
+	r.StatusDetail = ""
 }

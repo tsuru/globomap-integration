@@ -26,7 +26,6 @@ import (
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/image"
-	"github.com/tsuru/tsuru/builder"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
@@ -63,7 +62,7 @@ func (s *S) TestProvision(c *check.C) {
 	nets, err := cli.ListNetworks()
 	c.Assert(err, check.IsNil)
 	c.Assert(nets, check.HasLen, 1)
-	expected := docker.Network{ID: nets[0].ID, Name: "app-myapp-overlay", Driver: "overlay"}
+	expected := docker.Network{ID: nets[0].ID, Name: "app-myapp-overlay", Driver: "overlay", Containers: map[string]docker.Endpoint{}}
 	c.Assert(nets, check.DeepEquals, []docker.Network{expected})
 }
 
@@ -687,7 +686,7 @@ func (s *S) TestAddUnitsWithHealthcheck(c *check.C) {
 	c.Assert(service.Spec.TaskTemplate.ContainerSpec.Healthcheck, check.DeepEquals, &container.HealthConfig{
 		Test: []string{
 			"CMD-SHELL",
-			"curl -XGET -fsSL http://localhost:8888/hc -o/dev/null -w '%{http_code}' | grep 200",
+			"curl -k -XGET -fsSL http://localhost:8888/hc -o/dev/null -w '%{http_code}' | grep 200",
 		},
 		Timeout:  120 * time.Second,
 		Retries:  1,
@@ -924,7 +923,7 @@ func (s *S) TestRegisterUnit(c *check.C) {
 	_, err = cli.CreateService(docker.CreateServiceOptions{
 		ServiceSpec: swarm.ServiceSpec{
 			TaskTemplate: swarm.TaskSpec{
-				ContainerSpec: swarm.ContainerSpec{
+				ContainerSpec: &swarm.ContainerSpec{
 					Labels: set.ToLabels(),
 				},
 			},
@@ -968,7 +967,7 @@ func (s *S) TestRegisterUnitNotBuild(c *check.C) {
 	_, err = cli.CreateService(docker.CreateServiceOptions{
 		ServiceSpec: swarm.ServiceSpec{
 			TaskTemplate: swarm.TaskSpec{
-				ContainerSpec: swarm.ContainerSpec{
+				ContainerSpec: &swarm.ContainerSpec{
 					Labels: set.ToLabels(),
 				},
 			},
@@ -1012,7 +1011,7 @@ func (s *S) TestRegisterUnitNoImageLabel(c *check.C) {
 	_, err = cli.CreateService(docker.CreateServiceOptions{
 		ServiceSpec: swarm.ServiceSpec{
 			TaskTemplate: swarm.TaskSpec{
-				ContainerSpec: swarm.ContainerSpec{
+				ContainerSpec: &swarm.ContainerSpec{
 					Labels: set.ToLabels(),
 				},
 			},
@@ -1034,12 +1033,74 @@ func (s *S) TestRegisterUnitNoImageLabel(c *check.C) {
 	c.Assert(err, check.ErrorMatches, `invalid build image label for build task: .*`)
 }
 
+func (s *S) TestRegisterUnitWaitsContainerID(c *check.C) {
+	s.addCluster(c)
+	a := &app.App{Name: "myapp", Platform: "whitespace", TeamOwner: s.team.Name}
+	err := app.CreateApp(a, s.user)
+	c.Assert(err, check.IsNil)
+	cli, err := clusterForPool(a.GetPool())
+	c.Assert(err, check.IsNil)
+	set, err := provision.ServiceLabels(provision.ServiceLabelsOpts{
+		App: a,
+		ServiceLabelExtendedOpts: provision.ServiceLabelExtendedOpts{
+			IsDeploy:    true,
+			BuildImage:  "app:v1",
+			Provisioner: provisionerName,
+			Prefix:      tsuruLabelPrefix,
+		},
+	})
+	c.Assert(err, check.IsNil)
+	_, err = cli.CreateService(docker.CreateServiceOptions{
+		ServiceSpec: swarm.ServiceSpec{
+			TaskTemplate: swarm.TaskSpec{
+				ContainerSpec: &swarm.ContainerSpec{
+					Labels: set.ToLabels(),
+				},
+			},
+			Annotations: swarm.Annotations{
+				Name:   "myapp-web",
+				Labels: set.ToLabels(),
+			},
+		},
+	})
+	c.Assert(err, check.IsNil)
+	tasks, err := cli.ListTasks(docker.ListTasksOptions{})
+	c.Assert(err, check.IsNil)
+	c.Assert(tasks, check.HasLen, 1)
+	task := tasks[0]
+	contID := task.Status.ContainerStatus.ContainerID
+	task.Status.ContainerStatus.ContainerID = ""
+	s.clusterSrv.MutateTask(task.ID, task)
+	go func() {
+		time.Sleep(time.Second)
+		task.Status.ContainerStatus = &swarm.ContainerStatus{
+			ContainerID: contID,
+		}
+		s.clusterSrv.MutateTask(task.ID, task)
+	}()
+	err = s.p.RegisterUnit(a, contID, map[string]interface{}{
+		"processes": map[string]interface{}{
+			"web": "python myapp.py",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	data, err := image.GetImageMetaData("app:v1")
+	c.Assert(err, check.IsNil)
+	c.Assert(data.Processes, check.DeepEquals, map[string][]string{"web": {"python myapp.py"}})
+}
+
 func (s *S) TestDeploy(c *check.C) {
 	s.addCluster(c)
 	a := &app.App{Name: "myapp", Platform: "whitespace", TeamOwner: s.team.Name}
 	err := app.CreateApp(a, s.user)
 	c.Assert(err, check.IsNil)
 	attached := s.attachRegister(c, s.clusterSrv, true, a)
+	tags := []string{}
+	s.clusterSrv.CustomHandler("/images/.*/push", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.URL.Path, check.Equals, "/images/registry.tsuru.io/tsuru/app-myapp/push")
+		tags = append(tags, r.URL.Query().Get("tag"))
+		s.clusterSrv.DefaultHandler().ServeHTTP(w, r)
+	}))
 	evt, err := event.New(&event.Opts{
 		Target:  event.Target{Type: event.TargetTypeApp, Value: a.GetName()},
 		Kind:    permission.PermAppDeploy,
@@ -1047,14 +1108,7 @@ func (s *S) TestDeploy(c *check.C) {
 		Allowed: event.Allowed(permission.PermAppDeploy),
 	})
 	c.Assert(err, check.IsNil)
-	buf := strings.NewReader("my upload data")
-	buildOpts := builder.BuildOpts{
-		ArchiveFile: ioutil.NopCloser(buf),
-		ArchiveSize: int64(buf.Len()),
-	}
-	builderImgID, err := s.b.Build(s.p, a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, "registry.tsuru.io/tsuru/app-myapp:v1-builder")
+	builderImgID := "registry.tsuru.io/tsuru/app-myapp:v1-builder"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-myapp",
 		Tag:        "v1-builder",
@@ -1064,8 +1118,9 @@ func (s *S) TestDeploy(c *check.C) {
 	err = cli.PullImage(pullOpts, docker.AuthConfiguration{})
 	c.Assert(err, check.IsNil)
 	imgID, err := s.p.Deploy(a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
+	c.Assert(err, check.IsNil, check.Commentf("%+v", err))
 	c.Assert(<-attached, check.Equals, true)
+	c.Assert(tags, check.DeepEquals, []string{"v1", "latest"})
 	c.Assert(imgID, check.Equals, "registry.tsuru.io/tsuru/app-myapp:v1")
 	dbImg, err := image.AppCurrentImageName(a.GetName())
 	c.Assert(err, check.IsNil)
@@ -1111,12 +1166,7 @@ func (s *S) TestDeployImageID(c *check.C) {
 		Allowed: event.Allowed(permission.PermAppDeploy),
 	})
 	c.Assert(err, check.IsNil)
-	buildOpts := builder.BuildOpts{
-		ImageID: "myimg:v1",
-	}
-	builderImgID, err := s.b.Build(s.p, a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, "registry.tsuru.io/tsuru/app-myapp:v1")
+	builderImgID := "registry.tsuru.io/tsuru/app-myapp:v1"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-myapp",
 		Tag:        "v1",
@@ -1728,7 +1778,8 @@ func (s *S) TestCleanImage(c *check.C) {
 		c.Assert(imgs, check.HasLen, 2)
 	}
 	imageName := "myimg:v1"
-	s.p.CleanImage("teste", imageName)
+	err := s.p.CleanImage("teste", imageName)
+	c.Assert(err, check.IsNil)
 	nodes, err := s.p.ListNodes(urls)
 	c.Assert(err, check.IsNil)
 	c.Assert(nodes, check.HasLen, 5)

@@ -28,14 +28,16 @@ import (
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	check "gopkg.in/check.v1"
 )
 
 type SyncSuite struct {
-	conn *db.Storage
-	user auth.User
-	team authTypes.Team
+	conn            *db.Storage
+	user            auth.User
+	team            authTypes.Team
+	mockTeamService *authTypes.MockTeamService
 }
 
 var _ = check.Suite(&SyncSuite{})
@@ -43,7 +45,7 @@ var _ = check.Suite(&SyncSuite{})
 func (s *SyncSuite) SetUpSuite(c *check.C) {
 	var err error
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_service_bind_test")
 	config.Set("routers:fake:type", "fake")
 	s.conn, err = db.Conn()
@@ -59,11 +61,18 @@ func (s *SyncSuite) SetUpTest(c *check.C) {
 	err := s.user.Create()
 	c.Assert(err, check.IsNil)
 	s.team = authTypes.Team{Name: "metallica"}
-	err = auth.TeamService().Insert(s.team)
-	c.Assert(err, check.IsNil)
 	opts := pool.AddPoolOptions{Name: "pool1", Default: true, Provisioner: "fake"}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
+	s.mockTeamService = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{s.team}, nil
+		},
+		OnFindByNames: func(names []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{s.team}, nil
+		},
+	}
+	servicemanager.Team = s.mockTeamService
 }
 
 func (s *SyncSuite) TearDownSuite(c *check.C) {
@@ -187,8 +196,8 @@ func (s *SyncSuite) TestBindSyncerMultipleAppsBound(c *check.C) {
 	c.Assert(err, check.IsNil)
 	go func() {
 		for {
-			evts, err := event.All()
-			c.Assert(err, check.IsNil)
+			evts, evtErr := event.All()
+			c.Assert(evtErr, check.IsNil)
 			if len(evts) == 2 {
 				callCh <- struct{}{}
 				return

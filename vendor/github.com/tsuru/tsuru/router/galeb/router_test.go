@@ -314,7 +314,7 @@ func init() {
 			config.Set("routers:galeb:domain", "galeb.com")
 			config.Set("routers:galeb:use-token", true)
 			config.Set("routers:galeb:type", "galeb")
-			config.Set("database:url", "127.0.0.1:27017")
+			config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 			config.Set("database:name", "router_galeb_tests")
 		},
 	}
@@ -356,7 +356,7 @@ func (s *S) SetUpTest(c *check.C) {
 	config.Set("routers:galeb:domain", "galeb.com")
 	config.Set("routers:galeb:use-token", true)
 	config.Set("routers:galeb:type", "galeb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "router_galeb_tests")
 	conn, err := db.Conn()
 	c.Assert(err, check.IsNil)
@@ -410,7 +410,7 @@ func (s *S) TestAddBackendPartialFailure(c *check.C) {
 	gRouter, err := createRouter("galeb", "routers:galeb")
 	c.Assert(err, check.IsNil)
 	fakeServer.prepareError("PATCH", "/api/rule/3/parents", "error on SetRuleVirtualHostIDs")
-	err = gRouter.AddBackend("backend1")
+	err = gRouter.AddBackend(routertest.FakeApp{Name: "backend1"})
 	c.Assert(err, check.ErrorMatches, "PATCH /rule/3/parents: invalid response code: 500: error on SetRuleVirtualHostIDs\n")
 	c.Check(fakeServer.targets, check.DeepEquals, map[string]interface{}{})
 	c.Check(fakeServer.pools, check.DeepEquals, map[string]interface{}{})

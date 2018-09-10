@@ -10,6 +10,7 @@ import (
 
 	"github.com/fsouza/go-dockerclient"
 	dtesting "github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/db"
@@ -21,7 +22,6 @@ import (
 	"github.com/tsuru/tsuru/provision/dockercommon"
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) {
@@ -37,7 +37,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("database:driver", "mongodb")
 	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "docker_provision_dockertest_tests")
-	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017")
+	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("docker:cluster:mongo-database", "docker_provision_dockertest_tests_cluster_stor")
 }
 

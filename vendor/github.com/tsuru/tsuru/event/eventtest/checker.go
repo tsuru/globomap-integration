@@ -9,14 +9,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/event"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type EventDesc struct {
 	Target          event.Target
+	ExtraTargets    []event.ExtraTarget
 	Kind            string
 	Owner           string
 	StartCustomData interface{}
@@ -85,6 +86,15 @@ func (hasEventChecker) Check(params []interface{}, names []string) (bool, string
 		"owner.name": evt.Owner,
 		"running":    false,
 	}
+	if len(evt.ExtraTargets) > 0 {
+		var andBlock []bson.M
+		for _, t := range evt.ExtraTargets {
+			andBlock = append(andBlock, bson.M{
+				"extratargets": t,
+			})
+		}
+		query["$and"] = andBlock
+	}
 	queryPartCustom(query, "startcustomdata", evt.StartCustomData)
 	queryPartCustom(query, "endcustomdata", evt.EndCustomData)
 	queryPartCustom(query, "othercustomdata", evt.OtherCustomData)
@@ -146,7 +156,9 @@ func (evtEqualsChecker) Check(params []interface{}, names []string) (bool, strin
 				evts[i] = append(evts[i], &e[j])
 			}
 		case []*event.Event:
-			evts[i] = e
+			for j := range e {
+				evts[i] = append(evts[i], e[j])
+			}
 		default:
 			evts[i] = nil
 		}

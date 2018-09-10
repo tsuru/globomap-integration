@@ -5,6 +5,7 @@
 package docker
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,12 +14,13 @@ import (
 	"testing"
 
 	dtesting "github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/auth/native"
-	fakebuilder "github.com/tsuru/tsuru/builder/fake"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"github.com/tsuru/tsuru/iaas"
@@ -35,12 +37,12 @@ import (
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/safe"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
+	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) { check.TestingT(t) }
@@ -63,7 +65,10 @@ type S struct {
 	team          *authTypes.Team
 	clusterSess   *mgo.Session
 	logBuf        *safe.Buffer
-	b             *fakebuilder.FakeBuilder
+	mockService   struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&S{})
@@ -76,7 +81,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	s.port = "8888"
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "docker_provision_tests_s")
 	config.Set("docker:repository-namespace", s.repoNamespace)
 	config.Set("docker:router", "fake")
@@ -85,9 +90,9 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("docker:run-cmd:bin", "/usr/local/bin/circusd /etc/circus/circus.ini")
 	config.Set("docker:run-cmd:port", s.port)
 	config.Set("docker:user", s.sshUser)
-	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017")
+	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("docker:cluster:mongo-database", "docker_provision_tests_cluster_stor")
-	config.Set("queue:mongo-url", "127.0.0.1:27017")
+	config.Set("queue:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("queue:mongo-database", "queue_provision_docker_tests")
 	config.Set("queue:mongo-polling-interval", 0.01)
 	config.Set("routers:fake:type", "fake")
@@ -119,6 +124,7 @@ func (s *S) SetUpSuite(c *check.C) {
 }
 
 func (s *S) SetUpTest(c *check.C) {
+	pool.ResetCache()
 	config.Set("docker:api-timeout", 2)
 	iaas.ResetAll()
 	repositorytest.Reset()
@@ -128,7 +134,6 @@ func (s *S) SetUpTest(c *check.C) {
 	err := s.p.Initialize()
 	c.Assert(err, check.IsNil)
 	queue.ResetQueue()
-	s.b = &fakebuilder.FakeBuilder{}
 	s.server, err = dtesting.NewServer("127.0.0.1:0", nil, nil)
 	c.Assert(err, check.IsNil)
 	s.p.cluster, err = cluster.New(nil, s.p.storage, "",
@@ -148,11 +153,38 @@ func (s *S) SetUpTest(c *check.C) {
 	s.logBuf = safe.NewBuffer(nil)
 	log.SetLogger(log.NewWriterLogger(s.logBuf, true))
 	s.team = &authTypes.Team{Name: "admin"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{*s.team}, nil
+		},
+		OnFindByName: func(_ string) (*authTypes.Team, error) {
+			return s.team, nil
+		},
+		OnFindByNames: func(_ []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+	}
+	defaultPlan := appTypes.Plan{
+		Name:     "default-plan",
+		Memory:   1024,
+		Swap:     1024,
+		CpuShare: 100,
+		Default:  true,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{defaultPlan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &defaultPlan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
 }
 
 func (s *S) TearDownTest(c *check.C) {
+	app.GetAppRouterUpdater().Shutdown(context.Background())
 	log.SetLogger(nil)
 	s.server.Stop()
 	if s.extraServer != nil {
@@ -253,10 +285,9 @@ func (s *S) newApp(name string) app.App {
 }
 
 func (s *S) newAppFromFake(fake *provisiontest.FakeApp) app.App {
-	router, _ := fake.GetRouterName()
 	return app.App{
 		Name:     fake.GetName(),
 		Platform: fake.GetPlatform(),
-		Router:   router,
+		Routers:  fake.GetRouters(),
 	}
 }

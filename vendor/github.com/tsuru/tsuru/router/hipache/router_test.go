@@ -68,7 +68,7 @@ func clearRedisKeys(keysPattern string, conn redis.Client, c *check.C) {
 func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("hipache:domain", "golang.org")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "router_hipache_tests")
 }
 
@@ -195,7 +195,7 @@ func (s *S) TestShouldBeRegisteredAllowingPrefixes(c *check.C) {
 
 func (s *S) TestAddBackend(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	conn, err := router.connect()
@@ -207,7 +207,7 @@ func (s *S) TestAddBackend(c *check.C) {
 
 func (s *S) TestRemoveBackend(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	hcData := router.HealthcheckData{
 		Path:   "/",
@@ -230,7 +230,7 @@ func (s *S) TestRemoveBackend(c *check.C) {
 
 func (s *S) TestRemoveBackendAlsoRemovesRelatedCNameBackendAndControlRecord(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	err = router.SetCName("mycname.com", "tip")
 	c.Assert(err, check.IsNil)
@@ -248,7 +248,7 @@ func (s *S) TestRemoveBackendAlsoRemovesRelatedCNameBackendAndControlRecord(c *c
 
 func (s *S) TestAddRoutes(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	addr, _ := url.Parse("http://10.10.10.10:8080")
@@ -264,7 +264,7 @@ func (s *S) TestAddRoutes(c *check.C) {
 
 func (s *S) TestAddRoutesNoNewRoute(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	addr, _ := url.Parse("http://10.10.10.10:8080")
@@ -285,7 +285,7 @@ func (s *S) TestAddRoutesNoNewRoute(c *check.C) {
 
 func (s *S) TestAddRouteNoDomainConfigured(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	old, _ := config.Get("hipache:domain")
@@ -302,7 +302,7 @@ func (s *S) TestAddRouteNoDomainConfigured(c *check.C) {
 
 func (s *S) TestAddRouteConnectFailure(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	config.Set("hipache:redis-server", "127.0.0.1:6380")
@@ -320,7 +320,7 @@ func (s *S) TestAddRouteConnectFailure(c *check.C) {
 
 func (s *S) TestAddRouteAlsoUpdatesCNameRecordsWhenExists(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	addr, _ := url.Parse("http://10.10.10.10:8080")
@@ -345,7 +345,7 @@ func (s *S) TestAddRouteAlsoUpdatesCNameRecordsWhenExists(c *check.C) {
 
 func (s *S) TestRemoveRoute(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	addr, _ := url.Parse("http://10.10.10.10")
 	err = router.AddRoutes("tip", []*url.URL{addr})
@@ -363,7 +363,7 @@ func (s *S) TestRemoveRoute(c *check.C) {
 
 func (s *S) TestRemoveRouteNoDomainConfigured(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	old, _ := config.Get("hipache:domain")
@@ -379,7 +379,7 @@ func (s *S) TestRemoveRouteNoDomainConfigured(c *check.C) {
 
 func (s *S) TestRemoveRouteConnectFailure(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	config.Set("hipache:redis-server", "127.0.0.1:6380")
@@ -396,7 +396,7 @@ func (s *S) TestRemoveRouteConnectFailure(c *check.C) {
 
 func (s *S) TestRemoveRouteAlsoRemovesRespectiveCNameRecord(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	addr, _ := url.Parse("http://10.10.10.10")
@@ -428,7 +428,7 @@ func (s *S) TestHealthCheckFailure(c *check.C) {
 
 func (s *S) TestGetCNames(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	err = router.SetCName("coolcname.com", "myapp")
@@ -447,7 +447,7 @@ func (s *S) TestGetCNameIgnoresErrNil(c *check.C) {
 
 func (s *S) TestSetCName(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	err = router.SetCName("myapp.com", "myapp")
@@ -456,7 +456,7 @@ func (s *S) TestSetCName(c *check.C) {
 
 func (s *S) TestSetCNameWithPreviousRoutes(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	addr1, _ := url.Parse("http://10.10.10.10")
@@ -478,7 +478,7 @@ func (s *S) TestSetCNameWithPreviousRoutes(c *check.C) {
 
 func (s *S) TestSetCNameTwiceFixInconsistencies(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("myapp")
+	err := r.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("myapp")
 	addr1, _ := url.Parse("http://10.10.10.10")
@@ -520,7 +520,7 @@ func (s *S) TestSetCNameTwiceFixInconsistencies(c *check.C) {
 
 func (s *S) TestSetCNameShouldRecordAppAndCNameOnRedis(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	err = router.SetCName("mycname.com", "myapp")
@@ -534,7 +534,7 @@ func (s *S) TestSetCNameShouldRecordAppAndCNameOnRedis(c *check.C) {
 
 func (s *S) TestSetCNameSetsMultipleCNames(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	addr, _ := url.Parse("http://10.10.10.10")
@@ -557,7 +557,7 @@ func (s *S) TestSetCNameSetsMultipleCNames(c *check.C) {
 
 func (s *S) TestUnsetCName(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	err = router.SetCName("myapp.com", "myapp")
@@ -576,7 +576,7 @@ func (s *S) TestUnsetCName(c *check.C) {
 
 func (s *S) TestUnsetTwoCNames(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("myapp")
+	err := router.AddBackend(routertest.FakeApp{Name: "myapp"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("myapp")
 	err = router.SetCName("myapp.com", "myapp")
@@ -605,7 +605,7 @@ func (s *S) TestUnsetTwoCNames(c *check.C) {
 
 func (s *S) TestAddr(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	u, _ := url.Parse("http://10.10.10.10")
@@ -619,7 +619,7 @@ func (s *S) TestAddr(c *check.C) {
 
 func (s *S) TestAddrNoDomainConfigured(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	old, _ := config.Get("hipache:domain")
@@ -634,7 +634,7 @@ func (s *S) TestAddrNoDomainConfigured(c *check.C) {
 
 func (s *S) TestAddrConnectFailure(c *check.C) {
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend("tip")
+	err := r.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer r.RemoveBackend("tip")
 	config.Set("hipache:redis-server", "127.0.0.1:6380")
@@ -650,7 +650,7 @@ func (s *S) TestAddrConnectFailure(c *check.C) {
 
 func (s *S) TestRoutes(c *check.C) {
 	router := hipacheRouter{prefix: "hipache"}
-	err := router.AddBackend("tip")
+	err := router.AddBackend(routertest.FakeApp{Name: "tip"})
 	c.Assert(err, check.IsNil)
 	defer router.RemoveBackend("tip")
 	addr, _ := url.Parse("http://10.10.10.10:8080")
@@ -668,11 +668,11 @@ func (s *S) TestSwap(c *check.C) {
 	addr1, _ := url.Parse("http://127.0.0.1")
 	addr2, _ := url.Parse("http://10.10.10.10")
 	router := hipacheRouter{prefix: "hipache"}
-	router.AddBackend(backend1)
+	router.AddBackend(routertest.FakeApp{Name: backend1})
 	defer router.RemoveBackend(backend1)
 	router.AddRoutes(backend1, []*url.URL{addr1})
 	defer router.RemoveRoutes(backend1, []*url.URL{addr1})
-	router.AddBackend(backend2)
+	router.AddBackend(routertest.FakeApp{Name: backend2})
 	defer router.RemoveBackend(backend2)
 	router.AddRoutes(backend2, []*url.URL{addr2})
 	defer router.RemoveRoutes(backend2, []*url.URL{addr2})
@@ -691,7 +691,7 @@ func (s *S) TestSwap(c *check.C) {
 func (s *S) TestAddRouteAfterCorruptedRedis(c *check.C) {
 	backend1 := "b1"
 	r := hipacheRouter{prefix: "hipache"}
-	err := r.AddBackend(backend1)
+	err := r.AddBackend(routertest.FakeApp{Name: backend1})
 	c.Assert(err, check.IsNil)
 	redisConn, err := r.connect()
 	c.Assert(err, check.IsNil)
@@ -703,7 +703,7 @@ func (s *S) TestAddRouteAfterCorruptedRedis(c *check.C) {
 
 func (s *S) TestAddCertificate(c *check.C) {
 	r := planbRouter{hipacheRouter{prefix: "planb"}}
-	r.AddCertificate("www.example.com", "cert-content", "key-content")
+	r.AddCertificate(routertest.FakeApp{}, "www.example.com", "cert-content", "key-content")
 	redisConn, err := r.connect()
 	c.Assert(err, check.IsNil)
 	data, err := redisConn.HMGet("tls:www.example.com", "certificate", "key").Result()
@@ -715,13 +715,13 @@ func (s *S) TestAddCertificate(c *check.C) {
 
 func (s *S) TestRemoveCertificate(c *check.C) {
 	r := planbRouter{hipacheRouter{prefix: "planb"}}
-	r.AddCertificate("www.example.com", "cert-content", "key-content")
+	r.AddCertificate(routertest.FakeApp{}, "www.example.com", "cert-content", "key-content")
 	redisConn, err := r.connect()
 	c.Assert(err, check.IsNil)
 	data, err := redisConn.HMGet("tls:www.example.com", "certificate", "key").Result()
 	c.Assert(err, check.IsNil)
 	c.Assert(data, check.NotNil)
-	r.RemoveCertificate("www.example.com")
+	r.RemoveCertificate(routertest.FakeApp{}, "www.example.com")
 	exists, err := redisConn.Exists("tls:www.example.com").Result()
 	c.Assert(err, check.IsNil)
 	c.Assert(exists, check.Equals, false)
@@ -751,16 +751,16 @@ Wx1oQV8UD5KLQQRy9Xew/KRHVzOpdkK66/i/hgV7GdREy4aKNAEBRpheOzjLDQyG
 YRLI1QVj1Q==
 -----END CERTIFICATE-----`
 	r := planbRouter{hipacheRouter{prefix: "planb"}}
-	err := r.AddCertificate("myapp.io", testCert, "key-content")
+	err := r.AddCertificate(routertest.FakeApp{}, "myapp.io", testCert, "key-content")
 	c.Assert(err, check.IsNil)
-	cert, err := r.GetCertificate("myapp.io")
+	cert, err := r.GetCertificate(routertest.FakeApp{}, "myapp.io")
 	c.Assert(err, check.IsNil)
 	c.Assert(cert, check.DeepEquals, testCert)
 }
 
 func (s *S) TestGetCertificateNotFound(c *check.C) {
 	r := planbRouter{hipacheRouter{prefix: "planb"}}
-	cert, err := r.GetCertificate("otherapp")
+	cert, err := r.GetCertificate(routertest.FakeApp{}, "otherapp")
 	c.Assert(err, check.DeepEquals, router.ErrCertificateNotFound)
 	c.Assert(cert, check.Equals, "")
 }

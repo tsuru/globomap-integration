@@ -1,3 +1,7 @@
+// Copyright 2017 tsuru authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package pool
 
 import (
@@ -5,14 +9,28 @@ import (
 	"sort"
 	"strings"
 
+	mgo "github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
+	"github.com/pkg/errors"
 	"github.com/tsuru/tsuru/db"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+)
+
+var (
+	ErrInvalidConstraintType = errors.Errorf("invalid constraint type. Valid types are: %s", validConstraintTypes)
+	validConstraintTypes     = []poolConstraintType{ConstraintTypeTeam, ConstraintTypeService, ConstraintTypeRouter}
+)
+
+type poolConstraintType string
+
+const (
+	ConstraintTypeTeam    = poolConstraintType("team")
+	ConstraintTypeRouter  = poolConstraintType("router")
+	ConstraintTypeService = poolConstraintType("service")
 )
 
 type PoolConstraint struct {
 	PoolExpr  string
-	Field     string
+	Field     poolConstraintType
 	Values    []string
 	Blacklist bool
 }
@@ -83,10 +101,14 @@ func SetPoolConstraint(c *PoolConstraint) error {
 }
 
 func AppendPoolConstraint(c *PoolConstraint) error {
+	isValid := validateConstraintType(c.Field)
+	if !isValid {
+		return ErrInvalidConstraintType
+	}
 	return appendPoolConstraint(c.PoolExpr, c.Field, c.Values...)
 }
 
-func validateConstraintType(c string) bool {
+func validateConstraintType(c poolConstraintType) bool {
 	for _, v := range validConstraintTypes {
 		if c == v {
 			return true
@@ -95,7 +117,7 @@ func validateConstraintType(c string) bool {
 	return false
 }
 
-func appendPoolConstraint(poolExpr string, field string, values ...string) error {
+func appendPoolConstraint(poolExpr string, field poolConstraintType, values ...string) error {
 	conn, err := db.Conn()
 	if err != nil {
 		return err
@@ -108,7 +130,7 @@ func appendPoolConstraint(poolExpr string, field string, values ...string) error
 	return err
 }
 
-func removePoolConstraint(poolExpr string, field string, values ...string) error {
+func removePoolConstraint(poolExpr string, field poolConstraintType, values ...string) error {
 	conn, err := db.Conn()
 	if err != nil {
 		return err
@@ -117,7 +139,7 @@ func removePoolConstraint(poolExpr string, field string, values ...string) error
 	return conn.PoolsConstraints().Update(bson.M{"poolexpr": poolExpr, "field": field}, bson.M{"$pullAll": bson.M{"values": values}})
 }
 
-func getPoolsSatisfyConstraints(exactCheck bool, field string, values ...string) ([]Pool, error) {
+func getPoolsSatisfyConstraints(exactCheck bool, field poolConstraintType, values ...string) ([]Pool, error) {
 	pools, err := listPools(nil)
 	if err != nil {
 		return nil, err
@@ -146,7 +168,7 @@ loop:
 	return satisfying, nil
 }
 
-func getConstraintsForPool(pool string, fields ...string) (map[string]*PoolConstraint, error) {
+func getConstraintsForPool(pool string, fields ...poolConstraintType) (map[poolConstraintType]*PoolConstraint, error) {
 	var query bson.M
 	if len(fields) > 0 {
 		query = bson.M{"field": bson.M{"$in": fields}}
@@ -167,7 +189,7 @@ func getConstraintsForPool(pool string, fields ...string) (map[string]*PoolConst
 		}
 	}
 	sort.Sort(constraintList(matches))
-	merged := make(map[string]*PoolConstraint)
+	merged := make(map[poolConstraintType]*PoolConstraint)
 	for i := range matches {
 		if _, ok := merged[matches[i].Field]; !ok {
 			merged[matches[i].Field] = matches[i]
@@ -176,7 +198,7 @@ func getConstraintsForPool(pool string, fields ...string) (map[string]*PoolConst
 	return merged, nil
 }
 
-func getExactConstraintForPool(pool, field string) (*PoolConstraint, error) {
+func getExactConstraintForPool(pool string, field poolConstraintType) (*PoolConstraint, error) {
 	constraints, err := ListPoolsConstraints(bson.M{"poolexpr": pool, "field": field})
 	if err != nil {
 		return nil, err
@@ -199,4 +221,11 @@ func ListPoolsConstraints(query bson.M) ([]*PoolConstraint, error) {
 		return nil, err
 	}
 	return constraints, nil
+}
+
+func ToConstraintType(value string) (poolConstraintType, error) {
+	if !validateConstraintType(poolConstraintType(value)) {
+		return "", ErrInvalidConstraintType
+	}
+	return poolConstraintType(value), nil
 }

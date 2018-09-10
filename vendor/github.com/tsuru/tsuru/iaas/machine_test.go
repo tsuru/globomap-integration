@@ -5,11 +5,10 @@
 package iaas
 
 import (
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/db"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestCreateMachineForIaaS(c *check.C) {
@@ -46,14 +45,29 @@ func (s *S) TestCreateMachine(c *check.C) {
 	c.Assert(testIaas.cmds, check.DeepEquals, []string{"create"})
 }
 
-func (s *S) TestCreateMachineDupAddr(c *check.C) {
+func (s *S) TestCreateMachineDupAddrSameIaaS(c *check.C) {
 	config.Set("iaas:default", "test-iaas")
 	m, err := CreateMachine(map[string]string{"id": "myid", "address": "addr1"})
 	c.Assert(err, check.IsNil)
 	c.Assert(m.Id, check.Equals, "myid")
 	c.Assert(m.Iaas, check.Equals, "test-iaas")
 	c.Assert(m.Address, check.Equals, "addr1.somewhere.com")
-	_, err = CreateMachine(map[string]string{"id": "myid2", "address": "addr1"})
+	m, err = CreateMachine(map[string]string{"id": "myid2", "address": "addr1"})
+	c.Assert(err, check.IsNil)
+	c.Assert(m.Id, check.Equals, "myid2")
+	c.Assert(m.Iaas, check.Equals, "test-iaas")
+	c.Assert(m.Address, check.Equals, "addr1.somewhere.com")
+}
+
+func (s *S) TestCreateMachineDupAddrOtherIaaS(c *check.C) {
+	RegisterIaasProvider("other", newTestIaaS)
+	config.Set("iaas:default", "test-iaas")
+	m, err := CreateMachine(map[string]string{"id": "myid", "address": "addr1"})
+	c.Assert(err, check.IsNil)
+	c.Assert(m.Id, check.Equals, "myid")
+	c.Assert(m.Iaas, check.Equals, "test-iaas")
+	c.Assert(m.Address, check.Equals, "addr1.somewhere.com")
+	_, err = CreateMachineForIaaS("other", map[string]string{"id": "myid2", "address": "addr1"})
 	c.Assert(err, check.ErrorMatches, ".*duplicate key error.*")
 }
 
@@ -145,7 +159,7 @@ func (s *S) TestFindMachineByAddress(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(machine.Id, check.Equals, "myid2")
 	_, err = FindMachineByAddress("myid3.somewhere.com")
-	c.Assert(err, check.Equals, mgo.ErrNotFound)
+	c.Assert(err, check.Equals, ErrMachineNotFound)
 }
 
 func (s *S) TestDestroy(c *check.C) {
@@ -171,7 +185,7 @@ func (s *S) TestFindById(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(machine.Id, check.Equals, "myid2")
 	_, err = FindMachineById("myid3")
-	c.Assert(err, check.Equals, mgo.ErrNotFound)
+	c.Assert(err, check.Equals, ErrMachineNotFound)
 }
 
 func (s *S) TestFormatNodeAddress(c *check.C) {

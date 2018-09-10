@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsouza/go-dockerclient"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/event"
@@ -24,7 +25,6 @@ import (
 	"github.com/tsuru/tsuru/provision/docker/types"
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func newFakeAppInDB(name, platform string, units int) *provisiontest.FakeApp {
@@ -124,7 +124,11 @@ func (s *S) TestRunContainerHealer(c *check.C) {
 	}})
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -173,7 +177,11 @@ func (s *S) TestRunContainerHealerCreatedContainer(c *check.C) {
 	c.Assert(movings, check.DeepEquals, expected)
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -202,7 +210,7 @@ func (s *S) TestRunContainerHealerStoppedContainer(c *check.C) {
 	node1.MutateContainer(containers[0].ID, docker.State{Running: false, Restarting: false})
 	node1.MutateContainer(containers[1].ID, docker.State{Dead: true})
 	toMoveCont := containers[1]
-	err = toMoveCont.SetStatus(p, provision.StatusStopped, false)
+	err = toMoveCont.SetStatus(p.ClusterClient(), provision.StatusStopped, false)
 	c.Assert(err, check.IsNil)
 	toMoveCont.LastSuccessStatusUpdate = time.Now().UTC().Add(-5 * time.Minute)
 	p.PrepareListResult([]container.Container{containers[0], toMoveCont}, nil)
@@ -224,7 +232,11 @@ func (s *S) TestRunContainerHealerStoppedContainer(c *check.C) {
 	c.Assert(movings, check.DeepEquals, expected)
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -253,7 +265,7 @@ func (s *S) TestRunContainerHealerStoppedContainerAlreadyStopped(c *check.C) {
 	node1.MutateContainer(containers[0].ID, docker.State{Running: false, Restarting: false})
 	node1.MutateContainer(containers[1].ID, docker.State{Running: false, Restarting: false})
 	toMoveCont := containers[1]
-	err = toMoveCont.SetStatus(p, provision.StatusStopped, false)
+	err = toMoveCont.SetStatus(p.ClusterClient(), provision.StatusStopped, false)
 	c.Assert(err, check.IsNil)
 	toMoveCont.LastSuccessStatusUpdate = time.Now().UTC().Add(-5 * time.Minute)
 	p.PrepareListResult([]container.Container{containers[0], toMoveCont}, nil)
@@ -359,7 +371,11 @@ func (s *S) TestRunContainerHealerShutdown(c *check.C) {
 	c.Assert(movings, check.DeepEquals, []dockertest.ContainerMoving{expected})
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -421,7 +437,11 @@ func (s *S) TestRunContainerHealerConcurrency(c *check.C) {
 
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -472,7 +492,11 @@ func (s *S) TestRunContainerHealerAlreadyHealed(c *check.C) {
 	c.Assert(movings, check.DeepEquals, []dockertest.ContainerMoving{expected})
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+			{Target: event.Target{Type: "container", Value: toMoveCont.ID + "-recreated"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -620,7 +644,10 @@ func (s *S) TestRunContainerHealerWithError(c *check.C) {
 
 	c.Assert(eventtest.EventDesc{
 		Target: event.Target{Type: "container", Value: toMoveCont.ID},
-		Kind:   "healer",
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: "app", Value: "myapp"}},
+		},
+		Kind: "healer",
 		StartCustomData: map[string]interface{}{
 			"hostaddr": "127.0.0.1",
 			"id":       toMoveCont.ID,
@@ -751,4 +778,26 @@ func (s *S) TestListUnresponsiveContainersAsleep(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(result, check.HasLen, 1)
 	c.Assert(result[0].ID, check.Equals, "c2")
+}
+
+func (s *S) TestListUnresponsiveContainersRotateResults(c *check.C) {
+	p, err := dockertest.StartMultipleServersCluster()
+	c.Assert(err, check.IsNil)
+	defer p.Destroy()
+	coll := p.Collection()
+	defer coll.Close()
+	now := time.Now().UTC()
+	coll.Insert(
+		container.Container{Container: types.Container{ID: "c1", AppName: "app_time_test", ProcessName: "p", LastSuccessStatusUpdate: now.Add(-5 * time.Minute), HostPort: "80"}},
+		container.Container{Container: types.Container{ID: "c2", AppName: "app_time_test", ProcessName: "p", LastSuccessStatusUpdate: now.Add(-5 * time.Minute), HostPort: "80"}},
+	)
+	defer coll.RemoveAll(bson.M{"appname": "app_time_test"})
+	result1, err := listUnresponsiveContainers(p, 3*time.Minute)
+	c.Assert(err, check.IsNil)
+	c.Assert(result1, check.HasLen, 2)
+	result2, err := listUnresponsiveContainers(p, 3*time.Minute)
+	c.Assert(err, check.IsNil)
+	c.Assert(result2, check.HasLen, 2)
+	c.Assert(result1[0], check.DeepEquals, result2[1])
+	c.Assert(result1[1], check.DeepEquals, result2[0])
 }

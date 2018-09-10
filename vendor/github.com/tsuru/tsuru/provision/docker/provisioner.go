@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
@@ -25,6 +24,7 @@ import (
 	"github.com/tsuru/tsuru/api/shutdown"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/image"
+	"github.com/tsuru/tsuru/app/image/gc"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/storage"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
@@ -40,7 +40,6 @@ import (
 	"github.com/tsuru/tsuru/provision/dockercommon"
 	"github.com/tsuru/tsuru/provision/nodecontainer"
 	"github.com/tsuru/tsuru/queue"
-	"github.com/tsuru/tsuru/router"
 	_ "github.com/tsuru/tsuru/router/api"
 	_ "github.com/tsuru/tsuru/router/galeb"
 	_ "github.com/tsuru/tsuru/router/hipache"
@@ -52,7 +51,7 @@ import (
 var (
 	mainDockerProvisioner *dockerProvisioner
 
-	ErrDeployCanceled = errors.New("deploy canceled by user action")
+	ErrUnitRecreationCanceled = errors.New("unit creation canceled by user action")
 )
 
 const (
@@ -67,14 +66,6 @@ func init() {
 	})
 }
 
-func getRouterForApp(app provision.App) (router.Router, error) {
-	routerName, err := app.GetRouterName()
-	if err != nil {
-		return nil, err
-	}
-	return router.Get(routerName)
-}
-
 type dockerProvisioner struct {
 	cluster        *cluster.Cluster
 	collectionName string
@@ -85,21 +76,22 @@ type dockerProvisioner struct {
 }
 
 var (
-	_ provision.Provisioner              = &dockerProvisioner{}
-	_ provision.RollbackableDeployer     = &dockerProvisioner{}
-	_ provision.ShellProvisioner         = &dockerProvisioner{}
-	_ provision.ExecutableProvisioner    = &dockerProvisioner{}
-	_ provision.SleepableProvisioner     = &dockerProvisioner{}
-	_ provision.MessageProvisioner       = &dockerProvisioner{}
-	_ provision.InitializableProvisioner = &dockerProvisioner{}
-	_ provision.OptionalLogsProvisioner  = &dockerProvisioner{}
-	_ provision.UnitStatusProvisioner    = &dockerProvisioner{}
-	_ provision.NodeProvisioner          = &dockerProvisioner{}
-	_ provision.NodeRebalanceProvisioner = &dockerProvisioner{}
-	_ provision.NodeContainerProvisioner = &dockerProvisioner{}
-	_ provision.UnitFinderProvisioner    = &dockerProvisioner{}
-	_ provision.AppFilterProvisioner     = &dockerProvisioner{}
-	_ provision.BuilderDeploy            = &dockerProvisioner{}
+	_ provision.Provisioner               = &dockerProvisioner{}
+	_ provision.RollbackableDeployer      = &dockerProvisioner{}
+	_ provision.ShellProvisioner          = &dockerProvisioner{}
+	_ provision.ExecutableProvisioner     = &dockerProvisioner{}
+	_ provision.SleepableProvisioner      = &dockerProvisioner{}
+	_ provision.MessageProvisioner        = &dockerProvisioner{}
+	_ provision.InitializableProvisioner  = &dockerProvisioner{}
+	_ provision.OptionalLogsProvisioner   = &dockerProvisioner{}
+	_ provision.UnitStatusProvisioner     = &dockerProvisioner{}
+	_ provision.NodeProvisioner           = &dockerProvisioner{}
+	_ provision.NodeRebalanceProvisioner  = &dockerProvisioner{}
+	_ provision.NodeContainerProvisioner  = &dockerProvisioner{}
+	_ provision.UnitFinderProvisioner     = &dockerProvisioner{}
+	_ provision.AppFilterProvisioner      = &dockerProvisioner{}
+	_ provision.BuilderDeploy             = &dockerProvisioner{}
+	_ provision.BuilderDeployDockerClient = &dockerProvisioner{}
 )
 
 type hookHealer struct {
@@ -322,14 +314,15 @@ func (p *dockerProvisioner) Start(app provision.App, process string) error {
 	}
 	err = runInContainers(containers, func(c *container.Container, _ chan *container.Container) error {
 		startErr := c.Start(&container.StartArgs{
-			Provisioner: p,
-			App:         app,
+			Client:  p.ClusterClient(),
+			Limiter: p.ActionLimiter(),
+			App:     app,
 		})
 		if startErr != nil {
 			return startErr
 		}
-		c.SetStatus(p, provision.StatusStarting, true)
-		if info, infoErr := c.NetworkInfo(p); infoErr == nil {
+		c.SetStatus(p.ClusterClient(), provision.StatusStarting, true)
+		if info, infoErr := c.NetworkInfo(p.ClusterClient()); infoErr == nil {
 			p.fixContainer(c, info)
 		}
 		return nil
@@ -344,7 +337,7 @@ func (p *dockerProvisioner) Stop(app provision.App, process string) error {
 		return nil
 	}
 	return runInContainers(containers, func(c *container.Container, _ chan *container.Container) error {
-		err := c.Stop(p)
+		err := c.Stop(p.ClusterClient(), p.ActionLimiter())
 		if err != nil {
 			log.Errorf("Failed to stop %q: %s", app.GetName(), err)
 		}
@@ -359,7 +352,7 @@ func (p *dockerProvisioner) Sleep(app provision.App, process string) error {
 		return nil
 	}
 	return runInContainers(containers, func(c *container.Container, _ chan *container.Container) error {
-		err := c.Sleep(p)
+		err := c.Sleep(p.ClusterClient(), p.ActionLimiter())
 		if err != nil {
 			log.Errorf("Failed to sleep %q: %s", app.GetName(), err)
 		}
@@ -405,7 +398,7 @@ func (p *dockerProvisioner) Deploy(app provision.App, buildImageID string, evt *
 func (p *dockerProvisioner) deployAndClean(a provision.App, imageID string, evt *event.Event) error {
 	err := p.deploy(a, imageID, evt)
 	if err != nil {
-		p.CleanImage(a.GetName(), imageID)
+		gc.CleanImage(a.GetName(), imageID, true)
 	}
 	return err
 }
@@ -442,6 +435,9 @@ func (p *dockerProvisioner) deploy(a provision.App, imageID string, evt *event.E
 			return err
 		}
 		_, err = p.runReplaceUnitsPipeline(evt, a, toAdd, containers, imageID)
+	}
+	if err != nil {
+		err = provision.ErrUnitStartup{Err: err}
 	}
 	return err
 }
@@ -504,26 +500,7 @@ func (p *dockerProvisioner) Destroy(app provision.App) error {
 		&provisionRemoveOldUnits,
 		&provisionUnbindOldUnits,
 	)
-	err = pipeline.Execute(args)
-	if err != nil {
-		return err
-	}
-	images, err := image.ListAppImages(app.GetName())
-	if err != nil {
-		log.Errorf("Failed to get image ids for app %s: %s", app.GetName(), err)
-	}
-	cluster := p.Cluster()
-	for _, imageID := range images {
-		err = cluster.RemoveImage(imageID)
-		if err != nil && err != docker.ErrNoSuchImage {
-			log.Errorf("Failed to remove image %s: %s", imageID, err)
-		}
-		err = cluster.RemoveFromRegistry(imageID)
-		if err != nil {
-			log.Errorf("Failed to remove image %s from registry: %s", imageID, err)
-		}
-	}
-	return nil
+	return pipeline.Execute(args)
 }
 
 func (p *dockerProvisioner) runRestartAfterHooks(cont *container.Container, w io.Writer) error {
@@ -533,7 +510,7 @@ func (p *dockerProvisioner) runRestartAfterHooks(cont *container.Container, w io
 	}
 	cmds := yamlData.Hooks.Restart.After
 	for _, cmd := range cmds {
-		err := cont.Exec(p, w, w, cmd)
+		err := cont.Exec(p.ClusterClient(), w, w, cmd)
 		if err != nil {
 			return errors.Wrapf(err, "couldn't execute restart:after hook %q(%s)", cmd, cont.ShortID())
 		}
@@ -575,7 +552,7 @@ func addContainersWithHost(args *changeUnitsPipelineArgs) ([]container.Container
 	}
 	rollbackCallback := func(c *container.Container) {
 		log.Errorf("Removing container %q due failed add units.", c.ID)
-		errRem := c.Remove(args.provisioner)
+		errRem := c.Remove(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter())
 		if errRem != nil {
 			log.Errorf("Unable to destroy container %q: %s", c.ID, errRem)
 		}
@@ -722,7 +699,7 @@ func (p *dockerProvisioner) SetUnitStatus(unit provision.Unit, status provision.
 	if unit.AppName != "" && cont.AppName != unit.AppName {
 		return errors.New("wrong app name")
 	}
-	err = cont.SetStatus(p, status, true)
+	err = cont.SetStatus(p.ClusterClient(), status, true)
 	if err != nil {
 		return err
 	}
@@ -737,7 +714,7 @@ func (p *dockerProvisioner) ExecuteCommandOnce(stdout, stderr io.Writer, app pro
 	if len(containers) == 0 {
 		return provision.ErrEmptyApp
 	}
-	return containers[0].Exec(p, stdout, stderr, cmd, args...)
+	return containers[0].Exec(p.ClusterClient(), stdout, stderr, cmd, args...)
 }
 
 func (p *dockerProvisioner) ExecuteCommand(stdout, stderr io.Writer, app provision.App, cmd string, args ...string) error {
@@ -749,7 +726,7 @@ func (p *dockerProvisioner) ExecuteCommand(stdout, stderr io.Writer, app provisi
 		return provision.ErrEmptyApp
 	}
 	for _, c := range containers {
-		err = c.Exec(p, stdout, stderr, cmd, args...)
+		err = c.Exec(p.ClusterClient(), stdout, stderr, cmd, args...)
 		if err != nil {
 			return err
 		}
@@ -786,14 +763,20 @@ func (p *dockerProvisioner) GetAppFromUnitID(unitID string) (provision.App, erro
 	return a, nil
 }
 
-func (p *dockerProvisioner) Units(app provision.App) ([]provision.Unit, error) {
-	containers, err := p.listContainersByApp(app.GetName())
+func (p *dockerProvisioner) Units(apps ...provision.App) ([]provision.Unit, error) {
+	appNames := make([]string, len(apps))
+	appNameMap := map[string]provision.App{}
+	for i, a := range apps {
+		appNames[i] = a.GetName()
+		appNameMap[a.GetName()] = a
+	}
+	containers, err := p.listContainersByAppAndHost(appNames, nil)
 	if err != nil {
 		return nil, err
 	}
 	units := make([]provision.Unit, len(containers))
 	for i, container := range containers {
-		units[i] = container.AsUnit(app)
+		units[i] = container.AsUnit(appNameMap[container.AppName])
 	}
 	return units, nil
 }
@@ -831,7 +814,7 @@ func (p *dockerProvisioner) RegisterUnit(a provision.App, unitId string, customD
 		}
 		return nil
 	}
-	err = cont.SetStatus(p, provision.StatusStarted, true)
+	err = cont.SetStatus(p.ClusterClient(), provision.StatusStarted, true)
 	if err != nil {
 		return err
 	}
@@ -851,7 +834,7 @@ func (p *dockerProvisioner) Shell(opts provision.ShellOptions) error {
 	if err != nil {
 		return err
 	}
-	return c.Shell(p, opts.Conn, opts.Conn, opts.Conn, container.Pty{Width: opts.Width, Height: opts.Height, Term: opts.Term})
+	return c.Shell(p.ClusterClient(), opts.Conn, opts.Conn, opts.Conn, container.Pty{Width: opts.Width, Height: opts.Height, Term: opts.Term})
 }
 
 func (p *dockerProvisioner) Nodes(app provision.App) ([]cluster.Node, error) {
@@ -958,6 +941,10 @@ type clusterNodeWrapper struct {
 	prov *dockerProvisioner
 }
 
+func (n *clusterNodeWrapper) IaaSID() string {
+	return n.Node.Metadata[provision.IaaSIDMetadataName]
+}
+
 func (n *clusterNodeWrapper) Address() string {
 	return n.Node.Address
 }
@@ -968,6 +955,10 @@ func (n *clusterNodeWrapper) Pool() string {
 
 func (n *clusterNodeWrapper) Metadata() map[string]string {
 	return n.Node.CleanMetadata()
+}
+
+func (n *clusterNodeWrapper) MetadataNoPrefix() map[string]string {
+	return n.Metadata()
 }
 
 func (n *clusterNodeWrapper) ExtraData() map[string]string {
@@ -1075,6 +1066,7 @@ func (p *dockerProvisioner) AddNode(opts provision.AddNodeOptions) error {
 		opts.Metadata = map[string]string{}
 	}
 	opts.Metadata[provision.PoolMetadataName] = opts.Pool
+	opts.Metadata[provision.IaaSIDMetadataName] = opts.IaaSID
 	node := cluster.Node{
 		Address:        opts.Address,
 		Metadata:       opts.Metadata,
@@ -1175,7 +1167,7 @@ func (p *dockerProvisioner) RebalanceNodes(opts provision.RebalanceNodesOptions)
 	}
 	isOnlyPool := len(opts.MetadataFilter) == 1 && opts.MetadataFilter[provision.PoolMetadataName] != ""
 	if opts.Force || !isOnlyPool || len(opts.AppFilter) > 0 {
-		_, err := p.rebalanceContainersByFilter(opts.Writer, opts.AppFilter, opts.MetadataFilter, opts.Dry)
+		_, err := p.rebalanceContainersByFilter(opts.Event, opts.AppFilter, opts.MetadataFilter, opts.Dry)
 		return true, err
 	}
 	nodes, err := p.Cluster().NodesForMetadata(opts.MetadataFilter)
@@ -1204,8 +1196,8 @@ func (p *dockerProvisioner) RebalanceNodes(opts provision.RebalanceNodesOptions)
 		return false, errors.Wrap(err, "couldn't find containers from rebalanced nodes")
 	}
 	if math.Abs((float64)(gap-gapAfter)) > 2.0 {
-		fmt.Fprintf(opts.Writer, "Rebalancing as gap is %d, after rebalance gap will be %d\n", gap, gapAfter)
-		_, err := p.rebalanceContainersByFilter(opts.Writer, nil, opts.MetadataFilter, opts.Dry)
+		fmt.Fprintf(opts.Event, "Rebalancing as gap is %d, after rebalance gap will be %d\n", gap, gapAfter)
+		_, err := p.rebalanceContainersByFilter(opts.Event, nil, opts.MetadataFilter, opts.Dry)
 		return true, err
 	}
 	return false, nil

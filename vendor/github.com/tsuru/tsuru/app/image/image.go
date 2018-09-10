@@ -9,14 +9,14 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/storage"
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/provision"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 var (
@@ -247,17 +247,7 @@ func AppCurrentImageName(appName string) (string, error) {
 }
 
 func AppCurrentImageVersion(appName string) (string, error) {
-	coll, err := appImagesColl()
-	if err != nil {
-		return "", err
-	}
-	defer coll.Close()
-	var imgs appImages
-	err = coll.FindId(appName).One(&imgs)
-	if err != nil && err != mgo.ErrNotFound {
-		return "", err
-	}
-	version := imgs.Count
+	version, err := getAppImageVersion(appName)
 	if err == mgo.ErrNotFound || version == 0 {
 		version = 1
 	}
@@ -270,12 +260,53 @@ func AppendAppImageName(appName, imageID string) error {
 		return err
 	}
 	defer coll.Close()
-	_, err = coll.UpsertId(appName, bson.M{"$pull": bson.M{"images": imageID}})
-	if err != nil {
-		return err
-	}
-	_, err = coll.UpsertId(appName, bson.M{"$push": bson.M{"images": imageID}})
+	bulk := coll.Bulk()
+	bulk.Upsert(bson.M{"_id": appName}, bson.M{"$pull": bson.M{"images": imageID}})
+	bulk.Upsert(bson.M{"_id": appName}, bson.M{"$push": bson.M{"images": imageID}})
+	_, err = bulk.Run()
 	return err
+}
+
+type AllAppImages struct {
+	DeployImages  []string
+	BuilderImages []string
+}
+
+func ListAllAppImages() (map[string]AllAppImages, error) {
+	coll, err := appImagesColl()
+	if err != nil {
+		return nil, err
+	}
+	defer coll.Close()
+	var (
+		imgsDeploy []appImages
+		imgsBuild  []appImages
+	)
+	err = coll.Find(nil).All(&imgsDeploy)
+	if err != nil {
+		return nil, err
+	}
+	coll, err = appBuilderImagesColl()
+	if err != nil {
+		return nil, err
+	}
+	defer coll.Close()
+	err = coll.Find(nil).All(&imgsBuild)
+	if err != nil {
+		return nil, err
+	}
+	ret := map[string]AllAppImages{}
+	for _, img := range imgsDeploy {
+		appData := ret[img.AppName]
+		appData.DeployImages = img.Images
+		ret[img.AppName] = appData
+	}
+	for _, img := range imgsBuild {
+		appData := ret[img.AppName]
+		appData.BuilderImages = img.Images
+		ret[img.AppName] = appData
+	}
+	return ret, nil
 }
 
 func ListAppImages(appName string) ([]string, error) {
@@ -338,7 +369,20 @@ func DeleteAllAppImageNames(appName string) error {
 		return err
 	}
 	defer coll.Close()
-	return coll.RemoveId(appName)
+	err = coll.RemoveId(appName)
+	if err != nil && err != mgo.ErrNotFound {
+		return err
+	}
+	coll, err = appBuilderImagesColl()
+	if err != nil {
+		return err
+	}
+	defer coll.Close()
+	err = coll.RemoveId(appName)
+	if err != nil && err != mgo.ErrNotFound {
+		return err
+	}
+	return nil
 }
 
 func UpdateAppImageRollback(img, reason string, disableRollback bool) error {
@@ -365,11 +409,24 @@ func PullAppImageNames(appName string, images []string) error {
 		return err
 	}
 	defer coll.Close()
-	return coll.UpdateId(appName, bson.M{"$pullAll": bson.M{"images": images}})
+	err = coll.UpdateId(appName, bson.M{"$pullAll": bson.M{"images": images}})
+	if err != nil && err != mgo.ErrNotFound {
+		return err
+	}
+	coll, err = appBuilderImagesColl()
+	if err != nil {
+		return err
+	}
+	defer coll.Close()
+	err = coll.UpdateId(appName, bson.M{"$pullAll": bson.M{"images": images}})
+	if err != nil && err != mgo.ErrNotFound {
+		return err
+	}
+	return nil
 }
 
 func PlatformImageName(platformName string) string {
-	return fmt.Sprintf("%s/%s:latest", basicImageName(), platformName)
+	return fmt.Sprintf("%s/%s:latest", basicImageName("tsuru"), platformName)
 }
 
 func GetProcessesFromProcfile(strProcfile string) map[string][]string {
@@ -383,19 +440,12 @@ func GetProcessesFromProcfile(strProcfile string) map[string][]string {
 	return processes
 }
 
-func AppNewBuilderImageName(appName string) (string, error) {
-	coll, err := appImagesColl()
-	if err != nil {
-		return "", err
+func AppNewBuilderImageName(appName, teamOwner, tag string) (string, error) {
+	if tag == "" {
+		version, _ := getAppImageVersion(appName)
+		tag = fmt.Sprintf("v%d-builder", version+1)
 	}
-	defer coll.Close()
-	var imgs appImages
-	err = coll.FindId(appName).One(&imgs)
-	if err != nil && err != mgo.ErrNotFound {
-		return "", err
-	}
-	version := imgs.Count + 1
-	return fmt.Sprintf("%s:v%d-builder", appBasicImageName(appName), version), nil
+	return fmt.Sprintf("%s:%s", appBasicBuilderImageName(appName, teamOwner), tag), nil
 }
 
 func ListAppBuilderImages(appName string) ([]string, error) {
@@ -448,11 +498,56 @@ func AppCurrentBuilderImageName(appName string) (string, error) {
 	return imgs.Images[len(imgs.Images)-1], nil
 }
 
-func appBasicImageName(appName string) string {
-	return fmt.Sprintf("%s/app-%s", basicImageName(), appName)
+func GetAppImageBySuffix(appName, imageIdSuffix string) (string, error) {
+	inputImage := imageIdSuffix
+	validImgs, err := ListValidAppImages(appName)
+	if err != nil {
+		return "", err
+	}
+	if len(validImgs) == 0 {
+		return "", &ImageNotFoundErr{App: appName, Image: inputImage}
+	}
+	for _, img := range validImgs {
+		if strings.HasSuffix(img, inputImage) {
+			return img, nil
+		}
+	}
+	return "", &InvalidVersionErr{Image: inputImage}
 }
 
-func basicImageName() string {
+func SplitImageName(imageName string) (repo, tag string) {
+	imgNameSplit := strings.Split(imageName, ":")
+	switch len(imgNameSplit) {
+	case 1:
+		repo = imgNameSplit[0]
+		tag = "latest"
+	case 2:
+		if strings.Contains(imgNameSplit[1], "/") {
+			repo = imageName
+			tag = "latest"
+		} else {
+			repo = imgNameSplit[0]
+			tag = imgNameSplit[1]
+		}
+	default:
+		repo = strings.Join(imgNameSplit[:len(imgNameSplit)-1], ":")
+		tag = imgNameSplit[len(imgNameSplit)-1]
+	}
+	return
+}
+
+func appBasicImageName(appName string) string {
+	return fmt.Sprintf("%s/app-%s", basicImageName("tsuru"), appName)
+}
+
+func appBasicBuilderImageName(appName, teamName string) string {
+	if teamName == "" {
+		teamName = "tsuru"
+	}
+	return fmt.Sprintf("%s/app-%s", basicImageName(teamName), appName)
+}
+
+func basicImageName(repoName string) string {
 	parts := make([]string, 0, 2)
 	registry, _ := config.GetString("docker:registry")
 	if registry != "" {
@@ -460,7 +555,7 @@ func basicImageName() string {
 	}
 	repoNamespace, _ := config.GetString("docker:repository-namespace")
 	if repoNamespace == "" {
-		repoNamespace = "tsuru"
+		repoNamespace = repoName
 	}
 	parts = append(parts, repoNamespace)
 	return strings.Join(parts, "/")
@@ -506,19 +601,16 @@ func imageCustomDataColl() (*storage.Collection, error) {
 	return conn.Collection(fmt.Sprintf("%s_image_custom_data", name)), nil
 }
 
-func GetAppImageBySuffix(appName, imageIdSuffix string) (string, error) {
-	inputImage := imageIdSuffix
-	validImgs, err := ListValidAppImages(appName)
+func getAppImageVersion(appName string) (int, error) {
+	coll, err := appImagesColl()
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	if len(validImgs) == 0 {
-		return "", &ImageNotFoundErr{App: appName, Image: inputImage}
+	defer coll.Close()
+	var imgs appImages
+	err = coll.FindId(appName).One(&imgs)
+	if err != nil && err != mgo.ErrNotFound {
+		return 0, err
 	}
-	for _, img := range validImgs {
-		if strings.HasSuffix(img, inputImage) {
-			return img, nil
-		}
-	}
-	return "", &InvalidVersionErr{Image: inputImage}
+	return imgs.Count, nil
 }

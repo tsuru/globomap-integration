@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
@@ -33,24 +34,23 @@ import (
 	"github.com/tsuru/tsuru/repository"
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	"github.com/tsuru/tsuru/router/routertest"
-	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	"github.com/tsuru/tsuru/tsurutest"
-	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type AuthSuite struct {
-	team       *authTypes.Team
-	team2      *authTypes.Team
-	user       *auth.User
-	token      auth.Token
-	server     *authtest.SMTPServer
-	testServer http.Handler
-	conn       *db.Storage
+	team            *authTypes.Team
+	team2           *authTypes.Team
+	user            *auth.User
+	token           auth.Token
+	server          *authtest.SMTPServer
+	testServer      http.Handler
+	conn            *db.Storage
+	mockTeamService *authTypes.MockTeamService
 }
 
 var _ = check.Suite(&AuthSuite{})
@@ -60,7 +60,7 @@ func (s *AuthSuite) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("auth:user-registration", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_api_auth_test")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("repo-manager", "fake")
@@ -85,18 +85,21 @@ func (s *AuthSuite) TearDownSuite(c *check.C) {
 }
 
 func (s *AuthSuite) SetUpTest(c *check.C) {
+	s.mockTeamService = &authTypes.MockTeamService{}
+	servicemanager.Team = s.mockTeamService
 	provisiontest.ProvisionerInstance.Reset()
 	routertest.FakeRouter.Reset()
 	repositorytest.Reset()
 	dbtest.ClearAllCollections(s.conn.Apps().Database)
-	s.createUserAndTeam(c)
-	app.PlatformService().Insert(appTypes.Platform{Name: "python"})
+	s.createUser(c)
+	s.team = &authTypes.Team{Name: "tsuruteam"}
+	s.team2 = &authTypes.Team{Name: "tsuruteam2"}
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err := pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
 }
 
-func (s *AuthSuite) createUserAndTeam(c *check.C) {
+func (s *AuthSuite) createUser(c *check.C) {
 	_, s.token = permissiontest.CustomUserWithPermission(c, nativeScheme, "super-auth-toremove", permission.Permission{
 		Scheme:  permission.PermAll,
 		Context: permission.Context(permission.CtxGlobal, ""),
@@ -104,17 +107,11 @@ func (s *AuthSuite) createUserAndTeam(c *check.C) {
 	var err error
 	s.user, err = s.token.User()
 	c.Assert(err, check.IsNil)
-	s.team = &authTypes.Team{Name: "tsuruteam"}
-	s.team2 = &authTypes.Team{Name: "tsuruteam2"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
-	err = auth.TeamService().Insert(*s.team2)
-	c.Assert(err, check.IsNil)
 }
 
 func (s *AuthSuite) TestCreateUser(c *check.C) {
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -134,7 +131,7 @@ func (s *AuthSuite) TestCreateUserQuota(c *check.C) {
 	config.Set("quota:apps-per-user", 1)
 	defer config.Unset("quota:apps-per-user")
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -148,7 +145,7 @@ func (s *AuthSuite) TestCreateUserQuota(c *check.C) {
 
 func (s *AuthSuite) TestCreateUserUnlimitedQuota(c *check.C) {
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -164,7 +161,7 @@ func (s *AuthSuite) TestCreateUserEmailAlreadyExists(c *check.C) {
 	err := u.Create()
 	c.Assert(err, check.IsNil)
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -175,7 +172,7 @@ func (s *AuthSuite) TestCreateUserEmailAlreadyExists(c *check.C) {
 
 func (s *AuthSuite) TestCreateUserEmailIsNotValid(c *check.C) {
 	b := strings.NewReader("email=nobody&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -188,7 +185,7 @@ func (s *AuthSuite) TestCreateUserPasswordHasLessThan6CharactersOrMoreThan50Char
 	passwords := []string{"123", strings.Join(make([]string, 52), "-")}
 	for _, password := range passwords {
 		b := strings.NewReader("email=nobody@noboy.com&password=" + password)
-		request, err := http.NewRequest("POST", "/users", b)
+		request, err := http.NewRequest(http.MethodPost, "/users", b)
 		c.Assert(err, check.IsNil)
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		recorder := httptest.NewRecorder()
@@ -201,7 +198,7 @@ func (s *AuthSuite) TestCreateUserPasswordHasLessThan6CharactersOrMoreThan50Char
 
 func (s *AuthSuite) TestCreateUserCreatesUserInRepository(c *check.C) {
 	b := strings.NewReader("email=nobody@me.myself&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -213,7 +210,7 @@ func (s *AuthSuite) TestCreateUserCreatesUserInRepository(c *check.C) {
 
 func (s *AuthSuite) TestCreateUserFailWithRegistrationDisabled(c *check.C) {
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	oldUserRegistration, err := config.GetBool("auth:user-registration")
@@ -233,7 +230,7 @@ func (s *AuthSuite) TestCreateUserFailWithRegistrationDisabledAndCommonUser(c *c
 	token, err := nativeScheme.Login(map[string]string{"email": simpleUser.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
@@ -249,7 +246,7 @@ func (s *AuthSuite) TestCreateUserFailWithRegistrationDisabledAndCommonUser(c *c
 
 func (s *AuthSuite) TestCreateUserWorksWithRegistrationDisabledAndAdminUser(c *check.C) {
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -265,7 +262,7 @@ func (s *AuthSuite) TestCreateUserWorksWithRegistrationDisabledAndAdminUser(c *c
 func (s *AuthSuite) TestCreateUserRollsbackAfterRepositoryError(c *check.C) {
 	repository.Manager().CreateUser("nobody@globo.com")
 	b := strings.NewReader("email=nobody@globo.com&password=123456")
-	request, err := http.NewRequest("POST", "/users", b)
+	request, err := http.NewRequest(http.MethodPost, "/users", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -280,7 +277,7 @@ func (s *AuthSuite) TestLoginShouldCreateTokenInTheDatabaseAndReturnItWithinTheR
 	_, err := nativeScheme.Create(&u)
 	c.Assert(err, check.IsNil)
 	b := strings.NewReader("password=123456")
-	request, err := http.NewRequest("POST", "/users/nobody@globo.com/tokens", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/nobody@globo.com/tokens", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -298,7 +295,7 @@ func (s *AuthSuite) TestLoginShouldCreateTokenInTheDatabaseAndReturnItWithinTheR
 
 func (s *AuthSuite) TestLoginPasswordMissing(c *check.C) {
 	b := strings.NewReader("")
-	request, err := http.NewRequest("POST", "/users/nobody@globo.com/tokens", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/nobody@globo.com/tokens", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -309,7 +306,7 @@ func (s *AuthSuite) TestLoginPasswordMissing(c *check.C) {
 
 func (s *AuthSuite) TestLoginUserDoesNotExist(c *check.C) {
 	b := strings.NewReader("password=123456")
-	request, err := http.NewRequest("POST", "/users/nobody@globo.com/tokens", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/nobody@globo.com/tokens", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -323,7 +320,7 @@ func (s *AuthSuite) TestLoginPasswordDoesNotMatch(c *check.C) {
 	_, err := nativeScheme.Create(&u)
 	c.Assert(err, check.IsNil)
 	b := strings.NewReader("password=1234567")
-	request, err := http.NewRequest("POST", "/users/nobody@globo.com/tokens", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/nobody@globo.com/tokens", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -334,7 +331,7 @@ func (s *AuthSuite) TestLoginPasswordDoesNotMatch(c *check.C) {
 
 func (s *AuthSuite) TestLoginEmailIsNotValid(c *check.C) {
 	b := strings.NewReader("password=123456")
-	request, err := http.NewRequest("POST", "/users/nobody/tokens", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/nobody/tokens", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	recorder := httptest.NewRecorder()
@@ -350,7 +347,7 @@ func (s *AuthSuite) TestLoginPasswordIsInvalid(c *check.C) {
 	c.Assert(err, check.IsNil)
 	for _, password := range passwords {
 		b := strings.NewReader("password=" + password)
-		request, err := http.NewRequest("POST", "/users/me@globo.com/tokens", b)
+		request, err := http.NewRequest(http.MethodPost, "/users/me@globo.com/tokens", b)
 		c.Assert(err, check.IsNil)
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		recorder := httptest.NewRecorder()
@@ -363,7 +360,7 @@ func (s *AuthSuite) TestLoginPasswordIsInvalid(c *check.C) {
 func (s *AuthSuite) TestLogout(c *check.C) {
 	token, err := nativeScheme.Login(map[string]string{"email": s.user.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", "/users/tokens", nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users/tokens", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = logout(recorder, request, token)
@@ -373,30 +370,35 @@ func (s *AuthSuite) TestLogout(c *check.C) {
 }
 
 func (s *AuthSuite) TestCreateTeam(c *check.C) {
-	b := strings.NewReader("name=timeredbull")
-	request, err := http.NewRequest("POST", "/teams", b)
+	teamName := "teamredbull"
+	s.mockTeamService.OnCreate = func(teamName string, _ *authTypes.User) error {
+		c.Assert(teamName, check.Equals, teamName)
+		return nil
+	}
+	b := strings.NewReader("name=" + teamName)
+	request, err := http.NewRequest(http.MethodPost, "/teams", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
 	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusCreated)
-	t, err := auth.TeamService().FindByName("timeredbull")
-	c.Assert(err, check.IsNil)
-	c.Assert(t, check.NotNil)
 	c.Assert(eventtest.EventDesc{
-		Target: teamTarget("timeredbull"),
+		Target: teamTarget(teamName),
 		Owner:  s.token.GetUserName(),
 		Kind:   "team.create",
 		StartCustomData: []map[string]interface{}{
-			{"name": "name", "value": "timeredbull"},
+			{"name": "name", "value": teamName},
 		},
 	}, eventtest.HasEvent)
 }
 
-func (s *AuthSuite) TestCreateTeamNameIsEmpty(c *check.C) {
+func (s *AuthSuite) TestCreateTeamInvalidTeamName(c *check.C) {
+	s.mockTeamService.OnCreate = func(_ string, _ *authTypes.User) error {
+		return authTypes.ErrInvalidTeamName
+	}
 	b := strings.NewReader("ble=bla")
-	request, err := http.NewRequest("POST", "/teams", b)
+	request, err := http.NewRequest(http.MethodPost, "/teams", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -407,11 +409,12 @@ func (s *AuthSuite) TestCreateTeamNameIsEmpty(c *check.C) {
 }
 
 func (s *AuthSuite) TestCreateTeamAlreadyExists(c *check.C) {
-	team := authTypes.Team{Name: "timeredbull"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
-	b := strings.NewReader("name=" + team.Name)
-	request, err := http.NewRequest("POST", "/teams", b)
+	s.mockTeamService.OnCreate = func(_ string, _ *authTypes.User) error {
+		return authTypes.ErrTeamAlreadyExists
+	}
+	teamName := "timeredbull"
+	b := strings.NewReader("name=" + teamName)
+	request, err := http.NewRequest(http.MethodPost, "/teams", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -422,59 +425,38 @@ func (s *AuthSuite) TestCreateTeamAlreadyExists(c *check.C) {
 }
 
 func (s *AuthSuite) TestRemoveTeam(c *check.C) {
-	team := authTypes.Team{Name: "painofsalvation"}
-	err := auth.TeamService().Insert(team)
+	teamName := "painofsalvation"
+	s.mockTeamService.OnRemove = func(teamName string) error {
+		c.Assert(teamName, check.Equals, teamName)
+		return nil
+	}
+	request, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("/teams/%s?:name=%s", teamName, teamName), nil)
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/teams/%s?:name=%s", team.Name, team.Name), nil)
-	c.Assert(err, check.IsNil)
-	recorder := httptest.NewRecorder()
-	err = removeTeam(recorder, request, s.token)
-	c.Assert(err, check.IsNil)
-	t, err := auth.TeamService().FindByName(team.Name)
-	c.Assert(err, check.Equals, authTypes.ErrTeamNotFound)
-	c.Assert(t, check.IsNil)
-	c.Assert(eventtest.EventDesc{
-		Target: teamTarget("painofsalvation"),
-		Owner:  s.token.GetUserName(),
-		Kind:   "team.delete",
-		StartCustomData: []map[string]interface{}{
-			{"name": ":name", "value": "painofsalvation"},
-		},
-	}, eventtest.HasEvent)
-}
-
-func (s *AuthSuite) TestRemoveTeamAsAdmin(c *check.C) {
-	team := authTypes.Team{Name: "thegathering"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/teams/%s", team.Name), nil)
-	c.Assert(err, check.IsNil)
-	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
 	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
-	_, err = auth.TeamService().FindByName(team.Name)
-	c.Assert(err, check.Equals, authTypes.ErrTeamNotFound)
 	c.Assert(eventtest.EventDesc{
-		Target: teamTarget("thegathering"),
+		Target: teamTarget(teamName),
 		Owner:  s.token.GetUserName(),
 		Kind:   "team.delete",
 		StartCustomData: []map[string]interface{}{
-			{"name": ":name", "value": "thegathering"},
+			{"name": ":name", "value": teamName},
 		},
 	}, eventtest.HasEvent)
 }
 
 func (s *AuthSuite) TestRemoveTeamGives404WhenTeamDoesNotExist(c *check.C) {
-	request, err := http.NewRequest("DELETE", "/teams/unknown?:name=unknown", nil)
+	s.mockTeamService.OnRemove = func(_ string) error {
+		return authTypes.ErrTeamNotFound
+	}
+	request, err := http.NewRequest(http.MethodDelete, "/teams/unknown?:name=unknown", nil)
 	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	err = removeTeam(recorder, request, s.token)
-	c.Assert(err, check.NotNil)
-	e, ok := err.(*errors.HTTP)
-	c.Assert(ok, check.Equals, true)
-	c.Assert(e.Code, check.Equals, http.StatusNotFound)
-	c.Assert(e.Message, check.Equals, `Team "unknown" not found.`)
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
+	c.Assert(recorder.Body.String(), check.Equals, "Team \"unknown\" not found.\n")
 }
 
 func (s *AuthSuite) TestRemoveTeamGives404WhenUserDoesNotHaveAccessToTheTeam(c *check.C) {
@@ -482,75 +464,64 @@ func (s *AuthSuite) TestRemoveTeamGives404WhenUserDoesNotHaveAccessToTheTeam(c *
 		Scheme:  permission.PermTeamDelete,
 		Context: permission.Context(permission.CtxTeam, "other-team"),
 	})
-	team := authTypes.Team{Name: "painofsalvation"}
-	err := auth.TeamService().Insert(team)
+	teamName := "painofsalvation"
+	request, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("/teams/%s?:name=%s", teamName, teamName), nil)
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/teams/%s?:name=%s", team.Name, team.Name), nil)
-	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	err = removeTeam(recorder, request, token)
-	c.Assert(err, check.NotNil)
-	e, ok := err.(*errors.HTTP)
-	c.Assert(ok, check.Equals, true)
-	c.Assert(e.Code, check.Equals, http.StatusNotFound)
-	c.Assert(e.Message, check.Equals, `Team "painofsalvation" not found.`)
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
+	c.Assert(recorder.Body.String(), check.Equals, "Team \"painofsalvation\" not found.\n")
 }
 
 func (s *AuthSuite) TestRemoveTeamGives403WhenTeamHasAccessToAnyApp(c *check.C) {
-	team := authTypes.Team{Name: "evergrey"}
-	err := auth.TeamService().Insert(team)
+	s.mockTeamService.OnRemove = func(_ string) error {
+		return &authTypes.ErrTeamStillUsed{Apps: []string{"i-should"}}
+	}
+	teamName := "evergrey"
+	request, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("/teams/%s?:name=%s", teamName, teamName), nil)
 	c.Assert(err, check.IsNil)
-	a := app.App{Name: "i-should", Platform: "python", TeamOwner: team.Name}
-	err = app.CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/teams/%s?:name=%s", team.Name, team.Name), nil)
-	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	err = removeTeam(recorder, request, s.token)
-	c.Assert(err, check.NotNil)
-	e, ok := err.(*errors.HTTP)
-	c.Assert(ok, check.Equals, true)
-	c.Assert(e.Code, check.Equals, http.StatusForbidden)
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusForbidden)
 	expected := `This team cannot be removed because there are still references to it:
-Apps: i-should`
-	c.Assert(e.Message, check.Equals, expected)
+Apps: i-should
+`
+	c.Assert(recorder.Body.String(), check.Equals, expected)
 }
 
 func (s *AuthSuite) TestRemoveTeamGives403WhenTeamHasAccessToAnyServiceInstance(c *check.C) {
-	team := authTypes.Team{Name: "evergrey"}
-	err := auth.TeamService().Insert(team)
+	s.mockTeamService.OnRemove = func(_ string) error {
+		return &authTypes.ErrTeamStillUsed{ServiceInstances: []string{"my_nosql", "my_nosql-2"}}
+	}
+	teamName := "evergrey"
+	request, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("/teams/%s?:name=%s", teamName, teamName), nil)
 	c.Assert(err, check.IsNil)
-	si1 := service.ServiceInstance{Name: "my_nosql", ServiceName: "nosql-service", Teams: []string{team.Name}}
-	err = s.conn.ServiceInstances().Insert(si1)
-	c.Assert(err, check.IsNil)
-	si2 := service.ServiceInstance{Name: "my_nosql-2", ServiceName: "nosql-service", Teams: []string{team.Name}}
-	err = s.conn.ServiceInstances().Insert(si2)
-	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/teams/%s?:name=%s", team.Name, team.Name), nil)
-	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	err = removeTeam(recorder, request, s.token)
-	c.Assert(err, check.NotNil)
-	e, ok := err.(*errors.HTTP)
-	c.Assert(ok, check.Equals, true)
-	c.Assert(e.Code, check.Equals, http.StatusForbidden)
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusForbidden)
 	expected := `This team cannot be removed because there are still references to it:
-Service instances: my_nosql, my_nosql-2`
-	c.Assert(e.Message, check.Equals, expected)
+Service instances: my_nosql, my_nosql-2
+`
+	c.Assert(recorder.Body.String(), check.Equals, expected)
 }
 
 func (s *AuthSuite) TestListTeamsListsAllTeamsThatTheUserHasAccess(c *check.C) {
+	s.mockTeamService.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: s.team.Name}}, nil
+	}
 	token := userWithPermission(c, permission.Permission{
 		Scheme:  permission.PermAppCreate,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
 	})
-	request, err := http.NewRequest("GET", "/teams", nil)
+	request, err := http.NewRequest(http.MethodGet, "/teams", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	mux := RunServer(true)
-	mux.ServeHTTP(recorder, request)
-	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	var m []map[string]interface{}
 	err = json.Unmarshal(recorder.Body.Bytes(), &m)
 	c.Assert(err, check.IsNil)
@@ -562,6 +533,9 @@ func (s *AuthSuite) TestListTeamsListsAllTeamsThatTheUserHasAccess(c *check.C) {
 }
 
 func (s *AuthSuite) TestListTeamsListsShowOnlyParents(c *check.C) {
+	s.mockTeamService.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: s.team.Name}}, nil
+	}
 	token := userWithPermission(c, permission.Permission{
 		Scheme:  permission.PermAppCreate,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -569,13 +543,12 @@ func (s *AuthSuite) TestListTeamsListsShowOnlyParents(c *check.C) {
 		Scheme:  permission.PermApp,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
 	})
-	request, err := http.NewRequest("GET", "/teams", nil)
+	request, err := http.NewRequest(http.MethodGet, "/teams", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	mux := RunServer(true)
-	mux.ServeHTTP(recorder, request)
-	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	var m []map[string]interface{}
 	err = json.Unmarshal(recorder.Body.Bytes(), &m)
 	c.Assert(err, check.IsNil)
@@ -587,14 +560,15 @@ func (s *AuthSuite) TestListTeamsListsShowOnlyParents(c *check.C) {
 }
 
 func (s *AuthSuite) TestListTeamsWithAllPoweredUser(c *check.C) {
-	request, err := http.NewRequest("GET", "/teams", nil)
+	s.mockTeamService.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: s.team.Name}, {Name: s.team2.Name}}, nil
+	}
+	request, err := http.NewRequest(http.MethodGet, "/teams", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	mux := RunServer(true)
-	mux.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
-	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
 	var m []map[string]interface{}
 	err = json.Unmarshal(recorder.Body.Bytes(), &m)
 	c.Assert(err, check.IsNil)
@@ -605,22 +579,53 @@ func (s *AuthSuite) TestListTeamsWithAllPoweredUser(c *check.C) {
 }
 
 func (s *AuthSuite) TestListTeamsReturns204IfTheUserHasNoTeam(c *check.C) {
+	s.mockTeamService.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: s.team.Name}, {Name: s.team2.Name}}, nil
+	}
 	u := auth.User{Email: "cruiser@gotthard.com", Password: "234567"}
 	_, err := nativeScheme.Create(&u)
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "234567"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("GET", "/teams", nil)
+	request, err := http.NewRequest(http.MethodGet, "/teams", nil)
 	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	err = teamList(recorder, request, token)
-	c.Assert(err, check.IsNil)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusNoContent)
+}
+
+func (s *AuthSuite) TestTeamInfoReturns404TeamNotFound(c *check.C) {
+	teamName := "team-test"
+	s.mockTeamService.OnFindByName = func(name string) (*authTypes.Team, error) {
+		c.Assert(name, check.Equals, teamName)
+		return nil, authTypes.ErrTeamNotFound
+	}
+	request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("/teams/%v", teamName), nil)
+	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
+	recorder := httptest.NewRecorder()
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
+}
+
+func (s *AuthSuite) TestTeamInfoReturns200Success(c *check.C) {
+	teamName := "team-test"
+	s.mockTeamService.OnFindByName = func(name string) (*authTypes.Team, error) {
+		c.Assert(name, check.Equals, teamName)
+		return &authTypes.Team{Name: name}, nil
+	}
+	request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("/teams/%v", teamName), nil)
+	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
+	recorder := httptest.NewRecorder()
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 }
 
 func (s *AuthSuite) TestAddKeyToUser(c *check.C) {
 	b := strings.NewReader("name=the-key&key=my-key")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -645,7 +650,7 @@ func (s *AuthSuite) TestAddKeyToUser(c *check.C) {
 
 func (s *AuthSuite) TestAddKeyToUserKeyIsMissing(c *check.C) {
 	b := strings.NewReader("")
-	request, err := http.NewRequest("POST", "/users/key", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/key", b)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = addKeyToUser(recorder, request, s.token)
@@ -658,7 +663,7 @@ func (s *AuthSuite) TestAddKeyToUserKeyIsMissing(c *check.C) {
 
 func (s *AuthSuite) TestAddKeyToUserReturnsBadRequestIfTheKeyIsEmpty(c *check.C) {
 	b := bytes.NewBufferString(`{"key":""}`)
-	request, err := http.NewRequest("POST", "/users/key", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/key", b)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = addKeyToUser(recorder, request, s.token)
@@ -673,7 +678,7 @@ func (s *AuthSuite) TestAddKeyToUserKeyManagerDisabled(c *check.C) {
 	config.Set("repo-manager", "none")
 	defer config.Set("repo-manager", "fake")
 	b := strings.NewReader("name=the-key&key=my-key")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -687,7 +692,7 @@ func (s *AuthSuite) TestAddKeyToUserReturnsConflictIfTheKeyIsAlreadyPresent(c *c
 	s.user.AddKey(repository.Key{Name: "the-key", Body: "my-key"}, false)
 	s.conn.Users().Update(bson.M{"email": s.user.Email}, s.user)
 	b := strings.NewReader("name=the-key&key=your-key")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -701,7 +706,7 @@ func (s *AuthSuite) TestAddKeyForcingUpdate(c *check.C) {
 	s.user.AddKey(repository.Key{Name: "the-key", Body: "my-key"}, false)
 	s.conn.Users().Update(bson.M{"email": s.user.Email}, s.user)
 	b := strings.NewReader("name=the-key&key=my-other-key&force=true")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -722,7 +727,7 @@ func (s *AuthSuite) TestAddKeyToUserFailure(c *check.C) {
 	c.Assert(err, check.IsNil)
 	defer nativeScheme.Logout(t.GetValue())
 	b := strings.NewReader("name=the-key&key=my-key")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+t.GetValue())
@@ -735,14 +740,14 @@ func (s *AuthSuite) TestAddKeyToUserFailure(c *check.C) {
 
 func (s *AuthSuite) TestRemoveKey(c *check.C) {
 	b := strings.NewReader("name=the-key&key=my-key")
-	request, err := http.NewRequest("POST", "/users/keys", b)
+	request, err := http.NewRequest(http.MethodPost, "/users/keys", b)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
 	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
-	request, err = http.NewRequest("DELETE", "/users/keys/the-key", nil)
+	request, err = http.NewRequest(http.MethodDelete, "/users/keys/the-key", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder = httptest.NewRecorder()
@@ -762,7 +767,7 @@ func (s *AuthSuite) TestRemoveKey(c *check.C) {
 }
 
 func (s *AuthSuite) TestRemoveKeyNotFound(c *check.C) {
-	request, err := http.NewRequest("DELETE", "/users/keys/the-key", nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users/keys/the-key", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -773,7 +778,7 @@ func (s *AuthSuite) TestRemoveKeyNotFound(c *check.C) {
 func (s *AuthSuite) TestRemoveKeyFromUserKeyManagerDisabled(c *check.C) {
 	config.Set("repo-manager", "none")
 	defer config.Set("repo-manager", "fake")
-	request, err := http.NewRequest("DELETE", "/users/keys/the-key", nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users/keys/the-key", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -790,11 +795,10 @@ func (s *AuthSuite) TestListKeysHandler(c *check.C) {
 	repository.Manager().(repository.KeyRepositoryManager).AddKey(s.user.Email, keys[0])
 	repository.Manager().(repository.KeyRepositoryManager).AddKey(s.user.Email, keys[1])
 	recorder := httptest.NewRecorder()
-	request, err := http.NewRequest("GET", "/users/keys", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/keys", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
 	got := map[string]string{}
@@ -810,7 +814,7 @@ func (s *AuthSuite) TestListKeysHandler(c *check.C) {
 func (s *AuthSuite) TestListKeysKeyManagerDisabled(c *check.C) {
 	config.Set("repo-manager", "none")
 	defer config.Set("repo-manager", "fake")
-	request, err := http.NewRequest("GET", "/users/keys", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/keys", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = listKeys(recorder, request, s.token)
@@ -827,7 +831,7 @@ func (s *AuthSuite) TestRemoveUser(c *check.C) {
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", "/users", nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = removeUser(recorder, request, token)
@@ -851,7 +855,7 @@ func (s *AuthSuite) TestRemoveUserProvidingOwnEmail(c *check.C) {
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", "/users?user="+u.Email, nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users?user="+u.Email, nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = removeUser(recorder, request, token)
@@ -876,7 +880,7 @@ func (s *AuthSuite) TestRemoveAnotherUser(c *check.C) {
 	u := auth.User{Email: "her-voices@painofsalvation.com", Password: "123456"}
 	_, err := nativeScheme.Create(&u)
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", "/users?user="+u.Email, nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users?user="+u.Email, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -903,7 +907,7 @@ func (s *AuthSuite) TestRemoveAnotherUserNoPermission(c *check.C) {
 	u := auth.User{Email: "her-voices@painofsalvation.com", Password: "123456"}
 	_, err := nativeScheme.Create(&u)
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("DELETE", "/users?user="+s.user.Email, nil)
+	request, err := http.NewRequest(http.MethodDelete, "/users?user="+s.user.Email, nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = removeUser(recorder, request, token)
@@ -921,7 +925,7 @@ func (s *AuthSuite) TestChangePassword(c *check.C) {
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("old=123456&new=654321&confirm=654321")
-	request, err := http.NewRequest("PUT", "/users/password", body)
+	request, err := http.NewRequest(http.MethodPut, "/users/password", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
@@ -945,7 +949,7 @@ func (s *AuthSuite) TestChangePasswordReturns412IfNewPasswordIsInvalid(c *check.
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("old=123456&new=1234&confirm=1234")
-	request, err := http.NewRequest("PUT", "/users/password", body)
+	request, err := http.NewRequest(http.MethodPut, "/users/password", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
@@ -963,7 +967,7 @@ func (s *AuthSuite) TestChangePasswordReturns412IfNewPasswordAndConfirmPasswordD
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("old=123456&new=12345678&confirm=1234567810")
-	request, err := http.NewRequest("PUT", "/users/password", body)
+	request, err := http.NewRequest(http.MethodPut, "/users/password", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
@@ -976,7 +980,7 @@ func (s *AuthSuite) TestChangePasswordReturns412IfNewPasswordAndConfirmPasswordD
 
 func (s *AuthSuite) TestChangePasswordReturns404IfOldPasswordDidntMatch(c *check.C) {
 	body := strings.NewReader("old=1234&new=123456&confirm=123456")
-	request, err := http.NewRequest("PUT", "/users/password", body)
+	request, err := http.NewRequest(http.MethodPut, "/users/password", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -991,7 +995,7 @@ func (s *AuthSuite) TestChangePasswordInvalidPasswords(c *check.C) {
 	bodies := []string{"old=something", "new=something", "{}", "null"}
 	for _, body := range bodies {
 		b := strings.NewReader(body)
-		request, err := http.NewRequest("PUT", "/users/password", b)
+		request, err := http.NewRequest(http.MethodPut, "/users/password", b)
 		c.Assert(err, check.IsNil)
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -1006,7 +1010,7 @@ func (s *AuthSuite) TestResetPasswordStep1(c *check.C) {
 	defer s.server.Reset()
 	oldPassword := s.user.Password
 	url := fmt.Sprintf("/users/%s/password?:email=%s", s.user.Email, s.user.Email)
-	request, _ := http.NewRequest("POST", url, nil)
+	request, _ := http.NewRequest(http.MethodPost, url, nil)
 	recorder := httptest.NewRecorder()
 	err := resetPassword(recorder, request)
 	c.Assert(err, check.IsNil)
@@ -1034,7 +1038,7 @@ func (s *AuthSuite) TestResetPasswordStep1(c *check.C) {
 
 func (s *AuthSuite) TestResetPasswordUserNotFound(c *check.C) {
 	url := "/users/unknown@tsuru.io/password?:email=unknown@tsuru.io"
-	request, _ := http.NewRequest("POST", url, nil)
+	request, _ := http.NewRequest(http.MethodPost, url, nil)
 	recorder := httptest.NewRecorder()
 	err := resetPassword(recorder, request)
 	c.Assert(err, check.NotNil)
@@ -1046,7 +1050,7 @@ func (s *AuthSuite) TestResetPasswordUserNotFound(c *check.C) {
 
 func (s *AuthSuite) TestResetPasswordInvalidEmail(c *check.C) {
 	url := "/users/unknown/password?:email=unknown"
-	request, _ := http.NewRequest("POST", url, nil)
+	request, _ := http.NewRequest(http.MethodPost, url, nil)
 	recorder := httptest.NewRecorder()
 	err := resetPassword(recorder, request)
 	c.Assert(err, check.NotNil)
@@ -1066,7 +1070,7 @@ func (s *AuthSuite) TestResetPasswordStep2(c *check.C) {
 	err = s.conn.PasswordTokens().Find(bson.M{"useremail": user.Email}).One(&t)
 	c.Assert(err, check.IsNil)
 	url := fmt.Sprintf("/users/%s/password?:email=%s&token=%s", user.Email, user.Email, t["_id"])
-	request, _ := http.NewRequest("POST", url, nil)
+	request, _ := http.NewRequest(http.MethodPost, url, nil)
 	recorder := httptest.NewRecorder()
 	err = resetPassword(recorder, request)
 	c.Assert(err, check.IsNil)
@@ -1118,7 +1122,7 @@ func (s *AuthSuite) TestAuthScheme(c *check.C) {
 	oldScheme := app.AuthScheme
 	defer func() { app.AuthScheme = oldScheme }()
 	app.AuthScheme = TestScheme{}
-	request, err := http.NewRequest("GET", "/auth/scheme", nil)
+	request, err := http.NewRequest(http.MethodGet, "/auth/scheme", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	s.testServer.ServeHTTP(recorder, request)
@@ -1137,7 +1141,7 @@ func (s *AuthSuite) TestRegenerateAPITokenHandler(c *check.C) {
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("POST", "/users/api-key", nil)
+	request, err := http.NewRequest(http.MethodPost, "/users/api-key", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "b "+token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1163,7 +1167,7 @@ func (s *AuthSuite) TestRegenerateAPITokenHandlerOtherUserAndIsAdminUser(c *chec
 	c.Assert(err, check.IsNil)
 	token := s.token
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("POST", "/users/api-key?user=leto@arrakis.com", nil)
+	request, err := http.NewRequest(http.MethodPost, "/users/api-key?user=leto@arrakis.com", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = regenerateAPIToken(recorder, request, token)
@@ -1190,7 +1194,7 @@ func (s *AuthSuite) TestRegenerateAPITokenHandlerOtherUserAndNotAdminUser(c *che
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("POST", "/users/api-key?user=myadmin@arrakis.com", nil)
+	request, err := http.NewRequest(http.MethodPost, "/users/api-key?user=myadmin@arrakis.com", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = regenerateAPIToken(recorder, request, token)
@@ -1204,7 +1208,7 @@ func (s *AuthSuite) TestShowAPITokenForUserWithNoToken(c *check.C) {
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("GET", "/users/api-key", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/api-key", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = showAPIToken(recorder, request, token)
@@ -1223,7 +1227,7 @@ func (s *AuthSuite) TestShowAPITokenForUserWithToken(c *check.C) {
 	c.Assert(err, check.IsNil)
 	token, err := nativeScheme.Login(map[string]string{"email": u.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("GET", "/users/api-key", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/api-key", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "b "+token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1245,7 +1249,7 @@ func (s *AuthSuite) TestShowAPITokenOtherUserAndIsAdminUser(c *check.C) {
 	_, err := nativeScheme.Create(&user)
 	c.Assert(err, check.IsNil)
 	token := s.token
-	request, err := http.NewRequest("GET", "/users/api-key?user=user@example.com", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/api-key?user=user@example.com", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = showAPIToken(recorder, request, token)
@@ -1274,7 +1278,7 @@ func (s *AuthSuite) TestShowAPITokenOtherUserWithoutPermission(c *check.C) {
 		c.Assert(err, check.IsNil)
 	}
 	token := userWithPermission(c)
-	request, err := http.NewRequest("GET", "/users/api-key?user=user@example.com", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/api-key?user=user@example.com", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
 	err = showAPIToken(recorder, request, token)
@@ -1287,7 +1291,7 @@ func (s *AuthSuite) TestListUsers(c *check.C) {
 		Scheme:  permission.PermAppCreate,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
 	})
-	request, err := http.NewRequest("GET", "/users", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1312,7 +1316,7 @@ func (s *AuthSuite) TestListUsersFilterByUserEmail(c *check.C) {
 	})
 	expected := token.GetUserName()
 	url := fmt.Sprintf("/users?userEmail=%s", expected)
-	request, err := http.NewRequest("GET", url, nil)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1336,7 +1340,7 @@ func (s *AuthSuite) TestListUsersFilterByRole(c *check.C) {
 	userRoles := expectedUser.Roles
 	expectedRole := userRoles[0].Name
 	url := fmt.Sprintf("/users?role=%s", expectedRole)
-	request, err := http.NewRequest("GET", url, nil)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1367,7 +1371,7 @@ func (s *AuthSuite) TestListUsersFilterByRoleAndContext(c *check.C) {
 	c.Assert(err, check.IsNil)
 	otherUser.AddRole(expectedRole, s.team.Name)
 	url := fmt.Sprintf("/users?role=%s&context=%s", expectedRole, s.team2.Name)
-	request, err := http.NewRequest("GET", url, nil)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1398,7 +1402,7 @@ func (s *AuthSuite) TestListUsersFilterByRoleAndInvalidContext(c *check.C) {
 	c.Assert(err, check.IsNil)
 	otherUser.AddRole(expectedRole, s.team.Name)
 	url := fmt.Sprintf("/users?role=%s&context=%s", expectedRole, "blablabla")
-	request, err := http.NewRequest("GET", url, nil)
+	request, err := http.NewRequest(http.MethodGet, url, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1416,7 +1420,7 @@ func (s *AuthSuite) TestListUsersLimitedUser(c *check.C) {
 		Scheme:  permission.PermAppCreate,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
 	})
-	request, err := http.NewRequest("GET", "/users", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1441,7 +1445,7 @@ func (s *AuthSuite) TestListUsersLimitedUserWithMoreRoles(c *check.C) {
 		Scheme:  permission.PermAppCreate,
 		Context: permission.Context(permission.CtxTeam, "another-team"),
 	})
-	request, err := http.NewRequest("GET", "/users", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1459,12 +1463,11 @@ func (s *AuthSuite) TestListUsersLimitedUserWithMoreRoles(c *check.C) {
 }
 
 func (s *AuthSuite) TestUserInfo(c *check.C) {
-	request, err := http.NewRequest("GET", "/users/info", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/info", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
 	expected := apiUser{
@@ -1494,12 +1497,11 @@ func (s *AuthSuite) TestUserInfoWithoutRoles(c *check.C) {
 	token := userWithPermission(c)
 	u, err := token.User()
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("GET", "/users/info", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/info", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
 	expected := apiUser{
@@ -1534,12 +1536,11 @@ func (s *AuthSuite) TestUserInfoWithRoles(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = u.AddRole("myrole", "b")
 	c.Assert(err, check.IsNil)
-	request, err := http.NewRequest("GET", "/users/info", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users/info", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK)
 	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
 	expected := apiUser{
@@ -1580,7 +1581,7 @@ func (s *AuthSuite) BenchmarkListUsersManyUsers(c *check.C) {
 		err = u.AddRole(u.Roles[0].Name, "someothervalue")
 		c.Assert(err, check.IsNil)
 	}
-	request, err := http.NewRequest("GET", "/users", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1614,7 +1615,7 @@ func (s *AuthSuite) TestUserListWithoutPermission(c *check.C) {
 		Context: permission.Context(permission.CtxGlobal, ""),
 	}
 	token := userWithPermission(c, perm1, perm2)
-	request, err := http.NewRequest("GET", "/users", nil)
+	request, err := http.NewRequest(http.MethodGet, "/users", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Add("Authorization", "bearer "+token.GetValue())
 	recorder := httptest.NewRecorder()
@@ -1631,47 +1632,56 @@ func (s *AuthSuite) TestUserListWithoutPermission(c *check.C) {
 }
 
 func (s *AuthSuite) TestUpdateTeam(c *check.C) {
-	err := auth.TeamService().Insert(authTypes.Team{Name: "team1"})
-	c.Assert(err, check.IsNil)
-	body := strings.NewReader("newname=team9000")
-	request, err := http.NewRequest("POST", "/teams/team1", body)
+	oldTeamName := "team1"
+	newTeamName := "team9000"
+	s.mockTeamService.OnFindByName = func(name string) (*authTypes.Team, error) {
+		c.Assert(name, check.Equals, oldTeamName)
+		return &authTypes.Team{Name: name}, nil
+	}
+	s.mockTeamService.OnCreate = func(name string, _ *authTypes.User) error {
+		c.Assert(name, check.Equals, newTeamName)
+		return nil
+	}
+	s.mockTeamService.OnRemove = func(name string) error {
+		c.Assert(name, check.Equals, oldTeamName)
+		return nil
+	}
+	body := strings.NewReader("newname=" + newTeamName)
+	request, err := http.NewRequest(http.MethodPost, "/teams/"+oldTeamName, body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusOK, check.Commentf("body: %q", recorder.Body.String()))
-	_, err = auth.GetTeam("team1")
-	c.Assert(err, check.Equals, authTypes.ErrTeamNotFound)
-	_, err = auth.GetTeam("team9000")
-	c.Assert(err, check.IsNil)
 }
 
 func (s *AuthSuite) TestUpdateTeamNotFound(c *check.C) {
+	s.mockTeamService.OnFindByName = func(_ string) (*authTypes.Team, error) {
+		return nil, authTypes.ErrTeamNotFound
+	}
 	body := strings.NewReader("newname=team9000")
-	request, err := http.NewRequest("POST", "/teams/team1", body)
+	request, err := http.NewRequest(http.MethodPost, "/teams/team1", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
 	c.Assert(recorder.Body.String(), check.Equals, authTypes.ErrTeamNotFound.Error()+"\n")
 }
 
 func (s *AuthSuite) TestUpdateTeamNewTeamInvalid(c *check.C) {
-	err := auth.TeamService().Insert(authTypes.Team{Name: "team1"})
-	c.Assert(err, check.IsNil)
+	s.mockTeamService.OnFindByName = func(_ string) (*authTypes.Team, error) {
+		return nil, authTypes.ErrInvalidTeamName
+	}
 	body := strings.NewReader("newname=")
-	request, err := http.NewRequest("POST", "/teams/team1", body)
+	request, err := http.NewRequest(http.MethodPost, "/teams/team1", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusBadRequest)
 	c.Assert(recorder.Body.String(), check.Equals, "new team name cannot be empty\n")
 }
@@ -1690,22 +1700,15 @@ func (s *AuthSuite) TestUpdateTeamCallFnsAndRollback(c *check.C) {
 			return fmt.Errorf("error in %q -> %q", oldName, newName)
 		},
 	}
-	err := auth.TeamService().Insert(authTypes.Team{Name: "team1"})
-	c.Assert(err, check.IsNil)
 	body := strings.NewReader("newname=team9000")
-	request, err := http.NewRequest("POST", "/teams/team1", body)
+	request, err := http.NewRequest(http.MethodPost, "/teams/team1", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusInternalServerError)
 	c.Assert(recorder.Body.String(), check.Equals, "error in \"team1\" -> \"team9000\"\n")
-	_, err = auth.GetTeam("team1")
-	c.Assert(err, check.IsNil)
-	_, err = auth.GetTeam("team9000")
-	c.Assert(err, check.Equals, authTypes.ErrTeamNotFound)
 	c.Assert(calls1, check.DeepEquals, [][]string{
 		{"team1", "team9000"},
 		{"team9000", "team1"},
@@ -1732,25 +1735,18 @@ func (s *AuthSuite) TestUpdateTeamErrorInRollback(c *check.C) {
 			return fmt.Errorf("error in %q -> %q", oldName, newName)
 		},
 	}
-	err := auth.TeamService().Insert(authTypes.Team{Name: "team1"})
-	c.Assert(err, check.IsNil)
 	body := strings.NewReader("newname=team9000")
-	request, err := http.NewRequest("POST", "/teams/team1", body)
+	request, err := http.NewRequest(http.MethodPost, "/teams/team1", body)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder := httptest.NewRecorder()
-	handler := RunServer(true)
 	buf := bytes.NewBuffer(nil)
 	log.SetLogger(log.NewWriterLogger(buf, true))
 	defer log.SetLogger(nil)
-	handler.ServeHTTP(recorder, request)
+	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusInternalServerError)
 	c.Assert(recorder.Body.String(), check.Equals, "error in \"team1\" -> \"team9000\"\n")
-	_, err = auth.GetTeam("team1")
-	c.Assert(err, check.IsNil)
-	_, err = auth.GetTeam("team9000")
-	c.Assert(err, check.Equals, authTypes.ErrTeamNotFound)
 	c.Assert(calls1, check.DeepEquals, [][]string{
 		{"team1", "team9000"},
 		{"team9000", "team1"},

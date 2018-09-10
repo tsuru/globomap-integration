@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/bind"
@@ -18,21 +19,28 @@ import (
 	"github.com/tsuru/tsuru/auth/native"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
+	"github.com/tsuru/tsuru/event"
+	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	"github.com/tsuru/tsuru/tsurutest"
+	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type BindSuite struct {
-	conn *db.Storage
-	user auth.User
-	team authTypes.Team
+	conn        *db.Storage
+	user        auth.User
+	team        authTypes.Team
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&BindSuite{})
@@ -44,7 +52,7 @@ func TestT(t *testing.T) {
 func (s *BindSuite) SetUpSuite(c *check.C) {
 	var err error
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_service_bind_test")
 	config.Set("routers:fake:type", "fake")
 	s.conn, err = db.Conn()
@@ -60,11 +68,32 @@ func (s *BindSuite) SetUpTest(c *check.C) {
 	err := s.user.Create()
 	c.Assert(err, check.IsNil)
 	s.team = authTypes.Team{Name: "metallica"}
-	err = auth.TeamService().Insert(s.team)
-	c.Assert(err, check.IsNil)
 	opts := pool.AddPoolOptions{Name: "pool1", Default: true, Provisioner: "fake"}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{s.team}, nil
+		},
+		OnFindByNames: func(names []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{s.team}, nil
+		},
+	}
+	plan := appTypes.Plan{
+		Name:     "default",
+		Default:  true,
+		CpuShare: 100,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{plan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &plan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
 }
 
 func (s *BindSuite) TearDownSuite(c *check.C) {
@@ -96,6 +125,17 @@ func (s *BindSuite) TestBindUnit(c *check.C) {
 	c.Assert(called, check.Equals, true)
 }
 
+func createEvt(c *check.C) *event.Event {
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: event.TargetTypeServiceInstance, Value: "x"},
+		Kind:     permission.PermServiceInstanceCreate,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: "my@user"},
+		Allowed:  event.Allowed(permission.PermServiceInstanceReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	return evt
+}
+
 func (s *BindSuite) TestBindAppFailsWhenEndpointIsDown(c *check.C) {
 	srvc := service.Service{Name: "mysql", Endpoint: map[string]string{"production": "wrong"}, Password: "s3cr3t", OwnerTeams: []string{s.team.Name}}
 	err := srvc.Create()
@@ -108,7 +148,8 @@ func (s *BindSuite) TestBindAppFailsWhenEndpointIsDown(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = a.AddUnits(1, "", nil)
 	c.Assert(err, check.IsNil)
-	err = instance.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.NotNil)
 }
 
@@ -128,7 +169,8 @@ func (s *BindSuite) TestBindAddsAppToTheServiceInstance(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = a.AddUnits(1, "", nil)
 	c.Assert(err, check.IsNil)
-	err = instance.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	s.conn.ServiceInstances().Find(bson.M{"name": instance.Name}).One(&instance)
 	c.Assert(instance.Apps, check.DeepEquals, []string{a.GetName()})
@@ -156,7 +198,8 @@ func (s *BindSuite) TestBindAppMultiUnits(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = a.AddUnits(2, "", nil)
 	c.Assert(err, check.IsNil)
-	err = instance.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	err = tsurutest.WaitCondition(2*time.Second, func() bool {
 		return atomic.LoadInt32(&calls) == 3
@@ -197,9 +240,10 @@ func (s *BindSuite) TestBindUnbindAppDuplicatedInstanceNames(c *check.C) {
 	a := &app.App{Name: "painkiller", Platform: "python", TeamOwner: s.team.Name}
 	err = app.CreateApp(a, &s.user)
 	c.Assert(err, check.IsNil)
-	err = instance1.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance1.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
-	err = instance2.BindApp(a, true, nil)
+	err = instance2.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	envs := a.Envs()
 	c.Assert(envs["SRV1"], check.DeepEquals, bind.EnvVar{
@@ -214,7 +258,7 @@ func (s *BindSuite) TestBindUnbindAppDuplicatedInstanceNames(c *check.C) {
 	})
 	dbI1, err := service.GetServiceInstance(instance1.ServiceName, instance1.Name)
 	c.Assert(err, check.IsNil)
-	err = dbI1.UnbindApp(a, true, nil)
+	err = dbI1.UnbindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	envs = a.Envs()
 	c.Assert(envs["SRV1"], check.DeepEquals, bind.EnvVar{})
@@ -245,7 +289,8 @@ func (s *BindSuite) TestBindReturnConflictIfTheAppIsAlreadyBound(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = a.AddUnits(1, "", nil)
 	c.Assert(err, check.IsNil)
-	err = instance.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.Equals, service.ErrAppAlreadyBound)
 }
 
@@ -263,7 +308,8 @@ func (s *BindSuite) TestBindAppWithNoUnits(c *check.C) {
 	a := &app.App{Name: "painkiller", Platform: "python", TeamOwner: s.team.Name}
 	err = app.CreateApp(a, &s.user)
 	c.Assert(err, check.IsNil)
-	err = instance.BindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.BindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	envs := a.Envs()
 	c.Assert(envs["DATABASE_USER"], check.DeepEquals, bind.EnvVar{
@@ -347,7 +393,8 @@ func (s *BindSuite) TestUnbindMultiUnits(c *check.C) {
 	}
 	err = s.conn.ServiceInstances().Insert(instance)
 	c.Assert(err, check.IsNil)
-	err = instance.UnbindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.UnbindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	err = tsurutest.WaitCondition(1e9, func() bool {
 		return atomic.LoadInt32(&calls) > 1
@@ -383,7 +430,8 @@ func (s *BindSuite) TestUnbindRemovesAppFromServiceInstance(c *check.C) {
 		ShouldRestart: true,
 	})
 	c.Assert(err, check.IsNil)
-	err = instance.UnbindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.UnbindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	s.conn.ServiceInstances().Find(bson.M{"name": instance.Name}).One(&instance)
 	c.Assert(instance.Apps, check.DeepEquals, []string{})
@@ -423,7 +471,8 @@ func (s *BindSuite) TestUnbindCallsTheUnbindMethodFromAPI(c *check.C) {
 	}
 	err = s.conn.ServiceInstances().Insert(instance)
 	c.Assert(err, check.IsNil)
-	err = instance.UnbindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.UnbindApp(a, true, nil, evt, "")
 	c.Assert(err, check.IsNil)
 	err = tsurutest.WaitCondition(1e9, func() bool {
 		return atomic.LoadInt32(&called) > 0
@@ -445,6 +494,7 @@ func (s *BindSuite) TestUnbindReturnsPreconditionFailedIfTheAppIsNotBoundToTheIn
 	a := &app.App{Name: "painkiller", Platform: "python", TeamOwner: s.team.Name}
 	err = app.CreateApp(a, &s.user)
 	c.Assert(err, check.IsNil)
-	err = instance.UnbindApp(a, true, nil)
+	evt := createEvt(c)
+	err = instance.UnbindApp(a, true, nil, evt, "")
 	c.Assert(err, check.Equals, service.ErrAppNotBound)
 }

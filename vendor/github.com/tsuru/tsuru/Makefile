@@ -13,7 +13,7 @@ LINTER_ARGS_SLOW = \
 	--disable=structcheck --disable=gotype --disable=gotypex --deadline=60m --tests
 
 LINTER_ARGS = \
-	$(LINTER_ARGS_SLOW) --disable=staticcheck --disable=unused --disable=gosimple
+	$(LINTER_ARGS_SLOW) --disable=staticcheck --disable=unused --disable=gosimple --disable=gosec
 
 
 .PHONY: all check-path test race docs install
@@ -46,6 +46,10 @@ _tsurud_dry:
 	rm -f tsurud
 
 test: _go_test _tsurud_dry
+
+leakdetector:
+	go list ./... | xargs -I {} bash -c 'pushd $(GOPATH)/src/{}; go test --tags leakdetector; popd' | tee /tmp/leaktest.log
+	(cat /tmp/leaktest.log | grep LEAK) && exit 1 || exit 0
 
 lint: metalint
 	misc/check-contributors.sh
@@ -136,8 +140,9 @@ run-tsurud-token: $(TSR_BIN)
 	$(TSR_BIN) token
 
 test-int:
-	go get github.com/tsuru/platforms/...
+	go get -d github.com/tsuru/platforms/...
 	TSURU_INTEGRATION_examplesdir="${GOPATH}/src/github.com/tsuru/platforms/examples" \
 	TSURU_INTEGRATION_enabled=1 TSURU_INTEGRATION_verbose=2 TSURU_INTEGRATION_maxconcurrency=4 \
 	TSURU_INTEGRATION_platforms="python" \
+	TSURU_INTEGRATION_provisioners="docker" \
 	go test -v -timeout 120m github.com/tsuru/tsuru/integration

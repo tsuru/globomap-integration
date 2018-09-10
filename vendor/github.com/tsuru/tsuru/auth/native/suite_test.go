@@ -36,7 +36,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("auth:token-expire-days", 2)
 	config.Set("auth:hash-cost", bcrypt.MinCost)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_auth_native_test")
 	var err error
 	s.server, err = authtest.NewSMTPServer()
@@ -54,8 +54,6 @@ func (s *S) SetUpTest(c *check.C) {
 	s.token, err = nativeScheme.Login(map[string]string{"email": s.user.Email, "password": "123456"})
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "cobrateam"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 }
 
 func (s *S) TearDownTest(c *check.C) {

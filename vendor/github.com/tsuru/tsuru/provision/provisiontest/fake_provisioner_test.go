@@ -11,6 +11,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/bind"
@@ -22,7 +23,6 @@ import (
 	"github.com/tsuru/tsuru/quota"
 	"github.com/tsuru/tsuru/router/routertest"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) {
@@ -36,7 +36,7 @@ var _ = check.Suite(&S{})
 func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "fake_provision_tests_s")
 }
 
@@ -1284,8 +1284,16 @@ func (s *S) TestFakeProvisionerRebalanceNodes(c *check.C) {
 	p.AddNode(provision.AddNodeOptions{Address: "mynode2", Pool: "mypool"})
 	p.AddUnitsToNode(app, 4, "web", nil, "mynode1")
 	w := bytes.Buffer{}
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "global"},
+		Kind:     permission.PermNodeUpdateRebalance,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: "me@me.com"},
+		Allowed:  event.Allowed(permission.PermNode),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(&w)
 	isRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         &w,
+		Event:          evt,
 		Pool:           "mypool",
 		MetadataFilter: map[string]string{"m1": "x1"},
 	})
@@ -1316,8 +1324,16 @@ func (s *S) TestFakeProvisionerRebalanceNodesMultiplePools(c *check.C) {
 	p.AddUnitsToNode(app1, 4, "web", nil, "mynode1")
 	p.AddUnitsToNode(app2, 4, "web", nil, "mynode3")
 	w := bytes.Buffer{}
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "global"},
+		Kind:     permission.PermNodeUpdateRebalance,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: "me@me.com"},
+		Allowed:  event.Allowed(permission.PermNode),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(&w)
 	isRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer: &w,
+		Event: evt,
 	})
 	c.Assert(err, check.IsNil)
 	c.Assert(isRebalance, check.Equals, true)
@@ -1347,8 +1363,16 @@ func (s *S) TestFakeProvisionerRebalanceNodesBalanced(c *check.C) {
 	p.AddUnitsToNode(app, 2, "web", nil, "mynode1")
 	p.AddUnitsToNode(app, 2, "web", nil, "mynode2")
 	w := bytes.Buffer{}
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "global"},
+		Kind:     permission.PermNodeUpdateRebalance,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: "me@me.com"},
+		Allowed:  event.Allowed(permission.PermNode),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(&w)
 	isRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         &w,
+		Event:          evt,
 		MetadataFilter: map[string]string{"pool": "mypool"},
 	})
 	c.Assert(err, check.IsNil)

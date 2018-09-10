@@ -5,10 +5,11 @@
 package image
 
 import (
+	"fmt"
 	"sort"
 
+	"github.com/globalsign/mgo"
 	"github.com/tsuru/config"
-
 	"github.com/tsuru/tsuru/provision"
 	"gopkg.in/check.v1"
 )
@@ -124,10 +125,14 @@ func (s *S) TestDeleteAllAppImageNames(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = AppendAppImageName("myapp", "tsuru/app-myapp:v2")
 	c.Assert(err, check.IsNil)
+	err = AppendAppBuilderImageName("myapp", "tsuru/app-myapp:v1-builder")
+	c.Assert(err, check.IsNil)
 	err = DeleteAllAppImageNames("myapp")
 	c.Assert(err, check.IsNil)
 	_, err = ListAppImages("myapp")
-	c.Assert(err, check.ErrorMatches, "not found")
+	c.Assert(err, check.Equals, mgo.ErrNotFound)
+	_, err = ListAppBuilderImages("myapp")
+	c.Assert(err, check.Equals, mgo.ErrNotFound)
 }
 
 func (s *S) TestDeleteAllAppImageNamesRemovesCustomData(c *check.C) {
@@ -152,7 +157,7 @@ func (s *S) TestDeleteAllAppImageNamesRemovesCustomDataWithoutImages(c *check.C)
 	err := SaveImageCustomData(imgName, data)
 	c.Assert(err, check.IsNil)
 	err = DeleteAllAppImageNames("myapp")
-	c.Assert(err, check.ErrorMatches, "not found")
+	c.Assert(err, check.IsNil)
 	yamlData, err := GetImageTsuruYamlData(imgName)
 	c.Assert(err, check.IsNil)
 	c.Assert(yamlData, check.DeepEquals, provision.TsuruYamlData{})
@@ -191,11 +196,18 @@ func (s *S) TestPullAppImageNames(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = AppendAppImageName("myapp", "tsuru/app-myapp:v3")
 	c.Assert(err, check.IsNil)
+	err = AppendAppBuilderImageName("myapp", "tsuru/app-myapp:v1-builder")
+	c.Assert(err, check.IsNil)
 	err = PullAppImageNames("myapp", []string{"tsuru/app-myapp:v1", "tsuru/app-myapp:v3"})
 	c.Assert(err, check.IsNil)
 	images, err := ListAppImages("myapp")
 	c.Assert(err, check.IsNil)
 	c.Assert(images, check.DeepEquals, []string{"tsuru/app-myapp:v2"})
+	err = PullAppImageNames("myapp", []string{"tsuru/app-myapp:v1-builder"})
+	c.Assert(err, check.IsNil)
+	images, err = ListAppBuilderImages("myapp")
+	c.Assert(err, check.IsNil)
+	c.Assert(images, check.DeepEquals, []string{})
 }
 
 func (s *S) TestPullAppImageNamesRemovesCustomData(c *check.C) {
@@ -484,4 +496,32 @@ func (s *S) TestInvalidVersionError(c *check.C) {
 func (s *S) TestImageNotFoundError(c *check.C) {
 	var err error = &ImageNotFoundErr{App: "otherapp", Image: "v9"}
 	c.Assert(err.Error(), check.Equals, "Image v9 not found in app \"otherapp\"")
+}
+
+func (s *S) TestListAllAppImages(c *check.C) {
+	err := AppendAppImageName("myapp", "tsuru/app-myapp:v1")
+	c.Assert(err, check.IsNil)
+	err = AppendAppImageName("myapp", "tsuru/app-myapp:v2")
+	c.Assert(err, check.IsNil)
+	for i := 0; i < 12; i++ {
+		err = AppendAppImageName("myapp2", fmt.Sprintf("tsuru/app-myapp2:v%d", i+1))
+		c.Assert(err, check.IsNil)
+	}
+	for i := 0; i < 12; i++ {
+		err = AppendAppImageName("myapp2", fmt.Sprintf("tsuru/app-myapp2:v%d", i+1))
+		c.Assert(err, check.IsNil)
+		err = AppendAppBuilderImageName("myapp2", fmt.Sprintf("tsuru/app-myapp2-builder:v%d", i+1))
+		c.Assert(err, check.IsNil)
+	}
+	images, err := ListAllAppImages()
+	c.Assert(err, check.IsNil)
+	c.Assert(images, check.DeepEquals, map[string]AllAppImages{
+		"myapp": {
+			DeployImages: []string{"tsuru/app-myapp:v1", "tsuru/app-myapp:v2"},
+		},
+		"myapp2": {
+			DeployImages:  []string{"tsuru/app-myapp2:v1", "tsuru/app-myapp2:v2", "tsuru/app-myapp2:v3", "tsuru/app-myapp2:v4", "tsuru/app-myapp2:v5", "tsuru/app-myapp2:v6", "tsuru/app-myapp2:v7", "tsuru/app-myapp2:v8", "tsuru/app-myapp2:v9", "tsuru/app-myapp2:v10", "tsuru/app-myapp2:v11", "tsuru/app-myapp2:v12"},
+			BuilderImages: []string{"tsuru/app-myapp2-builder:v1", "tsuru/app-myapp2-builder:v2", "tsuru/app-myapp2-builder:v3", "tsuru/app-myapp2-builder:v4", "tsuru/app-myapp2-builder:v5", "tsuru/app-myapp2-builder:v6", "tsuru/app-myapp2-builder:v7", "tsuru/app-myapp2-builder:v8", "tsuru/app-myapp2-builder:v9", "tsuru/app-myapp2-builder:v10", "tsuru/app-myapp2-builder:v11", "tsuru/app-myapp2-builder:v12"},
+		},
+	})
 }

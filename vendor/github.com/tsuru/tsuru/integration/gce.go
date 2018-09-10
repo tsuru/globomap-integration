@@ -5,6 +5,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
@@ -12,7 +13,6 @@ import (
 	"os"
 	"time"
 
-	"golang.org/x/net/context"
 	"google.golang.org/api/container/v1"
 	"google.golang.org/api/option"
 )
@@ -108,6 +108,9 @@ func (g *GceClusterManager) Delete() *Result {
 	if g.env.Get("clustername") != "" {
 		return &Result{ExitCode: 0}
 	}
+	if g.client == nil || g.cluster == nil {
+		return &Result{ExitCode: 0}
+	}
 	if g.env.VerboseLevel() > 0 {
 		fmt.Fprintf(safeStdout, "[gce] deleting cluster %s in zone %s\n", g.clusterName, g.zone)
 	}
@@ -167,16 +170,16 @@ func (g *GceClusterManager) credentials() (map[string]string, error) {
 	return credentials, nil
 }
 
-func (g *GceClusterManager) UpdateParams() []string {
+func (g *GceClusterManager) UpdateParams() ([]string, bool) {
 	address := fmt.Sprintf("https://%s", g.IP())
 	credentials, err := g.credentials()
 	if err != nil {
-		return []string{}
+		return []string{}, false
 	}
 	return []string{
 		"--addr", address,
 		"--custom", "username=" + credentials["username"],
 		"--custom", "password=" + credentials["password"],
 		"--cacert", credentials["certificateFilename"],
-	}
+	}, false
 }

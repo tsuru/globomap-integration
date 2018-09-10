@@ -13,15 +13,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/app/image"
 	"github.com/tsuru/tsuru/auth"
+	"github.com/tsuru/tsuru/builder"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func insertDeploysAsEvents(data []DeployData, c *check.C) []*event.Event {
@@ -133,16 +134,20 @@ func (s *S) TestListAppDeploysWithImage(c *check.C) {
 }
 
 func (s *S) TestListFilteredDeploys(c *check.C) {
-	team := authTypes.Team{Name: "team"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
 	a := App{
 		Name:      "g1",
 		Platform:  "zend",
 		TeamOwner: s.team.Name,
 	}
-	err = CreateApp(&a, s.user)
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
+	team := authTypes.Team{Name: "team"}
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{team, {Name: s.team.Name}}, nil
+	}
+	s.mockService.Team.OnFindByName = func(_ string) (*authTypes.Team, error) {
+		return &team, nil
+	}
 	a = App{
 		Name:      "ge",
 		Platform:  "zend",
@@ -248,7 +253,73 @@ func (s *S) TestGetDeployInvalidHex(c *check.C) {
 	c.Assert(lastDeploy, check.IsNil)
 }
 
-func (s *S) TestDeployApp(c *check.C) {
+func (s *S) TestBuildApp(c *check.C) {
+	s.builder.OnBuild = func(p provision.BuilderDeploy, app provision.App, evt *event.Event, opts *builder.BuildOpts) (string, error) {
+		return "registry.somewhere/" + s.team.Name + "/app-some-app:v1-builder", nil
+	}
+	a := App{
+		Name:      "some-app",
+		Platform:  "django",
+		Teams:     []string{s.team.Name},
+		TeamOwner: s.team.Name,
+		Router:    "fake",
+	}
+	err := CreateApp(&a, s.user)
+	c.Assert(err, check.IsNil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDeploy,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	buf := strings.NewReader("my file")
+	imgID, err := Build(DeployOptions{
+		App:          &a,
+		OutputStream: ioutil.Discard,
+		File:         ioutil.NopCloser(buf),
+		FileSize:     int64(buf.Len()),
+		Event:        evt,
+	})
+	c.Assert(err, check.IsNil)
+	c.Assert(imgID, check.Equals, "registry.somewhere/"+a.TeamOwner+"/app-some-app:v1-builder")
+}
+
+func (s *S) TestDeployAppUpload(c *check.C) {
+	a := App{
+		Name:      "some-app",
+		Platform:  "django",
+		Teams:     []string{s.team.Name},
+		TeamOwner: s.team.Name,
+		Router:    "fake",
+	}
+	err := CreateApp(&a, s.user)
+	c.Assert(err, check.IsNil)
+	buf := strings.NewReader("my file")
+	writer := &bytes.Buffer{}
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDeploy,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	_, err = Deploy(DeployOptions{
+		App:          &a,
+		File:         ioutil.NopCloser(buf),
+		FileSize:     int64(buf.Len()),
+		OutputStream: writer,
+		Event:        evt,
+	})
+	c.Assert(err, check.IsNil)
+	logs := writer.String()
+	c.Assert(logs, check.Equals, "Builder deploy called")
+	var updatedApp App
+	s.conn.Apps().Find(bson.M{"name": "some-app"}).One(&updatedApp)
+	c.Assert(updatedApp.UpdatePlatform, check.Equals, false)
+}
+
+func (s *S) TestDeployAppImage(c *check.C) {
 	a := App{
 		Name:      "some-app",
 		Platform:  "django",
@@ -315,6 +386,7 @@ func (s *S) TestDeployAppWithUpdatedPlatform(c *check.C) {
 	s.conn.Apps().Find(bson.M{"name": "some-app"}).One(&updatedApp)
 	c.Assert(updatedApp.UpdatePlatform, check.Equals, false)
 }
+
 func (s *S) TestDeployAppImageWithUpdatedPlatform(c *check.C) {
 	a := App{
 		Name:           "some-app",
@@ -371,8 +443,7 @@ func (s *S) TestDeployAppWithoutImageOrPlatform(c *check.C) {
 		Commit: "1ee1f1084927b3a5db59c9033bc5c4abefb7b93c",
 		Event:  evt,
 	})
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "can't deploy app without platform, if it's not an image or rollback")
+	c.Assert(err, check.ErrorMatches, "(?s).*can't deploy app without platform, if it's not an image or rollback.*")
 }
 
 func (s *S) TestDeployAppIncrementDeployNumber(c *check.C) {
@@ -562,6 +633,36 @@ func (s *S) TestDeployAppSaveDeployErrorData(c *check.C) {
 		Event:        evt,
 	})
 	c.Assert(err, check.NotNil)
+}
+
+func (s *S) TestDeployAppShowLogLinesOnStartupError(c *check.C) {
+	s.provisioner.PrepareFailure("Deploy", provision.ErrUnitStartup{Err: errors.New("deploy error")})
+	a := App{
+		Name:      "testerrorapp",
+		Platform:  "zend",
+		Teams:     []string{s.team.Name},
+		TeamOwner: s.team.Name,
+	}
+	err := CreateApp(&a, s.user)
+	c.Assert(err, check.IsNil)
+	err = a.Log("msg1", "src1", "unit1")
+	c.Assert(err, check.IsNil)
+	writer := &bytes.Buffer{}
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDeploy,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	_, err = Deploy(DeployOptions{
+		App:          &a,
+		Image:        "myimage",
+		Commit:       "1ee1f1084927b3a5db59c9033bc5c4abefb7b93c",
+		OutputStream: writer,
+		Event:        evt,
+	})
+	c.Assert(err, check.ErrorMatches, `(?s).*---- ERROR during deploy: ----.*deploy error.*---- Last 1 log messages: ----.*\[src1\]\[unit1\]: msg1.*`)
 }
 
 func (s *S) TestValidateOrigin(c *check.C) {

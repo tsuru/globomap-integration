@@ -5,33 +5,35 @@
 package api
 
 import (
+	stdcontext "context"
+	"math/rand"
 	"net/http"
 	"testing"
-
-	"golang.org/x/crypto/bcrypt"
-
-	stdcontext "context"
+	"time"
 
 	"github.com/tsuru/config"
-
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/auth/native"
 	"github.com/tsuru/tsuru/autoscale"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
+	"github.com/tsuru/tsuru/healer"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/permission/permissiontest"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
+	"github.com/tsuru/tsuru/queue"
 	"github.com/tsuru/tsuru/repository"
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
 )
 
@@ -46,6 +48,11 @@ type S struct {
 	provisioner *provisiontest.FakeProvisioner
 	Pool        string
 	testServer  http.Handler
+	mockService struct {
+		Team     *authTypes.MockTeamService
+		Plan     *appTypes.MockPlanService
+		Platform *appTypes.MockPlatformService
+	}
 }
 
 var _ = check.Suite(&S{})
@@ -84,18 +91,17 @@ func (s *S) createUserAndTeam(c *check.C) {
 	s.user, err = s.token.User()
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "tsuruteam"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 }
 
 var nativeScheme = auth.ManagedScheme(native.NativeScheme{})
 
 func (s *S) SetUpSuite(c *check.C) {
+	rand.Seed(time.Now().UnixNano())
 	err := config.ReadConfigFile("testdata/config.yaml")
 	c.Assert(err, check.IsNil)
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_api_base_test")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	s.testServer = RunServer(true)
@@ -119,17 +125,50 @@ func (s *S) SetUpTest(c *check.C) {
 	s.provisioner.Reset()
 	provision.DefaultProvisioner = "fake"
 	app.AuthScheme = nativeScheme
-	p := appTypes.Platform{Name: "zend"}
-	app.PlatformService().Insert(p)
-	app.PlatformService().Insert(appTypes.Platform{Name: "heimerdinger"})
 	s.Pool = "test1"
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err = pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
 	repository.Manager().CreateUser(s.user.Email)
+	s.setupMocks()
+}
+
+func (s *S) setupMocks() {
+	s.mockService.Team = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+		OnFindByName: func(_ string) (*authTypes.Team, error) {
+			return &authTypes.Team{Name: s.team.Name}, nil
+		},
+		OnFindByNames: func(_ []string) ([]authTypes.Team, error) {
+			return []authTypes.Team{{Name: s.team.Name}}, nil
+		},
+	}
+	defaultPlan := appTypes.Plan{
+		Name:     "default-plan",
+		Memory:   1024,
+		Swap:     1024,
+		CpuShare: 100,
+		Default:  true,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{defaultPlan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &defaultPlan, nil
+		},
+	}
+	s.mockService.Platform = &appTypes.MockPlatformService{}
+
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
+	servicemanager.Platform = s.mockService.Platform
 }
 
 func (s *S) TearDownTest(c *check.C) {
+	app.GetAppRouterUpdater().Shutdown(stdcontext.Background())
 	cfg, _ := autoscale.CurrentConfig()
 	if cfg != nil {
 		cfg.Shutdown(stdcontext.Background())
@@ -137,6 +176,10 @@ func (s *S) TearDownTest(c *check.C) {
 	s.provisioner.Reset()
 	s.conn.Close()
 	s.logConn.Close()
+	healer.HealerInstance = nil
+	queue.ResetQueue()
+	config.Unset("listen")
+	config.Unset("tls:listen")
 }
 
 func (s *S) TearDownSuite(c *check.C) {

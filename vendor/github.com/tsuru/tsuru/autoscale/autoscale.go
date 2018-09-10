@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/globalsign/mgo"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/api/shutdown"
@@ -23,7 +24,6 @@ import (
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/safe"
-	"gopkg.in/mgo.v2"
 )
 
 const (
@@ -312,11 +312,15 @@ func (a *Config) rebalanceIfNeeded(evt *event.Event, prov provision.NodeProvisio
 		return nil
 	}
 	buf := safe.NewBuffer(nil)
-	writer := io.MultiWriter(buf, evt)
+	oldWriter := evt.GetLogWriter()
+	if oldWriter != nil {
+		evt.SetLogWriter(io.MultiWriter(oldWriter, buf))
+		defer evt.SetLogWriter(oldWriter)
+	}
 	shouldRebalance, err := rebalanceProv.RebalanceNodes(provision.RebalanceNodesOptions{
-		Force:  len(customData.Nodes) > 0,
-		Pool:   pool,
-		Writer: writer,
+		Force: len(customData.Nodes) > 0,
+		Pool:  pool,
+		Event: evt,
 	})
 	customData.Result.ToRebalance = shouldRebalance
 	if err != nil {
@@ -356,17 +360,18 @@ func (a *Config) addNode(evt *event.Event, prov provision.NodeProvisioner, pool 
 	if err != nil {
 		return nil, err
 	}
-	_, hasIaas := metadata["iaas"]
+	_, hasIaas := metadata[provision.IaaSMetadataName]
 	if !hasIaas {
 		return nil, errors.Errorf("no IaaS information in nodes metadata: %#v", metadata)
 	}
-	machine, err := iaas.CreateMachineForIaaS(metadata["iaas"], metadata)
+	machine, err := iaas.CreateMachineForIaaS(metadata[provision.IaaSMetadataName], metadata)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to create machine")
 	}
 	newAddr := machine.FormatNodeAddress()
 	evt.Logf("new machine created: %s - Waiting for docker to start...", newAddr)
 	createOpts := provision.AddNodeOptions{
+		IaaSID:     machine.Id,
 		Address:    newAddr,
 		Pool:       pool,
 		Metadata:   metadata,
@@ -391,7 +396,7 @@ func (a *Config) removeMultipleNodes(evt *event.Event, prov provision.NodeProvis
 	nodeAddrs := make([]string, len(chosenNodes))
 	nodeHosts := make([]string, len(chosenNodes))
 	for i, node := range chosenNodes {
-		_, hasIaas := node.Metadata["iaas"]
+		_, hasIaas := node.Metadata[provision.IaaSMetadataName]
 		if !hasIaas {
 			return errors.Errorf("no IaaS information in node (%s) metadata: %#v", node.Address, node.Metadata)
 		}
@@ -415,7 +420,7 @@ func (a *Config) removeMultipleNodes(evt *event.Event, prov provision.NodeProvis
 				errCh <- errors.Wrapf(err, "unable to unregister node %s for removal", node.Address)
 				return
 			}
-			m, err := iaas.FindMachineByIdOrAddress(node.Metadata["iaas-id"], net.URLToHost(node.Address))
+			m, err := iaas.FindMachineByIdOrAddress(node.IaaSID, net.URLToHost(node.Address))
 			if err != nil {
 				evt.Logf("unable to find machine for removal in iaas: %s", err)
 				return
@@ -471,7 +476,7 @@ func canRemoveNode(chosenNode provision.Node, nodes []provision.Node) (bool, err
 		return true, nil
 	}
 	hasMetadata := func(n provision.Node, meta map[string]string) bool {
-		metadata := n.Metadata()
+		metadata := n.MetadataNoPrefix()
 		for k, v := range meta {
 			if metadata[k] != v {
 				return false

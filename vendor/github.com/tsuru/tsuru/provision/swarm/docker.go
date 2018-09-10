@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app/image"
+	tsuruErrors "github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/log"
 	tsuruNet "github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
@@ -136,7 +137,7 @@ func taskStatusMsg(status swarm.TaskStatus) string {
 	return fmt.Sprintf("state: %q, err: %q, msg: %q, container exit: %d", status.State, status.Err, status.Message, status.ContainerStatus.ExitCode)
 }
 
-func waitForTasks(client *clusterClient, serviceID string, wantedState swarm.TaskState) ([]swarm.Task, error) {
+func waitForTasks(client *clusterClient, serviceID string, wantedStates ...swarm.TaskState) ([]swarm.Task, error) {
 	timeout := time.After(waitForTaskTimeout)
 	for {
 		tasks, err := client.ListTasks(docker.ListTasksOptions{
@@ -148,8 +149,15 @@ func waitForTasks(client *clusterClient, serviceID string, wantedState swarm.Tas
 			return nil, errors.WithStack(err)
 		}
 		var inStateCount int
+	eachTask:
 		for _, t := range tasks {
-			if t.Status.State == wantedState || t.Status.State == t.DesiredState {
+			for _, wanted := range wantedStates {
+				if t.Status.State == wanted {
+					inStateCount++
+					continue eachTask
+				}
+			}
+			if t.Status.State == t.DesiredState {
 				inStateCount++
 			}
 			if t.Status.State == swarm.TaskStateFailed || t.Status.State == swarm.TaskStateRejected {
@@ -167,10 +175,8 @@ func waitForTasks(client *clusterClient, serviceID string, wantedState swarm.Tas
 	}
 }
 
-func commitPushBuildImage(client *clusterClient, img, contID string, app provision.App) (string, error) {
-	parts := strings.Split(img, ":")
-	repository := strings.Join(parts[:len(parts)-1], ":")
-	tag := parts[len(parts)-1]
+func commitPushBuildImage(client *docker.Client, img, contID string, app provision.App) (string, error) {
+	repository, tag := image.SplitImageName(img)
 	_, err := client.CommitContainer(docker.CommitContainerOptions{
 		Container:  contID,
 		Repository: repository,
@@ -179,9 +185,23 @@ func commitPushBuildImage(client *clusterClient, img, contID string, app provisi
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
-	err = dockercommon.PushImage(client, repository, tag, dockercommon.RegistryAuthConfig())
-	if err != nil {
-		return "", err
+	tags := []string{tag}
+	if tag != "latest" {
+		tags = append(tags, "latest")
+		err = client.TagImage(fmt.Sprintf("%s:%s", repository, tag), docker.TagImageOptions{
+			Repo:  repository,
+			Tag:   "latest",
+			Force: true,
+		})
+		if err != nil {
+			return "", errors.WithStack(err)
+		}
+	}
+	for _, tag := range tags {
+		err = dockercommon.PushImage(client, repository, tag, dockercommon.RegistryAuthConfig())
+		if err != nil {
+			return "", err
+		}
 	}
 	return img, nil
 }
@@ -199,10 +219,8 @@ type tsuruServiceOpts struct {
 	process       string
 	image         string
 	buildImage    string
-	baseSpec      *swarm.ServiceSpec
 	isDeploy      bool
 	isIsolatedRun bool
-	constraints   []string
 	labels        *provision.LabelSet
 	replicas      int
 }
@@ -288,16 +306,13 @@ func serviceSpecForApp(opts tsuruServiceOpts) (*swarm.ServiceSpec, error) {
 		srvName = fmt.Sprintf("%sisolated-run", srvName)
 	}
 	uReplicas := uint64(opts.replicas)
-	user, _ := dockercommon.UserForContainer()
-	opts.constraints = append(opts.constraints, toNodePoolConstraint(opts.app.GetPool(), true))
 	spec := swarm.ServiceSpec{
 		TaskTemplate: swarm.TaskSpec{
-			ContainerSpec: swarm.ContainerSpec{
+			ContainerSpec: &swarm.ContainerSpec{
 				Image:       opts.image,
 				Env:         envs,
 				Labels:      opts.labels.ToLabels(),
 				Command:     cmds,
-				User:        user,
 				Healthcheck: healthConfig,
 				Mounts:      mounts,
 			},
@@ -306,11 +321,12 @@ func serviceSpecForApp(opts tsuruServiceOpts) (*swarm.ServiceSpec, error) {
 				Condition: swarm.RestartPolicyConditionAny,
 			},
 			Placement: &swarm.Placement{
-				Constraints: opts.constraints,
+				Constraints: []string{
+					toNodePoolConstraint(opts.app.GetPool(), true),
+				},
 			},
 			LogDriver: logDriver,
 		},
-		Networks:     networks,
 		EndpointSpec: endpointSpec,
 		Annotations: swarm.Annotations{
 			Name:   srvName,
@@ -472,7 +488,7 @@ func serviceSpecForNodeContainer(config *nodecontainer.NodeContainerConfig, pool
 		},
 		Mode: swarm.ServiceMode{Global: &swarm.GlobalService{}},
 		TaskTemplate: swarm.TaskSpec{
-			ContainerSpec: swarm.ContainerSpec{
+			ContainerSpec: &swarm.ContainerSpec{
 				Image:       config.Image(),
 				Labels:      labels,
 				Command:     config.Config.Entrypoint,
@@ -487,16 +503,21 @@ func serviceSpecForNodeContainer(config *nodecontainer.NodeContainerConfig, pool
 			Placement: &swarm.Placement{Constraints: constraints},
 		},
 	}
+	if config.HostConfig.NetworkMode != "" {
+		service.TaskTemplate.Networks = []swarm.NetworkAttachmentConfig{
+			{Target: config.HostConfig.NetworkMode},
+		}
+	}
 	return service, nil
 }
 
-func upsertService(spec *swarm.ServiceSpec, client *clusterClient, placementOnly bool) (bool, error) {
+func upsertService(spec swarm.ServiceSpec, client *clusterClient, placementOnly bool) (bool, error) {
 	currService, err := client.InspectService(spec.Name)
 	if err != nil {
 		if _, ok := err.(*docker.NoSuchService); !ok {
 			return false, errors.WithStack(err)
 		}
-		opts := docker.CreateServiceOptions{ServiceSpec: *spec}
+		opts := docker.CreateServiceOptions{ServiceSpec: spec}
 		_, errCreate := client.CreateService(opts)
 		if errCreate != nil {
 			return false, errors.WithStack(errCreate)
@@ -505,10 +526,10 @@ func upsertService(spec *swarm.ServiceSpec, client *clusterClient, placementOnly
 	}
 	if placementOnly {
 		currService.Spec.TaskTemplate.Placement = spec.TaskTemplate.Placement
-		spec = &currService.Spec
+		spec = currService.Spec
 	}
 	opts := docker.UpdateServiceOptions{
-		ServiceSpec: *spec,
+		ServiceSpec: spec,
 		Version:     currService.Version.Index,
 	}
 	return false, errors.WithStack(client.UpdateService(currService.ID, opts))
@@ -529,33 +550,30 @@ func toLabelSelectors(m map[string]string) []string {
 	return selectors
 }
 
-func (p *swarmProvisioner) cleanImageInNodes(imgName string) {
+func (p *swarmProvisioner) cleanImageInNodes(imgName string) error {
 	nodes, err := p.ListNodes(nil)
 	if err != nil {
-		log.Errorf("ignored error removing image %q: %s. image kept on list to retry later.",
-			imgName, errors.WithStack(err))
-		return
+		return err
 	}
+	multi := tsuruErrors.NewMultiError()
 	for _, n := range nodes {
 		nodeWrapper := n.(*swarmNodeWrapper)
 		tls, err := tlsConfigForCluster(nodeWrapper.client.Cluster)
 		if err != nil {
-			log.Errorf("ignored error removing image %q: %s. image kept on list to retry later.",
-				imgName, errors.WithStack(err))
+			multi.Add(err)
 			continue
 		}
 		client, err := newClient(n.Address(), tls)
 		if err != nil {
-			log.Errorf("ignored error removing image %q: %s. image kept on list to retry later.",
-				imgName, errors.WithStack(err))
+			multi.Add(err)
 			continue
 		}
 		err = client.RemoveImage(imgName)
 		if err != nil && err != docker.ErrNoSuchImage {
-			log.Errorf("ignored error removing image %q: %s. image kept on list to retry later.",
-				imgName, errors.WithStack(err))
+			multi.Add(errors.WithStack(err))
 		}
 	}
+	return multi.ToError()
 }
 
 func toNodePoolConstraint(pool string, equal bool) string {

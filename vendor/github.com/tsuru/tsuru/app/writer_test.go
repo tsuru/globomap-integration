@@ -7,11 +7,11 @@ package app
 import (
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type WriterSuite struct {
@@ -23,7 +23,7 @@ var _ = check.Suite(&WriterSuite{})
 func (s *WriterSuite) SetUpSuite(c *check.C) {
 	var err error
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_api_writer_test")
 	s.conn, err = db.Conn()
 	c.Assert(err, check.IsNil)

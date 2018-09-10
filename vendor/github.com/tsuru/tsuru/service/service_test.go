@@ -10,11 +10,10 @@ import (
 	"net/http/httptest"
 	"sort"
 
-	"github.com/tsuru/tsuru/auth"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 
+	"github.com/globalsign/mgo/bson"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) createService() {
@@ -246,8 +245,6 @@ func (s *S) TestGetServicesByOwnerTeamsAndServices(c *check.C) {
 	err := srvc.Create()
 	c.Assert(err, check.IsNil)
 	otherTeam := authTypes.Team{Name: "other-team"}
-	err = auth.TeamService().Insert(otherTeam)
-	c.Assert(err, check.IsNil)
 	srvc2 := Service{
 		Name:       "mysql",
 		OwnerTeams: []string{otherTeam.Name},
@@ -363,7 +360,8 @@ func (s *S) TestProxy(c *check.C) {
 	request, err := http.NewRequest("DELETE", "/something", nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
-	err = Proxy(&service, "/aaa", recorder, request)
+	evt := createEvt(c)
+	err = Proxy(&service, "/aaa", evt, "", recorder, request)
 	c.Assert(err, check.IsNil)
 	c.Assert(recorder.Code, check.Equals, http.StatusNoContent)
 }

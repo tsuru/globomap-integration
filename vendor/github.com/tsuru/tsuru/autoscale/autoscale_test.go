@@ -5,11 +5,13 @@
 package autoscale
 
 import (
+	"context"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
@@ -25,10 +27,10 @@ import (
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/safe"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) { check.TestingT(t) }
@@ -40,11 +42,14 @@ type S struct {
 	p           *provisiontest.FakeProvisioner
 	logBuf      *safe.Buffer
 	conn        *db.Storage
+	mockService struct {
+		Plan *appTypes.MockPlanService
+	}
 }
 
 func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "autoscale_tests_s")
 }
 
@@ -65,8 +70,15 @@ func (s *S) SetUpTest(c *check.C) {
 	s.appInstance.Pool = "pool1"
 	s.p.Provision(s.appInstance)
 	plan := appTypes.Plan{Memory: 4194304, Name: "default", CpuShare: 10}
-	err = app.SavePlan(plan)
-	c.Assert(err, check.IsNil)
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{plan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &plan, nil
+		},
+	}
+	servicemanager.Plan = s.mockService.Plan
 	appStruct := &app.App{
 		Name: s.appInstance.GetName(),
 		Pool: "pool1",
@@ -96,6 +108,7 @@ func (s *S) SetUpTest(c *check.C) {
 }
 
 func (s *S) TearDownTest(c *check.C) {
+	app.GetAppRouterUpdater().Shutdown(context.Background())
 	s.conn.Close()
 	config.Unset("docker:auto-scale:max-container-count")
 	config.Unset("docker:auto-scale:prevent-rebalance")
@@ -700,12 +713,11 @@ func (s *S) TestAutoScaleConfigRunMemoryBasedPlanTooBig(c *check.C) {
 	config.Unset("docker:auto-scale:max-container-count")
 	config.Set("docker:scheduler:max-used-memory", 0.8)
 	config.Set("docker:scheduler:total-memory-metadata", "totalMem")
-	err := app.PlanRemove("default")
-	c.Assert(err, check.IsNil)
 	plan := appTypes.Plan{Memory: 25165824, Name: "default", CpuShare: 10}
-	err = app.SavePlan(plan)
-	c.Assert(err, check.IsNil)
-	_, err = s.p.AddUnitsToNode(s.appInstance, 4, "web", nil, "n1:1")
+	s.mockService.Plan.OnList = func() ([]appTypes.Plan, error) {
+		return []appTypes.Plan{plan}, nil
+	}
+	_, err := s.p.AddUnitsToNode(s.appInstance, 4, "web", nil, "n1:1")
 	c.Assert(err, check.IsNil)
 	a := newConfig()
 	a.runOnce()

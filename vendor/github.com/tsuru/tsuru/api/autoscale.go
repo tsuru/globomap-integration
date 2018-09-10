@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/ajg/form"
+	"github.com/globalsign/mgo"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/autoscale"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/event"
 	tsuruIo "github.com/tsuru/tsuru/io"
 	"github.com/tsuru/tsuru/permission"
-	"gopkg.in/mgo.v2"
 )
 
 // title: get autoscale config
@@ -79,6 +79,7 @@ func autoScaleSetRule(w http.ResponseWriter, r *http.Request, t auth.Token) (err
 	}
 	var rule autoscale.Rule
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&rule, r.Form)
 	if err != nil {

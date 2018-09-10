@@ -22,12 +22,12 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/fsouza/go-dockerclient"
 	"github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/bind"
 	"github.com/tsuru/tsuru/app/image"
-	"github.com/tsuru/tsuru/builder"
 	"github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/net"
@@ -40,11 +40,11 @@ import (
 	"github.com/tsuru/tsuru/provision/nodecontainer"
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
+	"github.com/tsuru/tsuru/queue"
 	"github.com/tsuru/tsuru/quota"
 	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/safe"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func newFakeServer() *httptest.Server {
@@ -257,6 +257,8 @@ func (s *S) stopContainers(endpoint string, n uint) <-chan bool {
 }
 
 func (s *S) TestDeploy(c *check.C) {
+	config.Unset("docker:repository-namespace")
+	defer config.Set("docker:repository-namespace", "tsuru")
 	stopCh := s.stopContainers(s.server.URL(), 1)
 	defer func() { <-stopCh }()
 	err := newFakeImage(s.p, "tsuru/python:latest", nil)
@@ -285,14 +287,9 @@ func (s *S) TestDeploy(c *check.C) {
 		Allowed: event.Allowed(permission.PermApp),
 	})
 	c.Assert(err, check.IsNil)
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: "http://test.com/myfile.tgz",
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, "tsuru/app-"+a.Name+":v1-builder")
+	builderImgID := s.team.Name + "/app-" + a.Name + ":v1-builder"
 	pullOpts := docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
+		Repository: s.team.Name + "/app-" + a.Name,
 		Tag:        "v1-builder",
 	}
 	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
@@ -352,12 +349,7 @@ func (s *S) TestDeployWithLimiterActive(c *check.C) {
 	c.Assert(err, check.IsNil)
 	fakeServer := newFakeServer()
 	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, "tsuru/app-"+a.Name+":v1-builder")
+	builderImgID := "tsuru/app-" + a.Name + ":v1-builder"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-" + a.Name,
 		Tag:        "v1-builder",
@@ -413,11 +405,7 @@ func (s *S) TestDeployWithLimiterGlobalActive(c *check.C) {
 	c.Assert(err, check.IsNil)
 	fakeServer := newFakeServer()
 	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
+	builderImgID := "tsuru/app-" + a.Name + ":v1-builder"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-" + a.Name,
 		Tag:        "v1-builder",
@@ -471,11 +459,7 @@ func (s *S) TestDeployQuotaExceeded(c *check.C) {
 	c.Assert(err, check.IsNil)
 	fakeServer := newFakeServer()
 	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
+	builderImgID := "tsuru/app-" + a.Name + ":v1-builder"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-" + a.Name,
 		Tag:        "v1-builder",
@@ -497,7 +481,7 @@ func (s *S) TestDeployCanceledEvent(c *check.C) {
 	err := newFakeImage(s.p, "tsuru/python:latest", nil)
 	c.Assert(err, check.IsNil)
 	app := provisiontest.NewFakeApp("myapp", "python", 1)
-	routertest.FakeRouter.AddBackend(app.GetName())
+	routertest.FakeRouter.AddBackend(app)
 	defer routertest.FakeRouter.RemoveBackend(app.GetName())
 	evt, err := event.New(&event.Opts{
 		Target:        event.Target{Type: "app", Value: "myapp"},
@@ -510,11 +494,7 @@ func (s *S) TestDeployCanceledEvent(c *check.C) {
 	c.Assert(err, check.IsNil)
 	fakeServer := newFakeServer()
 	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, app, evt, buildOpts)
-	c.Assert(err, check.IsNil)
+	builderImgID := "tsuru/app-" + app.GetName() + ":v1-builder"
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-" + app.GetName(),
 		Tag:        "v1-builder",
@@ -525,7 +505,7 @@ func (s *S) TestDeployCanceledEvent(c *check.C) {
 	go func() {
 		defer close(done)
 		img, depErr := s.p.Deploy(app, builderImgID, evt)
-		c.Assert(depErr, check.ErrorMatches, "deploy canceled by user action")
+		c.Assert(depErr, check.ErrorMatches, "unit creation canceled by user action")
 		c.Assert(img, check.Equals, "")
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -537,7 +517,8 @@ func (s *S) TestDeployCanceledEvent(c *check.C) {
 }
 
 func (s *S) TestDeployRegisterRace(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(10))
+	originalMaxProcs := runtime.GOMAXPROCS(10)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	var p dockerProvisioner
 	var registerCount int64
 	server, err := testing.NewServer("127.0.0.1:0", nil, func(r *http.Request) {
@@ -547,6 +528,8 @@ func (s *S) TestDeployRegisterRace(c *check.C) {
 				registerErr := p.RegisterUnit(nil, parts[2], nil)
 				if registerErr == nil {
 					atomic.AddInt64(&registerCount, 1)
+				} else {
+					c.Fatal(registerErr)
 				}
 			}
 		}(r.URL.Path)
@@ -572,7 +555,7 @@ func (s *S) TestDeployRegisterRace(c *check.C) {
 			defer wg.Done()
 			name := fmt.Sprintf("myapp-%d", i)
 			app := provisiontest.NewFakeApp(name, "python", 1)
-			routertest.FakeRouter.AddBackend(app.GetName())
+			routertest.FakeRouter.AddBackend(app)
 			defer routertest.FakeRouter.RemoveBackend(app.GetName())
 			img, err := p.deployPipeline(app, image.GetBuildImage(app), []string{"/bin/test"}, nil)
 			c.Assert(err, check.IsNil)
@@ -612,79 +595,6 @@ func (s *S) TestRollbackDeploy(c *check.C) {
 	c.Assert(units, check.HasLen, 1)
 }
 
-func (s *S) TestDeployErasesOldImages(c *check.C) {
-	config.Set("docker:image-history-size", 1)
-	defer config.Unset("docker:image-history-size")
-	stopCh := s.stopContainers(s.server.URL(), 3)
-	defer func() { <-stopCh }()
-	err := newFakeImage(s.p, "tsuru/python:latest", nil)
-	c.Assert(err, check.IsNil)
-	a := s.newApp("appdeployimagetest")
-	err = app.CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	customData := map[string]interface{}{
-		"processes": map[string]interface{}{
-			"web": "python myapp.py",
-		},
-	}
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v1", customData)
-	c.Assert(err, check.IsNil)
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v2", customData)
-	c.Assert(err, check.IsNil)
-	evt, err := event.New(&event.Opts{
-		Target:  event.Target{Type: "app", Value: a.Name},
-		Kind:    permission.PermAppDeploy,
-		Owner:   s.token,
-		Allowed: event.Allowed(permission.PermApp),
-	})
-	c.Assert(err, check.IsNil)
-	fakeServer := newFakeServer()
-	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	pullOpts := docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v1-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	imgs, err := s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 3)
-	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[2].RepoTags, check.HasLen, 1)
-	expected := []string{"tsuru/app-appdeployimagetest:v1", "tsuru/app-appdeployimagetest:v1-builder", "tsuru/python:latest"}
-	got := []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0], imgs[2].RepoTags[0]}
-	sort.Strings(got)
-	c.Assert(got, check.DeepEquals, expected)
-	builderImgID, err = s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	pullOpts = docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v2-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	imgs, err = s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 3)
-	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[2].RepoTags, check.HasLen, 1)
-	got = []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0], imgs[2].RepoTags[0]}
-	sort.Strings(got)
-	expected = []string{"tsuru/app-appdeployimagetest:v2", "tsuru/app-appdeployimagetest:v2-builder", "tsuru/python:latest"}
-	c.Assert(got, check.DeepEquals, expected)
-}
-
 func (s *S) TestDeployErasesOldImagesIfFailed(c *check.C) {
 	config.Set("docker:image-history-size", 1)
 	defer config.Unset("docker:image-history-size")
@@ -693,14 +603,25 @@ func (s *S) TestDeployErasesOldImagesIfFailed(c *check.C) {
 	a := s.newApp("appdeployimagetest")
 	err = app.CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
+	stopCh := s.stopContainers(s.server.URL(), 1)
+	defer func() { <-stopCh }()
+	baseImgName := "tsuru/app-" + a.Name + ":v1"
+	customData := map[string]interface{}{
+		"processes": map[string]interface{}{
+			"web": "python myapp.py",
+		},
+	}
+	err = image.SaveImageCustomData(baseImgName, customData)
+	c.Assert(err, check.IsNil)
 	s.server.CustomHandler("/containers/create", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data, _ := ioutil.ReadAll(r.Body)
 		r.Body = ioutil.NopCloser(bytes.NewBuffer(data))
 		var result docker.Config
 		jsonErr := json.Unmarshal(data, &result)
 		if jsonErr == nil {
-			if result.Image == "tsuru/python:latest" {
+			if result.Image == baseImgName {
 				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("my awesome error"))
 				return
 			}
 		}
@@ -713,111 +634,16 @@ func (s *S) TestDeployErasesOldImagesIfFailed(c *check.C) {
 		Allowed: event.Allowed(permission.PermApp),
 	})
 	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, "tsuru/app-"+a.Name+":v1-builder", evt)
-	c.Assert(err, check.NotNil)
+	_, err = s.p.Deploy(&a, baseImgName+"-builder", evt)
+	c.Assert(err, check.ErrorMatches, ".*my awesome error.*")
 	imgs, err := s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
 	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 1)
-	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
-	c.Assert("tsuru/python:latest", check.Equals, imgs[0].RepoTags[0])
-}
-
-func (s *S) TestDeployErasesOldImagesWithLongHistory(c *check.C) {
-	config.Set("docker:image-history-size", 2)
-	defer config.Unset("docker:image-history-size")
-	stopCh := s.stopContainers(s.server.URL(), 4)
-	defer func() { <-stopCh }()
-	err := newFakeImage(s.p, "tsuru/python:latest", nil)
-	c.Assert(err, check.IsNil)
-	a := s.newApp("appdeployimagetest")
-	err = app.CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	customData := map[string]interface{}{
-		"processes": map[string]interface{}{
-			"web": "python myapp.py",
-		},
-	}
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v1", customData)
-	c.Assert(err, check.IsNil)
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v2", customData)
-	c.Assert(err, check.IsNil)
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v3", customData)
-	c.Assert(err, check.IsNil)
-	evt, err := event.New(&event.Opts{
-		Target:  event.Target{Type: "app", Value: a.Name},
-		Kind:    permission.PermAppDeploy,
-		Owner:   s.token,
-		Allowed: event.Allowed(permission.PermApp),
-	})
-	c.Assert(err, check.IsNil)
-	fakeServer := newFakeServer()
-	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	pullOpts := docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v1-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	imgs, err := s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 3)
+	c.Assert(imgs, check.HasLen, 2)
 	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
 	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[2].RepoTags, check.HasLen, 1)
-	expected := []string{"tsuru/app-appdeployimagetest:v1", "tsuru/app-appdeployimagetest:v1-builder", "tsuru/python:latest"}
-	got := []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0], imgs[2].RepoTags[0]}
+	got := []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0]}
 	sort.Strings(got)
-	c.Assert(got, check.DeepEquals, expected)
-	builderImgID, err = s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	pullOpts = docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v2-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	imgs, err = s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 5)
-	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[2].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[3].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[4].RepoTags, check.HasLen, 1)
-	got = []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0], imgs[2].RepoTags[0], imgs[3].RepoTags[0], imgs[4].RepoTags[0]}
-	sort.Strings(got)
-	expected = []string{"tsuru/app-appdeployimagetest:v1", "tsuru/app-appdeployimagetest:v1-builder", "tsuru/app-appdeployimagetest:v2", "tsuru/app-appdeployimagetest:v2-builder", "tsuru/python:latest"}
-	c.Assert(got, check.DeepEquals, expected)
-	builderImgID, err = s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	pullOpts = docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v3-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	imgs, err = s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 5)
-	c.Assert(imgs[0].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[2].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[3].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[4].RepoTags, check.HasLen, 1)
-	got = []string{imgs[0].RepoTags[0], imgs[1].RepoTags[0], imgs[2].RepoTags[0], imgs[3].RepoTags[0], imgs[4].RepoTags[0]}
-	sort.Strings(got)
-	expected = []string{"tsuru/app-appdeployimagetest:v2", "tsuru/app-appdeployimagetest:v2-builder", "tsuru/app-appdeployimagetest:v3", "tsuru/app-appdeployimagetest:v3-builder", "tsuru/python:latest"}
+	expected := []string{"tsuru/app-appdeployimagetest:v1-builder", "tsuru/python:latest"}
 	c.Assert(got, check.DeepEquals, expected)
 }
 
@@ -887,7 +713,8 @@ func (s *S) TestDeployImageID(c *check.C) {
 			"web": []string{"/bin/sh", "-c", "python test.py"},
 		},
 	}
-	err = image.SaveImageCustomData("tsuru/app-"+a.Name+":v1", customData)
+	builderImgID := "tsuru/app-" + a.Name + ":v1"
+	err = image.SaveImageCustomData(builderImgID, customData)
 	c.Assert(err, check.IsNil)
 	evt, err := event.New(&event.Opts{
 		Target:  event.Target{Type: "app", Value: a.Name},
@@ -896,12 +723,6 @@ func (s *S) TestDeployImageID(c *check.C) {
 		Allowed: event.Allowed(permission.PermApp),
 	})
 	c.Assert(err, check.IsNil)
-	buildOpts := builder.BuildOpts{
-		ImageID: "customimage",
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, "tsuru/app-"+a.Name+":v1")
 	pullOpts := docker.PullImageOptions{
 		Repository: "tsuru/app-" + a.Name,
 		Tag:        "v1",
@@ -945,69 +766,6 @@ func (s *S) TestProvisionerDestroy(c *check.C) {
 	c.Assert(count, check.Equals, 0)
 	c.Assert(routertest.FakeRouter.HasBackend("myapp"), check.Equals, false)
 	c.Assert(a.HasBind(&unit), check.Equals, false)
-}
-
-func (s *S) TestProvisionerDestroyRemovesImage(c *check.C) {
-	var registryRequests []*http.Request
-	registryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		registryRequests = append(registryRequests, r)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer registryServer.Close()
-	registryURL := strings.Replace(registryServer.URL, "http://", "", 1)
-	config.Set("docker:registry", registryURL)
-	defer config.Unset("docker:registry")
-	stopCh := s.stopContainers(s.server.URL(), 1)
-	defer func() { <-stopCh }()
-	a := s.newApp("mydoomedapp")
-	a.Quota = quota.Unlimited
-	err := app.CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	customData := map[string]interface{}{
-		"processes": map[string]interface{}{
-			"web": "python myapp.py",
-		},
-	}
-	err = image.SaveImageCustomData(fmt.Sprintf("%s/tsuru/app-%s:v1", registryURL, a.Name), customData)
-	c.Assert(err, check.IsNil)
-	evt, err := event.New(&event.Opts{
-		Target:  event.Target{Type: "app", Value: a.Name},
-		Kind:    permission.PermAppDeploy,
-		Owner:   s.token,
-		Allowed: event.Allowed(permission.PermApp),
-	})
-	c.Assert(err, check.IsNil)
-	fakeServer := newFakeServer()
-	defer fakeServer.Close()
-	buildOpts := builder.BuildOpts{
-		ArchiveURL: fakeServer.URL,
-	}
-	builderImgID, err := s.b.Build(s.p, &a, evt, buildOpts)
-	c.Assert(err, check.IsNil)
-	c.Assert(builderImgID, check.Equals, registryURL+"/tsuru/app-"+a.Name+":v1-builder")
-	pullOpts := docker.PullImageOptions{
-		Repository: "tsuru/app-" + a.Name,
-		Tag:        "v1-builder",
-	}
-	err = s.p.Cluster().PullImage(pullOpts, dockercommon.RegistryAuthConfig())
-	c.Assert(err, check.IsNil)
-	_, err = s.p.Deploy(&a, builderImgID, evt)
-	c.Assert(err, check.IsNil)
-	err = s.p.Destroy(&a)
-	c.Assert(err, check.IsNil)
-	coll := s.p.Collection()
-	defer coll.Close()
-	count, err := coll.Find(bson.M{"appname": a.Name}).Count()
-	c.Assert(err, check.IsNil)
-	c.Assert(count, check.Equals, 0)
-	c.Assert(registryRequests, check.HasLen, 1)
-	c.Assert(registryRequests[0].Method, check.Equals, "DELETE")
-	c.Assert(registryRequests[0].URL.Path, check.Equals, "/v1/repositories/tsuru/app-mydoomedapp:v1/")
-	imgs, err := s.p.Cluster().ListImages(docker.ListImagesOptions{All: true})
-	c.Assert(err, check.IsNil)
-	c.Assert(imgs, check.HasLen, 2)
-	c.Assert(imgs[1].RepoTags, check.HasLen, 1)
-	c.Assert(imgs[1].RepoTags[0], check.Equals, builderImgID)
 }
 
 func (s *S) TestProvisionerDestroyEmptyUnit(c *check.C) {
@@ -1145,7 +903,7 @@ func (s *S) TestProvisionerAddUnitsWithHostPartialRollback(c *check.C) {
 		imageID:     imageID,
 		provisioner: s.p,
 	})
-	c.Assert(err, check.ErrorMatches, "error in docker node.*")
+	c.Assert(err, check.ErrorMatches, "(?s).*error in docker node.*")
 	c.Assert(units, check.HasLen, 0)
 	coll := s.p.Collection()
 	defer coll.Close()
@@ -1453,7 +1211,7 @@ func (s *S) TestProvisionerSetUnitStatusAsleep(c *check.C) {
 	container, err := s.newContainer(&opts, nil)
 	c.Assert(err, check.IsNil)
 	defer s.removeTestContainer(container)
-	err = container.Sleep(s.p)
+	err = container.Sleep(s.p.ClusterClient(), s.p.ActionLimiter())
 	c.Assert(err, check.IsNil)
 	err = s.p.SetUnitStatus(provision.Unit{ID: container.ID, AppName: container.AppName}, provision.StatusStopped)
 	c.Assert(err, check.IsNil)
@@ -1631,9 +1389,9 @@ func (s *S) TestProvisionerExecuteCommandExcludesBuildContainers(c *check.C) {
 	c.Assert(err, check.IsNil)
 	container4, err := s.newContainer(&newContainerOpts{AppName: a.GetName()}, nil)
 	c.Assert(err, check.IsNil)
-	container2.SetStatus(s.p, provision.StatusCreated, true)
-	container3.SetStatus(s.p, provision.StatusBuilding, true)
-	container4.SetStatus(s.p, provision.StatusStopped, true)
+	container2.SetStatus(s.p.ClusterClient(), provision.StatusCreated, true)
+	container3.SetStatus(s.p.ClusterClient(), provision.StatusBuilding, true)
+	container4.SetStatus(s.p.ClusterClient(), provision.StatusStopped, true)
 	containers := []*container.Container{
 		container1,
 		container2,
@@ -1724,6 +1482,10 @@ func (s *S) TestProvisionerExecuteCommandIsolated(c *check.C) {
 }
 
 func (s *S) TestProvisionerExecuteCommandIsolatedNoImage(c *check.C) {
+	s.server.CustomHandler("/images/create", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// no actual pull executed
+		w.WriteHeader(http.StatusOK)
+	}))
 	a := provisiontest.NewFakeApp("almah", "static", 2)
 	var buf bytes.Buffer
 	err := s.p.ExecuteCommandIsolated(&buf, &buf, a, "ls", "-lh")
@@ -2027,7 +1789,7 @@ func (s *S) TestProvisionerSleep(c *check.C) {
 	defer s.removeTestContainer(cont1)
 	err = dcli.StartContainer(cont1.ID, nil)
 	c.Assert(err, check.IsNil)
-	err = cont1.SetStatus(s.p, provision.StatusStarted, true)
+	err = cont1.SetStatus(s.p.ClusterClient(), provision.StatusStarted, true)
 	c.Assert(err, check.IsNil)
 	cont2, err := s.newContainer(&newContainerOpts{
 		AppName:         a.GetName(),
@@ -2038,7 +1800,7 @@ func (s *S) TestProvisionerSleep(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = dcli.StartContainer(cont2.ID, nil)
 	c.Assert(err, check.IsNil)
-	err = cont2.SetStatus(s.p, provision.StatusStarted, true)
+	err = cont2.SetStatus(s.p.ClusterClient(), provision.StatusStarted, true)
 	c.Assert(err, check.IsNil)
 	defer s.removeTestContainer(cont2)
 	dockerContainer, err := dcli.InspectContainer(cont1.ID)
@@ -2082,7 +1844,7 @@ func (s *S) TestProvisionerSleepProcess(c *check.C) {
 	}, nil)
 	c.Assert(err, check.IsNil)
 	defer s.removeTestContainer(cont1)
-	err = cont1.SetStatus(s.p, provision.StatusStarted, true)
+	err = cont1.SetStatus(s.p.ClusterClient(), provision.StatusStarted, true)
 	c.Assert(err, check.IsNil)
 	cont2, err := s.newContainer(&newContainerOpts{
 		AppName:         a.GetName(),
@@ -2092,7 +1854,7 @@ func (s *S) TestProvisionerSleepProcess(c *check.C) {
 	}, nil)
 	c.Assert(err, check.IsNil)
 	defer s.removeTestContainer(cont2)
-	err = cont2.SetStatus(s.p, provision.StatusStarted, true)
+	err = cont2.SetStatus(s.p.ClusterClient(), provision.StatusStarted, true)
 	c.Assert(err, check.IsNil)
 	err = dcli.StartContainer(cont1.ID, nil)
 	c.Assert(err, check.IsNil)
@@ -2448,7 +2210,7 @@ func (s *S) TestRunRestartAfterHooks(c *check.C) {
 		reqBodies = append(reqBodies, data)
 		s.server.DefaultHandler().ServeHTTP(w, r)
 	}))
-	defer container.Remove(s.p)
+	defer container.Remove(s.p.ClusterClient(), s.p.ActionLimiter())
 	var buf bytes.Buffer
 	err = s.p.runRestartAfterHooks(container, &buf)
 	c.Assert(err, check.IsNil)
@@ -2771,6 +2533,62 @@ func (s *S) TestAddNode(c *check.C) {
 	c.Assert(nodes[0].Metadata, check.DeepEquals, map[string]string{
 		"pool":        "pool1",
 		"m1":          "x1",
+		"LastSuccess": nodes[0].Metadata["LastSuccess"],
+	})
+	c.Assert(nodes[0].CreationStatus, check.Equals, cluster.NodeCreationStatusCreated)
+}
+
+func (s *S) TestAddRemoveAddNodeRace(c *check.C) {
+	pong := make(chan struct{}, 2)
+	var callCount int32
+	server, err := testing.NewServer("127.0.0.1:0", nil, func(r *http.Request) {
+		if strings.Contains(r.URL.Path, "ping") {
+			pong <- struct{}{}
+			if atomic.AddInt32(&callCount, 1) == 1 {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	})
+	c.Assert(err, check.IsNil)
+	defer server.Stop()
+	var p dockerProvisioner
+	err = p.Initialize()
+	c.Assert(err, check.IsNil)
+	p.cluster, _ = cluster.New(nil, &cluster.MapStorage{}, "")
+	mainDockerProvisioner = &p
+	opts := provision.AddNodeOptions{
+		Address: server.URL(),
+		Pool:    "pool1",
+		Metadata: map[string]string{
+			"m1": "x1",
+		},
+	}
+	err = p.AddNode(opts)
+	c.Assert(err, check.IsNil)
+	<-pong
+	err = p.RemoveNode(provision.RemoveNodeOptions{
+		Address: server.URL(),
+	})
+	c.Assert(err, check.IsNil)
+	opts = provision.AddNodeOptions{
+		Address: server.URL(),
+		Pool:    "pool2",
+		Metadata: map[string]string{
+			"m2": "x2",
+		},
+	}
+	err = p.AddNode(opts)
+	c.Assert(err, check.IsNil)
+	<-pong
+	queue.ResetQueue()
+	c.Assert(atomic.LoadInt32(&callCount), check.Equals, int32(2))
+	nodes, err := p.Cluster().Nodes()
+	c.Assert(err, check.IsNil)
+	c.Assert(nodes, check.HasLen, 1)
+	c.Assert(nodes[0].Address, check.Equals, server.URL())
+	c.Assert(nodes[0].Metadata, check.DeepEquals, map[string]string{
+		"pool":        "pool2",
+		"m2":          "x2",
 		"LastSuccess": nodes[0].Metadata["LastSuccess"],
 	})
 	c.Assert(nodes[0].CreationStatus, check.Equals, cluster.NodeCreationStatusCreated)
@@ -3173,8 +2991,16 @@ func (s *S) TestRebalanceNodes(c *check.C) {
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
 	buf := safe.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:  event.Target{Type: event.TargetTypeGlobal},
+		Kind:    permission.PermNodeUpdateRebalance,
+		Owner:   s.token,
+		Allowed: event.Allowed(permission.PermPoolReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
 	toRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         buf,
+		Event:          evt,
 		MetadataFilter: map[string]string{"pool": "test-default"},
 	})
 	c.Assert(err, check.IsNil, check.Commentf("Log: %s", buf.String()))
@@ -3186,6 +3012,73 @@ func (s *S) TestRebalanceNodes(c *check.C) {
 	containers, err = p.listContainersByHost("127.0.0.1")
 	c.Assert(err, check.IsNil)
 	c.Assert(containers, check.HasLen, 2)
+}
+
+func (s *S) TestRebalanceNodesCancel(c *check.C) {
+	p, err := s.startMultipleServersCluster()
+	c.Assert(err, check.IsNil)
+	blockCh := make(chan struct{})
+	createCalled := make(chan struct{}, 2)
+	s.extraServer.SetHook(func(r *http.Request) {
+		if r.URL.Path == "/containers/create" {
+			createCalled <- struct{}{}
+			<-blockCh
+		}
+	})
+	mainDockerProvisioner = p
+	err = newFakeImage(p, "tsuru/app-myapp", nil)
+	c.Assert(err, check.IsNil)
+	appInstance := provisiontest.NewFakeApp("myapp", "python", 0)
+	p.Provision(appInstance)
+	imageID, err := image.AppCurrentImageName(appInstance.GetName())
+	c.Assert(err, check.IsNil)
+	_, err = addContainersWithHost(&changeUnitsPipelineArgs{
+		toHost:      "127.0.0.1",
+		toAdd:       map[string]*containersToAdd{"web": {Quantity: 4}},
+		app:         appInstance,
+		imageID:     imageID,
+		provisioner: p,
+	})
+	c.Assert(err, check.IsNil)
+	appStruct := s.newAppFromFake(appInstance)
+	appStruct.Pool = "test-default"
+	err = s.conn.Apps().Insert(appStruct)
+	c.Assert(err, check.IsNil)
+	buf := safe.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:        event.Target{Type: event.TargetTypeGlobal},
+		Kind:          permission.PermNodeUpdateRebalance,
+		Owner:         s.token,
+		Allowed:       event.Allowed(permission.PermPoolReadEvents),
+		Cancelable:    true,
+		AllowedCancel: event.Allowed(permission.PermAppUpdateEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
+	done := make(chan bool)
+	go func() {
+		defer close(done)
+		toRebalance, rebalanceErr := p.RebalanceNodes(provision.RebalanceNodesOptions{
+			Event:          evt,
+			MetadataFilter: map[string]string{"pool": "test-default"},
+		})
+		c.Assert(rebalanceErr, check.ErrorMatches, "(?s).*Caused by: unit creation canceled by user action.*")
+		c.Assert(toRebalance, check.Equals, true)
+	}()
+	<-createCalled
+	evtDB, err := event.GetByID(evt.UniqueID)
+	c.Assert(err, check.IsNil)
+	err = evtDB.TryCancel("because yes", "majortom@ground.control")
+	c.Assert(err, check.IsNil)
+	close(blockCh)
+	<-done
+	c.Assert(buf.String(), check.Matches, "(?s)^Rebalancing as gap is 4, after rebalance gap will be 0.*Moving unit.*")
+	containers, err := p.listContainersByHost("localhost")
+	c.Assert(err, check.IsNil)
+	c.Assert(containers, check.HasLen, 0)
+	containers, err = p.listContainersByHost("127.0.0.1")
+	c.Assert(err, check.IsNil)
+	c.Assert(containers, check.HasLen, 4)
 }
 
 func (s *S) TestRebalanceNodesNoNeed(c *check.C) {
@@ -3219,8 +3112,16 @@ func (s *S) TestRebalanceNodesNoNeed(c *check.C) {
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
 	buf := safe.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:  event.Target{Type: event.TargetTypeGlobal},
+		Kind:    permission.PermNodeUpdateRebalance,
+		Owner:   s.token,
+		Allowed: event.Allowed(permission.PermPoolReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
 	toRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         buf,
+		Event:          evt,
 		MetadataFilter: map[string]string{"pool": "test-default"},
 	})
 	c.Assert(err, check.IsNil, check.Commentf("Log: %s", buf.String()))
@@ -3262,8 +3163,16 @@ func (s *S) TestRebalanceNodesNoNeedForce(c *check.C) {
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
 	buf := safe.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:  event.Target{Type: event.TargetTypeGlobal},
+		Kind:    permission.PermNodeUpdateRebalance,
+		Owner:   s.token,
+		Allowed: event.Allowed(permission.PermPoolReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
 	toRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         buf,
+		Event:          evt,
 		Force:          true,
 		MetadataFilter: map[string]string{"pool": "test-default"},
 	})
@@ -3298,8 +3207,16 @@ func (s *S) TestRebalanceNodesDry(c *check.C) {
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
 	buf := safe.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:  event.Target{Type: event.TargetTypeGlobal},
+		Kind:    permission.PermNodeUpdateRebalance,
+		Owner:   s.token,
+		Allowed: event.Allowed(permission.PermPoolReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
 	toRebalance, err := p.RebalanceNodes(provision.RebalanceNodesOptions{
-		Writer:         buf,
+		Event:          evt,
 		Dry:            true,
 		MetadataFilter: map[string]string{"pool": "test-default"},
 	})

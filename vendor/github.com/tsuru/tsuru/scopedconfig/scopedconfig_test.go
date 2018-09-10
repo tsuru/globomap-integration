@@ -30,7 +30,7 @@ func Test(t *testing.T) {
 
 func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "scopedconfig_tests_s")
 	var err error
 	s.storage, err = db.Conn()
@@ -120,7 +120,7 @@ type TestDeepMerge struct {
 }
 
 func (s *S) TestScopedConfigMulti(c *check.C) {
-	t1 := time.Unix(time.Now().Unix(), 0)
+	t1 := time.Unix(time.Now().Unix(), 0).UTC()
 	t2 := t1.Add(time.Minute)
 	intPtr := func(a int) *int {
 		return &a
@@ -507,7 +507,8 @@ func (s *S) TestScopedConfigSaveMerge(c *check.C) {
 }
 
 func (s *S) TestScopedConfigSetFieldAtomic(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(10))
+	originalMaxProcs := runtime.GOMAXPROCS(10)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	nRoutines := 50
 	values := make([]bool, nRoutines)
 	var wg sync.WaitGroup

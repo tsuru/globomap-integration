@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
-	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/db"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
+	"github.com/tsuru/tsuru/event"
+	"github.com/tsuru/tsuru/servicemanager"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"github.com/tsuru/tsuru/validation"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type Service struct {
@@ -161,7 +162,7 @@ func (s *Service) validateOwnerTeams() error {
 	if len(s.OwnerTeams) == 0 {
 		return fmt.Errorf("At least one service team owner is required")
 	}
-	teams, err := auth.TeamService().FindByNames(s.OwnerTeams)
+	teams, err := servicemanager.Team.FindByNames(s.OwnerTeams)
 	if err != nil {
 		return nil
 	}
@@ -231,12 +232,12 @@ type ServiceModel struct {
 
 // Proxy is a proxy between tsuru and the service.
 // This method allow customized service methods.
-func Proxy(service *Service, path string, w http.ResponseWriter, r *http.Request) error {
+func Proxy(service *Service, path string, evt *event.Event, requestID string, w http.ResponseWriter, r *http.Request) error {
 	endpoint, err := service.getClient("production")
 	if err != nil {
 		return err
 	}
-	return endpoint.Proxy(path, w, r)
+	return endpoint.Proxy(path, evt, requestID, w, r)
 }
 
 func RenameServiceTeam(oldName, newName string) error {

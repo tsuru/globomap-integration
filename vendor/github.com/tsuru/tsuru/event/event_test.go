@@ -6,14 +6,18 @@ package event
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/auth/native"
@@ -24,7 +28,6 @@ import (
 	"github.com/tsuru/tsuru/safe"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func Test(t *testing.T) { check.TestingT(t) }
@@ -36,7 +39,7 @@ type S struct {
 var _ = check.Suite(&S{})
 
 func setBaseConfig() {
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=150")
 	config.Set("database:name", "tsuru_events_tests")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 }
@@ -78,6 +81,7 @@ func (s *S) TestNewDone(c *check.C) {
 		LockUpdateTime: evt.LockUpdateTime,
 		Allowed:        Allowed(permission.PermAppReadEvents),
 	}}
+	expected.Init()
 	c.Assert(evt, check.DeepEquals, expected)
 	evts, err := All()
 	c.Assert(err, check.IsNil)
@@ -131,6 +135,7 @@ func (s *S) TestNewCustomDataDone(c *check.C) {
 		StartCustomData: evt.StartCustomData,
 		Allowed:         Allowed(permission.PermAppReadEvents),
 	}}
+	expected.Init()
 	c.Assert(evt, check.DeepEquals, expected)
 	customData = struct{ A string }{A: "other"}
 	err = evt.DoneCustomData(nil, customData)
@@ -173,6 +178,116 @@ func (s *S) TestNewLocks(c *check.C) {
 	c.Assert(err, check.ErrorMatches, `event locked: app\(myapp\) running "app.update.env.set" start by user me@me.com at .+`)
 }
 
+func (s *S) TestNewExtraTargetLocks(c *check.C) {
+	tests := []struct {
+		target1      Target
+		extras1      []ExtraTarget
+		disableLock1 bool
+		target2      Target
+		extras2      []ExtraTarget
+		disableLock2 bool
+		err          string
+	}{
+		{
+			target1: Target{Type: "app", Value: "myapp"},
+			target2: Target{Type: "container", Value: "x"},
+			extras2: []ExtraTarget{{Target: Target{Type: "app", Value: "myapp"}, Lock: true}},
+			err:     `event locked: app\(myapp\) running "app.update.env.set" start by user me@me.com at .+`,
+		},
+		{
+			target1: Target{Type: "app", Value: "myapp"},
+			extras1: []ExtraTarget{{Target: Target{Type: "app", Value: "myapp2"}, Lock: true}},
+			target2: Target{Type: "app", Value: "myapp2"},
+			err:     `event locked: app\(myapp\) running "app.update.env.set" start by user me@me.com at .+`,
+		},
+		{
+			target1: Target{Type: "app", Value: "myapp"},
+			target2: Target{Type: "container", Value: "x"},
+			extras2: []ExtraTarget{{Target: Target{Type: "app", Value: "myapp"}, Lock: false}},
+			err:     "",
+		},
+		{
+			target1: Target{Type: "app", Value: "myapp"},
+			extras1: []ExtraTarget{{Target: Target{Type: "app", Value: "myapp2"}, Lock: false}},
+			target2: Target{Type: "app", Value: "myapp2"},
+			err:     "",
+		},
+		{
+			target1:      Target{Type: "app", Value: "myapp"},
+			extras1:      []ExtraTarget{{Target: Target{Type: "app", Value: "myapp2"}, Lock: true}},
+			target2:      Target{Type: "app", Value: "myapp2"},
+			disableLock2: true,
+			err:          "",
+		},
+		{
+			target1:      Target{Type: "app", Value: "myapp"},
+			extras1:      []ExtraTarget{{Target: Target{Type: "app", Value: "myapp2"}, Lock: true}},
+			target2:      Target{Type: "app", Value: "myapp2"},
+			disableLock2: true,
+			err:          "",
+		},
+	}
+	for i, tt := range tests {
+		evt1, err := New(&Opts{
+			Target:       tt.target1,
+			ExtraTargets: tt.extras1,
+			Kind:         permission.PermAppUpdateEnvSet,
+			Owner:        s.token,
+			Allowed:      Allowed(permission.PermAppReadEvents),
+			DisableLock:  tt.disableLock1,
+		})
+		c.Assert(err, check.IsNil)
+		evt2, err := New(&Opts{
+			Target:       tt.target2,
+			ExtraTargets: tt.extras2,
+			Kind:         permission.PermAppUpdateEnvUnset,
+			Owner:        s.token,
+			Allowed:      Allowed(permission.PermAppReadEvents),
+			DisableLock:  tt.disableLock2,
+		})
+		if tt.err != "" {
+			c.Assert(err, check.ErrorMatches, tt.err, check.Commentf("failed test case %d - %#v", i, tt))
+		} else {
+			c.Assert(err, check.IsNil, check.Commentf("failed test case %d - %#v", i, tt))
+		}
+		err = evt1.Done(nil)
+		c.Assert(err, check.IsNil)
+		if evt2 != nil {
+			err = evt2.Done(nil)
+			c.Assert(err, check.IsNil)
+		}
+	}
+}
+
+func (s *S) TestNewLockExtraTargetRace(c *check.C) {
+	originalMaxProcs := runtime.GOMAXPROCS(10)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
+	wg := sync.WaitGroup{}
+	var countOK int32
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, err := New(&Opts{
+				Target: Target{Type: "app", Value: fmt.Sprintf("myapp-%d", i)},
+				ExtraTargets: []ExtraTarget{
+					{Target: Target{Type: "app", Value: "myapp"}, Lock: true},
+				},
+				Kind:    permission.PermAppUpdateEnvSet,
+				Owner:   s.token,
+				Allowed: Allowed(permission.PermAppReadEvents),
+			})
+			if _, ok := err.(ErrEventLocked); ok {
+				return
+			}
+			c.Assert(err, check.IsNil)
+			atomic.AddInt32(&countOK, 1)
+		}(i)
+	}
+	wg.Wait()
+	c.Assert(countOK <= 1, check.Equals, true)
+}
+
 func (s *S) TestNewDoneDisableLock(c *check.C) {
 	evt, err := New(&Opts{
 		Target:      Target{Type: "app", Value: "myapp"},
@@ -195,6 +310,7 @@ func (s *S) TestNewDoneDisableLock(c *check.C) {
 		LockUpdateTime: evt.LockUpdateTime,
 		Allowed:        Allowed(permission.PermAppReadEvents),
 	}}
+	expected.Init()
 	c.Assert(evt, check.DeepEquals, expected)
 	evts, err := All()
 	c.Assert(err, check.IsNil)
@@ -273,46 +389,6 @@ func (s *S) TestNewEventBlocked(c *check.C) {
 	c.Assert(evts[0].Error, check.Matches, `.*block app.deploy by all users on all targets: you shall not pass$`)
 }
 
-func (s *S) TestUpdaterUpdatesAndStopsUpdating(c *check.C) {
-	updater.stop()
-	oldUpdateInterval := lockUpdateInterval
-	lockUpdateInterval = time.Millisecond
-	defer func() {
-		updater.stop()
-		lockUpdateInterval = oldUpdateInterval
-	}()
-	evt, err := New(&Opts{
-		Target:  Target{Type: "app", Value: "myapp"},
-		Kind:    permission.PermAppUpdateEnvSet,
-		Owner:   s.token,
-		Allowed: Allowed(permission.PermAppReadEvents),
-	})
-	c.Assert(err, check.IsNil)
-	evts, err := All()
-	c.Assert(err, check.IsNil)
-	c.Assert(evts, check.HasLen, 1)
-	t0 := evts[0].LockUpdateTime
-	time.Sleep(100 * time.Millisecond)
-	evts, err = All()
-	c.Assert(err, check.IsNil)
-	c.Assert(evts, check.HasLen, 1)
-	t1 := evts[0].LockUpdateTime
-	c.Assert(t0.Before(t1), check.Equals, true)
-	err = evt.Done(nil)
-	c.Assert(err, check.IsNil)
-	time.Sleep(100 * time.Millisecond)
-	evts, err = All()
-	c.Assert(err, check.IsNil)
-	c.Assert(evts, check.HasLen, 1)
-	t0 = evts[0].LockUpdateTime
-	time.Sleep(100 * time.Millisecond)
-	evts, err = All()
-	c.Assert(err, check.IsNil)
-	c.Assert(evts, check.HasLen, 1)
-	t1 = evts[0].LockUpdateTime
-	c.Assert(t0, check.DeepEquals, t1)
-}
-
 func (s *S) TestEventAbort(c *check.C) {
 	evt, err := New(&Opts{
 		Target:  Target{Type: "app", Value: "myapp"},
@@ -356,6 +432,7 @@ func (s *S) TestEventDoneError(c *check.C) {
 		Error:          "myerr",
 		Allowed:        Allowed(permission.PermAppReadEvents),
 	}}
+	expected.Init()
 	c.Assert(&evts[0], check.DeepEquals, expected)
 }
 
@@ -456,7 +533,7 @@ func (s *S) TestEventCancel(c *check.C) {
 	})
 }
 
-func (s *S) TestEventCancelMulttipleTimes(c *check.C) {
+func (s *S) TestEventCancelMultipleTimes(c *check.C) {
 	evt, err := New(&Opts{
 		Target:        Target{Type: "app", Value: "myapp"},
 		Kind:          permission.PermAppUpdateEnvSet,
@@ -838,10 +915,82 @@ func (s *S) TestNewThrottledExpirationWaitFinish(c *check.C) {
 	c.Assert(err, check.IsNil)
 }
 
-func (s *S) TestListFilterEmpty(c *check.C) {
+func (s *S) TestNewThrottledExpirationWaitFinishExpired(c *check.C) {
+	oldLockExpire := lockExpireTimeout
+	lockExpireTimeout = 200 * time.Millisecond
+	defer func() {
+		lockExpireTimeout = oldLockExpire
+	}()
+	SetThrottling(ThrottlingSpec{
+		TargetType: TargetTypeApp,
+		KindName:   permission.PermAppUpdateEnvSet.FullName(),
+		Time:       300 * time.Millisecond,
+		Max:        1,
+		AllTargets: true,
+		WaitFinish: true,
+	})
+	baseOpts := &Opts{
+		Target:  Target{Type: "app", Value: "myapp"},
+		Kind:    permission.PermAppUpdateEnvSet,
+		Owner:   s.token,
+		Allowed: Allowed(permission.PermAppReadEvents),
+	}
+	_, err := New(baseOpts)
+	c.Assert(err, check.IsNil)
+	updater.stop()
+	otherOpts := &Opts{
+		Target:  Target{Type: "app", Value: "myapp2"},
+		Kind:    permission.PermAppUpdateEnvSet,
+		Owner:   s.token,
+		Allowed: Allowed(permission.PermAppReadEvents),
+	}
+	_, err = New(otherOpts)
+	c.Assert(err, check.NotNil)
+	updater.stop()
+	c.Assert(err, check.ErrorMatches, "event throttled, limit for app.update.env.set on any app is 1 every 300ms")
+	time.Sleep(500 * time.Millisecond)
+	_, err = New(otherOpts)
+	c.Check(err, check.IsNil)
+}
+
+func (s *S) TestListWithFilters(c *check.C) {
+	e1, err := New(&Opts{Owner: s.token, Kind: permission.PermAll, Allowed: Allowed(permission.PermNode), Target: Target{Type: "node"}})
+	c.Assert(err, check.IsNil)
+	err = e1.Done(nil)
+	c.Assert(err, check.IsNil)
+	e2, err := New(&Opts{Owner: s.token, Kind: permission.PermAll, Allowed: Allowed(permission.PermNode), Target: Target{Type: "container"}})
+	c.Assert(err, check.IsNil)
+	err = e2.Done(nil)
+	c.Assert(err, check.IsNil)
+	e3, err := New(&Opts{Owner: s.token, Kind: permission.PermAppCreate, Allowed: Allowed(permission.PermNode), Target: Target{Type: "container", Value: "1234"}})
+	c.Assert(err, check.IsNil)
+	err = e3.Done(nil)
+	c.Assert(err, check.IsNil)
+
 	evts, err := List(nil)
 	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 3)
+
+	evts, err = List(&Filter{Target: Target{Type: "container"}})
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 2)
+	c.Assert(evts[0].Target.Type, check.Equals, TargetType("container"))
+	c.Assert(evts[1].Target.Type, check.Equals, TargetType("container"))
+
+	evts, err = List(&Filter{Target: Target{Type: "container", Value: "1234"}})
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	c.Assert(evts[0].Target.Type, check.Equals, TargetType("container"))
+	c.Assert(evts[0].Target.Value, check.Equals, "1234")
+
+	evts, err = List(&Filter{Target: Target{Type: "container", Value: "unknown"}})
+	c.Assert(err, check.IsNil)
 	c.Assert(evts, check.HasLen, 0)
+
+	evts, err = List(&Filter{Target: Target{Type: "node"}, Since: time.Now().Add(time.Duration(-1 * time.Hour))})
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	c.Assert(evts[0].Target.Type, check.Equals, TargetType("node"))
 }
 
 func (s *S) TestListFilterPruneUserValues(c *check.C) {
@@ -849,7 +998,7 @@ func (s *S) TestListFilterPruneUserValues(c *check.C) {
 	f := Filter{
 		Target:         Target{Type: "app", Value: "myapp"},
 		KindType:       KindTypePermission,
-		KindName:       "a",
+		KindNames:      []string{"a"},
 		OwnerType:      OwnerTypeUser,
 		OwnerName:      "u",
 		Since:          time.Now(),
@@ -879,6 +1028,28 @@ func (s *S) TestListFilterPruneUserValues(c *check.C) {
 	expectedFilter.Limit = 100
 	f.PruneUserValues()
 	c.Assert(f, check.DeepEquals, expectedFilter)
+}
+
+func (s *S) TestLoadKindNames(c *check.C) {
+	f := &Filter{}
+	form := map[string][]string{
+		"kindname": {"a", "b", ""},
+		"kindName": {"c", "d"},
+		"KindName": {"e", "f"},
+		"KINDNAME": {"g", "h"},
+	}
+	f.LoadKindNames(form)
+	sort.Strings(f.KindNames)
+	c.Assert(f.KindNames, check.DeepEquals, []string{"a", "b", "c", "d", "e", "f", "g", "h"})
+}
+
+func (s *S) TestLoadKindNamesOnlyEmptyValues(c *check.C) {
+	f := &Filter{}
+	form := map[string][]string{
+		"kindname": {""},
+	}
+	f.LoadKindNames(form)
+	c.Assert(f.KindNames, check.IsNil)
 }
 
 func (s *S) TestEventOtherCustomData(c *check.C) {
@@ -966,7 +1137,7 @@ func (s *S) TestGetTargetType(c *check.C) {
 }
 
 func (s *S) TestEventRawInsert(c *check.C) {
-	now := time.Unix(time.Now().Unix(), 0)
+	now := time.Unix(time.Now().Unix(), 0).UTC()
 	evt := &Event{eventData: eventData{
 		UniqueID:  bson.NewObjectId(),
 		Target:    Target{Type: "app", Value: "myapp"},
@@ -977,6 +1148,7 @@ func (s *S) TestEventRawInsert(c *check.C) {
 		Error:     "err x",
 		Log:       "my log",
 	}}
+	evt.Init()
 	err := evt.RawInsert(nil, nil, nil)
 	c.Assert(err, check.IsNil)
 	evts, err := All()
@@ -1009,6 +1181,7 @@ func (s *S) TestNewWithPermission(c *check.C) {
 			Contexts: []permission.PermissionContext{permission.Context(permission.CtxApp, "myapp"), permission.Context(permission.CtxTeam, "myteam")},
 		},
 	}}
+	expected.Init()
 	c.Assert(evt, check.DeepEquals, expected)
 	evts, err := All()
 	c.Assert(err, check.IsNil)
@@ -1019,7 +1192,8 @@ func (s *S) TestNewWithPermission(c *check.C) {
 }
 
 func (s *S) TestNewLockRetryRace(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(100))
+	originalMaxProcs := runtime.GOMAXPROCS(100)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	wg := sync.WaitGroup{}
 	var countOK int32
 	for i := 0; i < 150; i++ {
@@ -1076,12 +1250,13 @@ func (s *S) TestNewCustomDataPtr(c *check.C) {
 		StartCustomData: evt.StartCustomData,
 		Allowed:         Allowed(permission.PermAppReadEvents),
 	}}
+	expected.Init()
 	c.Assert(evt, check.DeepEquals, expected)
 }
 
 func (s *S) TestLoadThrottling(c *check.C) {
 	defer config.Unset("event:throttling")
-	err := LoadThrottling()
+	err := loadThrottling()
 	c.Assert(err, check.IsNil)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{})
 	err = config.ReadConfigBytes([]byte(`
@@ -1090,7 +1265,7 @@ event:
 `))
 	c.Assert(err, check.IsNil)
 	setBaseConfig()
-	err = LoadThrottling()
+	err = loadThrottling()
 	c.Assert(err, check.IsNil)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{})
 	err = config.ReadConfigBytes([]byte(`
@@ -1111,7 +1286,7 @@ event:
 `))
 	c.Assert(err, check.IsNil)
 	setBaseConfig()
-	err = LoadThrottling()
+	err = loadThrottling()
 	c.Assert(err, check.IsNil)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{
 		"app_app.update.env.set_global": {
@@ -1135,17 +1310,17 @@ event:
 
 func (s *S) TestLoadThrottlingInvalid(c *check.C) {
 	defer config.Unset("event:throttling")
-	err := LoadThrottling()
+	err := loadThrottling()
 	c.Assert(err, check.IsNil)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{})
 	err = config.ReadConfigBytes([]byte(`
 event:
   throttling:
-    a: 
+    a:
 `))
 	c.Assert(err, check.IsNil)
 	setBaseConfig()
-	err = LoadThrottling()
+	err = loadThrottling()
 	c.Assert(err, check.ErrorMatches, `json: cannot unmarshal object into Go value of type \[\]event.ThrottlingSpec`)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{})
 	err = config.ReadConfigBytes([]byte(`
@@ -1160,7 +1335,91 @@ event:
 `))
 	c.Assert(err, check.IsNil)
 	setBaseConfig()
-	err = LoadThrottling()
+	err = loadThrottling()
 	c.Assert(err, check.ErrorMatches, `json: cannot unmarshal string into Go struct field throttlingSpecAlias.limit of type int`)
 	c.Assert(throttlingInfo, check.DeepEquals, map[string]ThrottlingSpec{})
+}
+
+func (s *S) TestEventCancelableContext(c *check.C) {
+	evt, err := New(&Opts{
+		Target:        Target{Type: "app", Value: "myapp"},
+		Kind:          permission.PermAppUpdateEnvSet,
+		Owner:         s.token,
+		Cancelable:    true,
+		Allowed:       Allowed(permission.PermAppReadEvents),
+		AllowedCancel: Allowed(permission.PermAppReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evts, err := All()
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	err = evts[0].TryCancel("because I want", "admin@admin.com")
+	c.Assert(err, check.IsNil)
+	c.Assert(evts[0].CancelInfo.StartTime.IsZero(), check.Equals, false)
+	evts[0].CancelInfo.StartTime = time.Time{}
+	c.Assert(evts[0].CancelInfo, check.DeepEquals, cancelInfo{
+		Reason: "because I want",
+		Owner:  "admin@admin.com",
+		Asked:  true,
+	})
+	evts, err = All()
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	c.Assert(evts[0].CancelInfo.StartTime.IsZero(), check.Equals, false)
+	evts[0].CancelInfo.StartTime = time.Time{}
+	c.Assert(evts[0].CancelInfo, check.DeepEquals, cancelInfo{
+		Reason: "because I want",
+		Owner:  "admin@admin.com",
+		Asked:  true,
+	})
+	ctx, cancel := evt.CancelableContext(context.Background())
+	defer cancel()
+	<-ctx.Done()
+	c.Assert(ctx.Err(), check.Equals, context.Canceled)
+	c.Assert(evt.CancelInfo.StartTime.IsZero(), check.Equals, false)
+	c.Assert(evt.CancelInfo.AckTime.IsZero(), check.Equals, false)
+	evt.CancelInfo.StartTime = time.Time{}
+	evt.CancelInfo.AckTime = time.Time{}
+	c.Assert(evt.CancelInfo, check.DeepEquals, cancelInfo{
+		Reason:   "because I want",
+		Owner:    "admin@admin.com",
+		Asked:    true,
+		Canceled: true,
+	})
+	evts, err = All()
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	c.Assert(evts[0].CancelInfo.StartTime.IsZero(), check.Equals, false)
+	c.Assert(evts[0].CancelInfo.AckTime.IsZero(), check.Equals, false)
+	evts[0].CancelInfo.StartTime = time.Time{}
+	evts[0].CancelInfo.AckTime = time.Time{}
+	c.Assert(evts[0].CancelInfo, check.DeepEquals, cancelInfo{
+		Reason:   "because I want",
+		Owner:    "admin@admin.com",
+		Asked:    true,
+		Canceled: true,
+	})
+}
+
+func (s *S) TestEventCancelableContextNotCancelable(c *check.C) {
+	evt, err := New(&Opts{
+		Target:  Target{Type: "app", Value: "myapp"},
+		Kind:    permission.PermAppUpdateEnvSet,
+		Owner:   s.token,
+		Allowed: Allowed(permission.PermAppReadEvents),
+	})
+	c.Assert(err, check.IsNil)
+	evts, err := All()
+	c.Assert(err, check.IsNil)
+	c.Assert(evts, check.HasLen, 1)
+	nGoroutines := runtime.NumGoroutine()
+	ctx, cancel := evt.CancelableContext(context.Background())
+	c.Assert(runtime.NumGoroutine(), check.Equals, nGoroutines)
+	defer cancel()
+	select {
+	case <-ctx.Done():
+		c.Fatal("context should not be done")
+	default:
+	}
+	c.Assert(ctx.Err(), check.IsNil)
 }

@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/url"
-	"strings"
 
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/tsuru/tsuru/app/image"
@@ -23,15 +22,16 @@ import (
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/dockercommon"
 	"github.com/tsuru/tsuru/safe"
+	appTypes "github.com/tsuru/tsuru/types/app"
 )
 
 var _ builder.Builder = &dockerBuilder{}
 
-func (b *dockerBuilder) PlatformAdd(opts builder.PlatformOptions) error {
+func (b *dockerBuilder) PlatformAdd(opts appTypes.PlatformOptions) error {
 	return b.buildPlatform(opts.Name, opts.Args, opts.Output, opts.Input)
 }
 
-func (b *dockerBuilder) PlatformUpdate(opts builder.PlatformOptions) error {
+func (b *dockerBuilder) PlatformUpdate(opts appTypes.PlatformOptions) error {
 	return b.buildPlatform(opts.Name, opts.Args, opts.Output, opts.Input)
 }
 
@@ -83,18 +83,7 @@ func (b *dockerBuilder) buildPlatform(name string, args map[string]string, w io.
 	if err != nil {
 		return err
 	}
-	parts := strings.Split(imageName, ":")
-	var tag string
-	if len(parts) > 2 {
-		imageName = strings.Join(parts[:len(parts)-1], ":")
-		tag = parts[len(parts)-1]
-	} else if len(parts) > 1 {
-		imageName = parts[0]
-		tag = parts[1]
-	} else {
-		imageName = parts[0]
-		tag = "latest"
-	}
+	imageName, tag := image.SplitImageName(imageName)
 	var buf safe.Buffer
 	pushOpts := docker.PushImageOptions{
 		Name:              imageName,
@@ -118,8 +107,8 @@ func getDockerClient() (provision.BuilderDockerClient, error) {
 	var client provision.BuilderDockerClient
 	multiErr := tsuruErrors.NewMultiError()
 	for _, p := range provisioners {
-		if provisioner, ok := p.(provision.BuilderDeploy); ok {
-			client, err = provisioner.GetDockerClient(nil)
+		if provisioner, ok := p.(provision.BuilderDeployDockerClient); ok {
+			client, err = provisioner.GetClient(nil)
 			if err != nil {
 				multiErr.Add(err)
 			} else if client != nil {

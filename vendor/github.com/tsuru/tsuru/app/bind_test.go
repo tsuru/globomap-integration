@@ -5,13 +5,16 @@
 package app
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/tsuru/app/bind"
+	"github.com/tsuru/tsuru/event"
+	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/service"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestAppIsABinderApp(c *check.C) {
@@ -38,7 +41,18 @@ func (s *S) TestDeleteShouldUnbindAppFromInstance(c *check.C) {
 	c.Assert(err, check.IsNil)
 	app, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
-	Delete(app, nil)
+	buf := bytes.NewBuffer(nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	evt.SetLogWriter(buf)
+	err = Delete(app, evt, "")
+	c.Assert(err, check.IsNil)
+	c.Assert(buf.String(), check.Matches, `(?s).*Done removing application\.`+"\n$")
 	n, err := s.conn.ServiceInstances().Find(bson.M{"apps": bson.M{"$in": []string{a.Name}}}).Count()
 	c.Assert(err, check.IsNil)
 	c.Assert(n, check.Equals, 0)

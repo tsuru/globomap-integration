@@ -123,7 +123,6 @@ func (s *S) TestReadUserDataParamsOverride(c *check.C) {
 	userData, err := iaasInst.ReadUserData(params)
 	c.Assert(err, check.IsNil)
 	c.Assert(userData, check.Equals, "myvalue")
-	c.Assert(params, check.DeepEquals, map[string]string{})
 }
 
 func (s *S) TestReadUserDataParamsURL(c *check.C) {
@@ -136,7 +135,6 @@ func (s *S) TestReadUserDataParamsURL(c *check.C) {
 	userData, err := iaasInst.ReadUserData(params)
 	c.Assert(err, check.IsNil)
 	c.Assert(userData, check.Equals, "myurlvalue")
-	c.Assert(params, check.DeepEquals, map[string]string{})
 }
 
 func (s *S) TestGetConfigString(c *check.C) {
@@ -246,7 +244,8 @@ func (s *S) TestGetDefaultIaaSEc2MultipleConfigured(c *check.C) {
 }
 
 func (s *S) TestStressConcurrentGet(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1000))
+	originalMaxProcs := runtime.GOMAXPROCS(1000)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	RegisterIaasProvider("customable-iaas", newTestCustomizableIaaS)
 	config.Set("iaas:custom:abc:provider", "customable-iaas")
 	defer config.Unset("iaas:custom:abc:provider")

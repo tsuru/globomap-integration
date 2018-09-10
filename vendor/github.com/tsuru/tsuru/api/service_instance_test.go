@@ -15,8 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"golang.org/x/crypto/bcrypt"
-
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/api/context"
 	"github.com/tsuru/tsuru/app"
@@ -32,12 +31,14 @@ import (
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
 	"github.com/tsuru/tsuru/repository/repositorytest"
+	"github.com/tsuru/tsuru/router/routertest"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type ServiceInstanceSuite struct {
@@ -50,6 +51,10 @@ type ServiceInstanceSuite struct {
 	service     *service.Service
 	ts          *httptest.Server
 	testServer  http.Handler
+	mockService struct {
+		Team *authTypes.MockTeamService
+		Plan *appTypes.MockPlanService
+	}
 }
 
 var _ = check.Suite(&ServiceInstanceSuite{})
@@ -60,19 +65,20 @@ func (s *ServiceInstanceSuite) SetUpSuite(c *check.C) {
 
 func (s *ServiceInstanceSuite) SetUpTest(c *check.C) {
 	repositorytest.Reset()
+	routertest.FakeRouter.Reset()
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_api_consumption_test")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("repo-manager", "fake")
 	config.Set("docker:router", "fake")
+	config.Set("routers:fake:default", true)
+	config.Set("routers:fake:type", "fake")
 	var err error
 	s.conn, err = db.Conn()
 	c.Assert(err, check.IsNil)
 	dbtest.ClearAllCollections(s.conn.Apps().Database)
 	s.team = &authTypes.Team{Name: "tsuruteam"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	_, s.token = permissiontest.CustomUserWithPermission(c, nativeScheme, "consumption-master-user", permission.Permission{
 		Scheme:  permission.PermServiceInstance,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -89,6 +95,38 @@ func (s *ServiceInstanceSuite) SetUpTest(c *check.C) {
 	s.ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"DATABASE_HOST":"localhost"}`))
 	}))
+	s.mockService.Team = &authTypes.MockTeamService{}
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: s.team.Name}}, nil
+	}
+	s.mockService.Team.OnFindByName = func(name string) (*authTypes.Team, error) {
+		return &authTypes.Team{Name: name}, nil
+	}
+	s.mockService.Team.OnFindByNames = func(names []string) ([]authTypes.Team, error) {
+		teams := []authTypes.Team{}
+		for _, name := range names {
+			teams = append(teams, authTypes.Team{Name: name})
+		}
+		return teams, nil
+	}
+	defaultPlan := appTypes.Plan{
+		Name:     "default-plan",
+		Memory:   1024,
+		Swap:     1024,
+		CpuShare: 100,
+		Default:  true,
+	}
+	s.mockService.Plan = &appTypes.MockPlanService{
+		OnList: func() ([]appTypes.Plan, error) {
+			return []appTypes.Plan{defaultPlan}, nil
+		},
+		OnDefaultPlan: func() (*appTypes.Plan, error) {
+			return &defaultPlan, nil
+		},
+	}
+	servicemanager.Team = s.mockService.Team
+	servicemanager.Plan = s.mockService.Plan
+
 	s.service = &service.Service{
 		Name:       "mysql",
 		Teams:      []string{s.team.Name},
@@ -289,9 +327,6 @@ func (s *ServiceInstanceSuite) TestCreateInstance(c *check.C) {
 }
 
 func (s *ServiceInstanceSuite) TestCreateServiceInstanceHasAccessToTheServiceInTheInstance(c *check.C) {
-	t := authTypes.Team{Name: "judaspriest"}
-	err := auth.TeamService().Insert(t)
-	c.Assert(err, check.IsNil)
 	params := map[string]interface{}{
 		"name":         "brainsql",
 		"service_name": "mysql",
@@ -302,7 +337,7 @@ func (s *ServiceInstanceSuite) TestCreateServiceInstanceHasAccessToTheServiceInT
 	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusCreated)
 	var si service.ServiceInstance
-	err = s.conn.ServiceInstances().Find(bson.M{"name": "brainsql"}).One(&si)
+	err := s.conn.ServiceInstances().Find(bson.M{"name": "brainsql"}).One(&si)
 	c.Assert(err, check.IsNil)
 	c.Assert(si.Teams, check.DeepEquals, []string{s.team.Name})
 }
@@ -572,8 +607,6 @@ func (s *ServiceInstanceSuite) TestUpdateServiceInstanceWithTeamOwner(c *check.C
 	err := s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
 	t := authTypes.Team{Name: "changed"}
-	err = auth.TeamService().Insert(t)
-	c.Assert(err, check.IsNil)
 	params := map[string]interface{}{
 		"teamowner": t.Name,
 	}
@@ -843,8 +876,6 @@ func (s *ServiceInstanceSuite) TestRemoveServiceInstanceWithSameInstaceName(c *c
 		err := service.Create()
 		c.Assert(err, check.IsNil)
 	}
-	p := appTypes.Platform{Name: "zend"}
-	app.PlatformService().Insert(p)
 	s.pool = "test1"
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err := pool.AddPool(opts)
@@ -955,8 +986,6 @@ func (s *ServiceInstanceSuite) TestRemoveServiceInstanceWIthAssociatedAppsWithUn
 	srvc := service.Service{Name: "mysql", Endpoint: map[string]string{"production": ts.URL}, Password: "abcde", OwnerTeams: []string{s.team.Name}}
 	err = srvc.Create()
 	c.Assert(err, check.IsNil)
-	p := appTypes.Platform{Name: "zend"}
-	app.PlatformService().Insert(p)
 	s.pool = "test1"
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err = pool.AddPool(opts)
@@ -1006,8 +1035,6 @@ func (s *ServiceInstanceSuite) TestRemoveServiceInstanceWIthAssociatedAppsWithNo
 	srvc := service.Service{Name: "mysqlremove", Endpoint: map[string]string{"production": ts.URL}, Password: "abcde", OwnerTeams: []string{s.team.Name}}
 	err := srvc.Create()
 	c.Assert(err, check.IsNil)
-	p := appTypes.Platform{Name: "zend"}
-	app.PlatformService().Insert(p)
 	s.pool = "test1"
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err = pool.AddPool(opts)
@@ -1049,8 +1076,6 @@ func (s *ServiceInstanceSuite) TestRemoveServiceInstanceWIthAssociatedAppsWithNo
 	srvc := service.Service{Name: "mysqlremove", Endpoint: map[string]string{"production": ts.URL}, Password: "abcde", OwnerTeams: []string{s.team.Name}}
 	err := srvc.Create()
 	c.Assert(err, check.IsNil)
-	p := appTypes.Platform{Name: "zend"}
-	app.PlatformService().Insert(p)
 	s.pool = "test1"
 	opts := pool.AddPoolOptions{Name: "test1", Default: true}
 	err = pool.AddPool(opts)
@@ -1739,7 +1764,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxy(c *check.C) {
 	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/resources/foo-instance/mypath", si.ServiceName, si.Name)
 	request, err := http.NewRequest("GET", url, nil)
 	c.Assert(err, check.IsNil)
 	reqAuth := "bearer " + s.token.GetValue()
@@ -1753,7 +1778,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxy(c *check.C) {
 	c.Assert(proxyedRequest, check.NotNil)
 	c.Assert(proxyedRequest.Header.Get("X-Custom"), check.Equals, "my request header")
 	c.Assert(proxyedRequest.Header.Get("Authorization"), check.Not(check.Equals), reqAuth)
-	c.Assert(proxyedRequest.URL.String(), check.Equals, "/mypath")
+	c.Assert(proxyedRequest.URL.String(), check.Equals, "/resources/foo-instance/mypath")
 	c.Assert(eventtest.EventDesc{
 		IsEmpty: true,
 	}, eventtest.HasEvent)
@@ -1780,7 +1805,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyPost(c *check.C) {
 	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/resources/foo-instance/mypath", si.ServiceName, si.Name)
 	body := strings.NewReader("my=awesome&body=1")
 	request, err := http.NewRequest("POST", url, body)
 	c.Assert(err, check.IsNil)
@@ -1796,14 +1821,14 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyPost(c *check.C) {
 	c.Assert(proxyedRequest, check.NotNil)
 	c.Assert(proxyedRequest.Header.Get("X-Custom"), check.Equals, "my request header")
 	c.Assert(proxyedRequest.Header.Get("Authorization"), check.Not(check.Equals), reqAuth)
-	c.Assert(proxyedRequest.URL.String(), check.Equals, "/mypath")
+	c.Assert(proxyedRequest.URL.String(), check.Equals, "/resources/foo-instance/mypath")
 	c.Assert(string(proxyedBody), check.Equals, "my=awesome&body=1")
 	c.Assert(eventtest.EventDesc{
 		Target: serviceInstanceTarget("foo", "foo-instance"),
 		Owner:  s.token.GetUserName(),
 		Kind:   "service-instance.update.proxy",
 		StartCustomData: []map[string]interface{}{
-			{"name": "callback", "value": "/mypath"},
+			{"name": "callback", "value": "/resources/foo-instance/mypath"},
 			{"name": "method", "value": "POST"},
 			{"name": "my", "value": "awesome"},
 			{"name": "body", "value": "1"},
@@ -1832,7 +1857,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyPostRawBody(c *check.C) {
 	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/resources/foo-instance/mypath", si.ServiceName, si.Name)
 	body := strings.NewReader("something-something")
 	request, err := http.NewRequest("POST", url, body)
 	c.Assert(err, check.IsNil)
@@ -1848,14 +1873,14 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyPostRawBody(c *check.C) {
 	c.Assert(proxyedRequest, check.NotNil)
 	c.Assert(proxyedRequest.Header.Get("X-Custom"), check.Equals, "my request header")
 	c.Assert(proxyedRequest.Header.Get("Authorization"), check.Not(check.Equals), reqAuth)
-	c.Assert(proxyedRequest.URL.String(), check.Equals, "/mypath")
+	c.Assert(proxyedRequest.URL.String(), check.Equals, "/resources/foo-instance/mypath")
 	c.Assert(string(proxyedBody), check.Equals, "something-something")
 	c.Assert(eventtest.EventDesc{
 		Target: serviceInstanceTarget("foo", "foo-instance"),
 		Owner:  s.token.GetUserName(),
 		Kind:   "service-instance.update.proxy",
 		StartCustomData: []map[string]interface{}{
-			{"name": "callback", "value": "/mypath"},
+			{"name": "callback", "value": "/resources/foo-instance/mypath"},
 			{"name": "method", "value": "POST"},
 		},
 	}, eventtest.HasEvent)
@@ -1872,7 +1897,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyNoContent(c *check.C) {
 	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/resources/foo-instance/mypath", si.ServiceName, si.Name)
 	request, err := http.NewRequest("GET", url, nil)
 	c.Assert(err, check.IsNil)
 	reqAuth := "bearer " + s.token.GetValue()
@@ -1894,7 +1919,7 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyError(c *check.C) {
 	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/resources/foo-instance/mypath", si.ServiceName, si.Name)
 	request, err := http.NewRequest("GET", url, nil)
 	c.Assert(err, check.IsNil)
 	reqAuth := "bearer " + s.token.GetValue()
@@ -1903,6 +1928,79 @@ func (s *ServiceInstanceSuite) TestServiceInstanceProxyError(c *check.C) {
 	s.testServer.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusBadGateway)
 	c.Assert(recorder.Body.Bytes(), check.DeepEquals, []byte("some error"))
+}
+
+func (s *ServiceInstanceSuite) TestServiceInstanceProxyOnlyPath(c *check.C) {
+	var proxyedRequest *http.Request
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyedRequest = r
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer ts.Close()
+	se := service.Service{Name: "foo", Endpoint: map[string]string{"production": ts.URL}, Password: "abcde", OwnerTeams: []string{s.team.Name}}
+	err := se.Create()
+	c.Assert(err, check.IsNil)
+	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
+	err = s.conn.ServiceInstances().Insert(si)
+	c.Assert(err, check.IsNil)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/mypath", si.ServiceName, si.Name)
+	request, err := http.NewRequest("POST", url, nil)
+	c.Assert(err, check.IsNil)
+	reqAuth := "bearer " + s.token.GetValue()
+	request.Header.Set("Authorization", reqAuth)
+	request.Header.Set("X-Custom", "my request header")
+	recorder := &closeNotifierResponseRecorder{httptest.NewRecorder()}
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusCreated)
+	c.Assert(proxyedRequest, check.NotNil)
+	c.Assert(proxyedRequest.Header.Get("X-Custom"), check.Equals, "my request header")
+	c.Assert(proxyedRequest.Header.Get("Authorization"), check.Not(check.Equals), reqAuth)
+	c.Assert(proxyedRequest.URL.String(), check.Equals, "/resources/foo-instance/mypath")
+	c.Assert(eventtest.EventDesc{
+		Target: serviceInstanceTarget("foo", "foo-instance"),
+		Owner:  s.token.GetUserName(),
+		Kind:   "service-instance.update.proxy",
+		StartCustomData: []map[string]interface{}{
+			{"name": "callback", "value": "/mypath"},
+			{"name": "method", "value": "POST"},
+		},
+	}, eventtest.HasEvent)
+}
+
+func (s *ServiceInstanceSuite) TestServiceInstanceProxyForbiddenPath(c *check.C) {
+	var proxyedRequest *http.Request
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyedRequest = r
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer ts.Close()
+	se := service.Service{Name: "foo", Endpoint: map[string]string{"production": ts.URL}, Password: "abcde", OwnerTeams: []string{s.team.Name}}
+	err := se.Create()
+	c.Assert(err, check.IsNil)
+	si := service.ServiceInstance{Name: "foo-instance", ServiceName: "foo", Teams: []string{s.team.Name}}
+	err = s.conn.ServiceInstances().Insert(si)
+	c.Assert(err, check.IsNil)
+	url := fmt.Sprintf("/services/%s/proxy/%s?callback=/", si.ServiceName, si.Name)
+	request, err := http.NewRequest("POST", url, nil)
+	c.Assert(err, check.IsNil)
+	reqAuth := "bearer " + s.token.GetValue()
+	request.Header.Set("Authorization", reqAuth)
+	request.Header.Set("X-Custom", "my request header")
+	recorder := &closeNotifierResponseRecorder{httptest.NewRecorder()}
+	s.testServer.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusBadRequest)
+	c.Assert(recorder.Body.String(), check.Equals, "proxy request POST \"\" is forbidden\n")
+	c.Assert(proxyedRequest, check.IsNil)
+	c.Assert(eventtest.EventDesc{
+		Target: serviceInstanceTarget("foo", "foo-instance"),
+		Owner:  s.token.GetUserName(),
+		Kind:   "service-instance.update.proxy",
+		StartCustomData: []map[string]interface{}{
+			{"name": "callback", "value": "/"},
+			{"name": "method", "value": "POST"},
+		},
+		ErrorMatches: "proxy request POST \"\" is forbidden",
+	}, eventtest.HasEvent)
 }
 
 func (s *ServiceInstanceSuite) TestGrantRevokeServiceToTeam(c *check.C) {
@@ -1916,10 +2014,9 @@ func (s *ServiceInstanceSuite) TestGrantRevokeServiceToTeam(c *check.C) {
 	si := service.ServiceInstance{Name: "si-test", ServiceName: "go", Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si)
 	c.Assert(err, check.IsNil)
-	team := authTypes.Team{Name: "test"}
-	auth.TeamService().Insert(team)
+	teamName := "test"
 	url := fmt.Sprintf("/services/%s/instances/permission/%s/%s?:instance=%s&:team=%s&:service=%s", si.ServiceName, si.Name,
-		team.Name, si.Name, team.Name, si.ServiceName)
+		teamName, si.Name, teamName, si.ServiceName)
 	request, err := http.NewRequest("PUT", url, nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
@@ -1935,7 +2032,7 @@ func (s *ServiceInstanceSuite) TestGrantRevokeServiceToTeam(c *check.C) {
 	}, eventtest.HasEvent)
 	sinst, err := service.GetServiceInstance(si.ServiceName, si.Name)
 	c.Assert(err, check.IsNil)
-	c.Assert(sinst.Teams, check.DeepEquals, []string{s.team.Name, team.Name})
+	c.Assert(sinst.Teams, check.DeepEquals, []string{s.team.Name, teamName})
 	request, err = http.NewRequest("DELETE", url, nil)
 	c.Assert(err, check.IsNil)
 	err = serviceInstanceRevokeTeam(recorder, request, s.token)
@@ -1972,10 +2069,9 @@ func (s *ServiceInstanceSuite) TestGrantRevokeServiceToTeamWithManyInstanceName(
 	si2 := service.ServiceInstance{Name: "si-test", ServiceName: se[1].Name, Teams: []string{s.team.Name}}
 	err = s.conn.ServiceInstances().Insert(si2)
 	c.Assert(err, check.IsNil)
-	team := authTypes.Team{Name: "test"}
-	auth.TeamService().Insert(team)
+	teamName := "test"
 	url := fmt.Sprintf("/services/%s/instances/permission/%s/%s?:instance=%s&:team=%s&:service=%s", si2.ServiceName, si2.Name,
-		team.Name, si2.Name, team.Name, si2.ServiceName)
+		teamName, si2.Name, teamName, si2.ServiceName)
 	request, err := http.NewRequest("PUT", url, nil)
 	c.Assert(err, check.IsNil)
 	recorder := httptest.NewRecorder()
@@ -1983,7 +2079,7 @@ func (s *ServiceInstanceSuite) TestGrantRevokeServiceToTeamWithManyInstanceName(
 	c.Assert(err, check.IsNil)
 	sinst, err := service.GetServiceInstance(si2.ServiceName, si2.Name)
 	c.Assert(err, check.IsNil)
-	c.Assert(sinst.Teams, check.DeepEquals, []string{s.team.Name, team.Name})
+	c.Assert(sinst.Teams, check.DeepEquals, []string{s.team.Name, teamName})
 	sinst, err = service.GetServiceInstance(si.ServiceName, si.Name)
 	c.Assert(err, check.IsNil)
 	c.Assert(sinst.Teams, check.DeepEquals, []string{s.team.Name})

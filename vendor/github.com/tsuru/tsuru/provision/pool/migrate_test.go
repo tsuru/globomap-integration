@@ -5,8 +5,8 @@
 package pool
 
 import (
+	"github.com/globalsign/mgo/bson"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestMigratePoolTeamsToPoolConstraints(c *check.C) {
@@ -23,13 +23,13 @@ func (s *S) TestMigratePoolTeamsToPoolConstraints(c *check.C) {
 	c.Assert(constraint, check.DeepEquals, &PoolConstraint{
 		PoolExpr: "pool1",
 		Values:   []string{"team1", "team2"},
-		Field:    "team",
+		Field:    ConstraintTypeTeam,
 	})
 	constraint, err = getExactConstraintForPool("publicPool", "team")
 	c.Assert(err, check.IsNil)
 	c.Assert(constraint, check.DeepEquals, &PoolConstraint{
 		PoolExpr: "publicPool",
 		Values:   []string{"*"},
-		Field:    "team",
+		Field:    ConstraintTypeTeam,
 	})
 }

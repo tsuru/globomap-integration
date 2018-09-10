@@ -10,13 +10,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
-	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/db/dbtest"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
+	"github.com/tsuru/tsuru/servicemanager"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
@@ -38,7 +38,9 @@ type fakePlanOpts struct {
 	}
 }
 
-type S struct{}
+type S struct {
+	mockTeamService *authTypes.MockTeamService
+}
 
 var _ = check.Suite(&S{})
 
@@ -48,7 +50,7 @@ func Test(t *testing.T) {
 
 func updateConfig(data string) {
 	config.ReadConfigBytes([]byte(data))
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_volume_test")
 }
 
@@ -100,10 +102,21 @@ func (s *S) SetUpTest(c *check.C) {
 		Provisioner: "fake",
 	})
 	c.Assert(err, check.IsNil)
-	err = auth.TeamService().Insert(authTypes.Team{Name: "myteam"})
-	c.Assert(err, check.IsNil)
-	err = auth.TeamService().Insert(authTypes.Team{Name: "otherteam"})
-	c.Assert(err, check.IsNil)
+	teams := []authTypes.Team{{Name: "myteam"}, {Name: "otherteam"}}
+	s.mockTeamService = &authTypes.MockTeamService{
+		OnList: func() ([]authTypes.Team, error) {
+			return teams, nil
+		},
+		OnFindByName: func(name string) (*authTypes.Team, error) {
+			for _, t := range teams {
+				if name == t.Name {
+					return &t, nil
+				}
+			}
+			return nil, authTypes.ErrTeamNotFound
+		},
+	}
+	servicemanager.Team = s.mockTeamService
 	updateConfig(baseConfig)
 }
 
@@ -292,6 +305,35 @@ func (s *S) TestVolumeBindAppMultipleMounts(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = v.BindApp("myapp", "/mnt1", false)
 	c.Assert(err, check.IsNil)
+	err = v.BindApp("myapp2", "/mnt1", false)
+	c.Assert(err, check.IsNil)
+	err = v.BindApp("myapp", "/mnt2", true)
+	c.Assert(err, check.IsNil)
+	err = v.BindApp("myapp", "/mnt2", false)
+	c.Assert(err, check.Equals, ErrVolumeAlreadyBound)
+	expected := []VolumeBind{
+		{ID: VolumeBindID{App: "myapp", MountPoint: "/mnt1", Volume: "v1"}, ReadOnly: false},
+		{ID: VolumeBindID{App: "myapp2", MountPoint: "/mnt1", Volume: "v1"}, ReadOnly: false},
+		{ID: VolumeBindID{App: "myapp", MountPoint: "/mnt2", Volume: "v1"}, ReadOnly: true},
+	}
+	binds, err := v.LoadBinds()
+	c.Assert(err, check.IsNil)
+	c.Assert(binds, check.DeepEquals, expected)
+}
+
+func (s *S) TestLoadBindsForApp(c *check.C) {
+	v := Volume{
+		Name:      "v1",
+		Plan:      VolumePlan{Name: "p1"},
+		Pool:      "mypool",
+		TeamOwner: "myteam",
+	}
+	err := v.Save()
+	c.Assert(err, check.IsNil)
+	err = v.BindApp("myapp", "/mnt1", false)
+	c.Assert(err, check.IsNil)
+	err = v.BindApp("myapp2", "/mnt1", false)
+	c.Assert(err, check.IsNil)
 	err = v.BindApp("myapp", "/mnt2", true)
 	c.Assert(err, check.IsNil)
 	err = v.BindApp("myapp", "/mnt2", false)
@@ -300,7 +342,7 @@ func (s *S) TestVolumeBindAppMultipleMounts(c *check.C) {
 		{ID: VolumeBindID{App: "myapp", MountPoint: "/mnt1", Volume: "v1"}, ReadOnly: false},
 		{ID: VolumeBindID{App: "myapp", MountPoint: "/mnt2", Volume: "v1"}, ReadOnly: true},
 	}
-	binds, err := v.LoadBinds()
+	binds, err := v.LoadBindsForApp("myapp")
 	c.Assert(err, check.IsNil)
 	c.Assert(binds, check.DeepEquals, expected)
 }

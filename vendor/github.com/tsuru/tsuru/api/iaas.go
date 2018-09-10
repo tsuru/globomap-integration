@@ -10,12 +10,12 @@ import (
 	"net/http"
 
 	"github.com/ajg/form"
+	"github.com/globalsign/mgo"
 	"github.com/tsuru/tsuru/auth"
 	"github.com/tsuru/tsuru/errors"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/iaas"
 	"github.com/tsuru/tsuru/permission"
-	"gopkg.in/mgo.v2"
 )
 
 // title: machine list
@@ -67,7 +67,7 @@ func machineDestroy(w http.ResponseWriter, r *http.Request, token auth.Token) (e
 	}
 	m, err := iaas.FindMachineById(machineID)
 	if err != nil {
-		if err == mgo.ErrNotFound {
+		if err == iaas.ErrMachineNotFound {
 			return &errors.HTTP{Code: http.StatusNotFound, Message: "machine not found"}
 		}
 		return err
@@ -141,6 +141,7 @@ func templateCreate(w http.ResponseWriter, r *http.Request, token auth.Token) (e
 	var paramTemplate iaas.Template
 	dec := form.NewDecoder(nil)
 	dec.IgnoreUnknownKeys(true)
+	dec.IgnoreCase(true)
 	err = dec.DecodeValues(&paramTemplate, r.Form)
 	if err != nil {
 		return &errors.HTTP{Code: http.StatusBadRequest, Message: err.Error()}
@@ -228,6 +229,7 @@ func templateUpdate(w http.ResponseWriter, r *http.Request, token auth.Token) (e
 	}
 	var paramTemplate iaas.Template
 	dec := form.NewDecoder(nil)
+	dec.IgnoreCase(true)
 	dec.IgnoreUnknownKeys(true)
 	err = dec.DecodeValues(&paramTemplate, r.Form)
 	if err != nil {

@@ -13,8 +13,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"strconv"
-
 	"strings"
 
 	"github.com/pkg/errors"
@@ -23,6 +21,8 @@ import (
 	"github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/router"
 )
+
+//go:generate bash -c "rm -f routeriface.go && go run ./generator/combinations.go -o routeriface.go"
 
 const routerType = "api"
 
@@ -34,6 +34,8 @@ var (
 	_ router.TLSRouter               = &apiRouterWithTLSSupport{}
 	_ router.CNameRouter             = &apiRouterWithCnameSupport{}
 	_ router.CustomHealthcheckRouter = &apiRouterWithHealthcheckSupport{}
+	_ router.InfoRouter              = &apiRouterWithInfo{}
+	_ router.StatusRouter            = &apiRouterWithStatus{}
 )
 
 type apiRouter struct {
@@ -50,8 +52,17 @@ type apiRouterWithTLSSupport struct{ *apiRouter }
 
 type apiRouterWithHealthcheckSupport struct{ *apiRouter }
 
+type apiRouterWithInfo struct{ *apiRouter }
+
+type apiRouterWithStatus struct{ *apiRouter }
+
 type routesReq struct {
 	Addresses []string `json:"addresses"`
+}
+
+type swapReq struct {
+	Target    string `json:"target"`
+	CnameOnly bool   `json:"cnameOnly"`
 }
 
 type cnamesResp struct {
@@ -66,6 +77,23 @@ type certData struct {
 type backendResp struct {
 	Address string `json:"address"`
 }
+
+type statusResp struct {
+	Status router.BackendStatus `json:"status"`
+	Detail string               `json:"detail"`
+}
+
+type capability string
+
+var (
+	capCName       = capability("cname")
+	capTLS         = capability("tls")
+	capHealthcheck = capability("healthcheck")
+	capInfo        = capability("info")
+	capStatus      = capability("status")
+
+	allCaps = []capability{capCName, capTLS, capHealthcheck, capInfo, capStatus}
+)
 
 func init() {
 	router.Register(routerType, createRouter)
@@ -100,65 +128,40 @@ func createRouter(routerName, configPrefix string) (router.Router, error) {
 		debug:      debug,
 		headers:    headerMap,
 	}
-	cnameAPI := &apiRouterWithCnameSupport{baseRouter}
-	tlsAPI := &apiRouterWithTLSSupport{baseRouter}
-	hcAPI := &apiRouterWithHealthcheckSupport{baseRouter}
-	ifMap := map[[3]bool]router.Router{
-		{true, false, false}: cnameAPI,
-		{false, true, false}: tlsAPI,
-		{false, false, true}: hcAPI,
-		{true, true, false}: &struct {
-			router.CNameRouter
-			router.TLSRouter
-		}{cnameAPI, tlsAPI},
-		{true, false, true}: &struct {
-			router.CNameRouter
-			router.CustomHealthcheckRouter
-		}{cnameAPI, hcAPI},
-		{false, true, true}: &struct {
-			*apiRouter
-			router.TLSRouter
-			router.CustomHealthcheckRouter
-		}{baseRouter, tlsAPI, hcAPI},
-		{true, true, true}: &struct {
-			router.CNameRouter
-			router.TLSRouter
-			router.CustomHealthcheckRouter
-		}{cnameAPI, tlsAPI, hcAPI},
-	}
-	var supports [3]bool
-	for i, s := range []string{"cname", "tls", "healthcheck"} {
+	supports := map[capability]bool{}
+	for _, cap := range allCaps {
 		var err error
-		supports[i], err = baseRouter.checkSupports(s)
+		supports[cap], err = baseRouter.checkSupports(string(cap))
 		if err != nil {
-			log.Errorf("failed to fetch %q support from router %q: %s", s, routerName, err)
+			log.Errorf("failed to fetch %q support from router %q: %s", cap, routerName, err)
 		}
 	}
-	if r, ok := ifMap[supports]; ok {
-		return r, nil
-	}
-	return baseRouter, nil
+	return toSupportedInterface(baseRouter, supports), nil
 }
 
-func (r *apiRouter) AddBackend(name string) (err error) {
-	return r.AddBackendOpts(name, nil)
+func (r *apiRouter) GetName() string {
+	return r.routerName
 }
 
-func (r *apiRouter) AddBackendOpts(name string, opts map[string]string) error {
-	err := r.doBackendOpts(name, http.MethodPost, opts)
+func (r *apiRouter) AddBackend(app router.App) (err error) {
+	return r.AddBackendOpts(app, nil)
+}
+
+func (r *apiRouter) AddBackendOpts(app router.App, opts map[string]string) error {
+	err := r.doBackendOpts(app, http.MethodPost, opts)
 	if err != nil {
 		return err
 	}
-	return router.Store(name, name, routerType)
+	return router.Store(app.GetName(), app.GetName(), routerType)
 }
 
-func (r *apiRouter) UpdateBackendOpts(name string, opts map[string]string) error {
-	return r.doBackendOpts(name, http.MethodPut, opts)
+func (r *apiRouter) UpdateBackendOpts(app router.App, opts map[string]string) error {
+	return r.doBackendOpts(app, http.MethodPut, opts)
 }
 
-func (r *apiRouter) doBackendOpts(name, method string, opts map[string]string) error {
-	path := fmt.Sprintf("backend/%s", name)
-	b, err := json.Marshal(opts)
+func (r *apiRouter) doBackendOpts(app router.App, method string, opts map[string]string) error {
+	path := fmt.Sprintf("backend/%s", app.GetName())
+	b, err := json.Marshal(addDefaultOpts(app, opts))
 	if err != nil {
 		return err
 	}
@@ -266,8 +269,13 @@ func (r *apiRouter) Addr(name string) (addr string, err error) {
 }
 
 func (r *apiRouter) Swap(backend1 string, backend2 string, cnameOnly bool) (err error) {
-	path := fmt.Sprintf("backend/%s/swap?target=%s&cnameOnly=%s", backend1, backend2, strconv.FormatBool(cnameOnly))
-	_, code, err := r.do(http.MethodPost, path, nil)
+	path := fmt.Sprintf("backend/%s/swap", backend1)
+	data, err := json.Marshal(swapReq{Target: backend2, CnameOnly: cnameOnly})
+	if err != nil {
+		return err
+	}
+	body := bytes.NewReader(data)
+	_, code, err := r.do(http.MethodPost, path, body)
 	if code == http.StatusNotFound {
 		return router.ErrBackendNotFound
 	}
@@ -399,36 +407,36 @@ func (r *apiRouterWithCnameSupport) CNames(name string) ([]*url.URL, error) {
 	return urls, nil
 }
 
-func (r *apiRouterWithTLSSupport) AddCertificate(cname, certificate, key string) error {
+func (r *apiRouterWithTLSSupport) AddCertificate(app router.App, cname, certificate, key string) error {
 	cert := certData{Certificate: certificate, Key: key}
 	b, err := json.Marshal(&cert)
 	if err != nil {
 		return err
 	}
-	_, _, err = r.do(http.MethodPut, fmt.Sprintf("certificate/%s", cname), bytes.NewReader(b))
+	_, _, err = r.do(http.MethodPut, fmt.Sprintf("backend/%s/certificate/%s", app.GetName(), cname), bytes.NewReader(b))
 	return err
 }
 
-func (r *apiRouterWithTLSSupport) RemoveCertificate(cname string) error {
-	_, code, err := r.do(http.MethodDelete, fmt.Sprintf("certificate/%s", cname), nil)
+func (r *apiRouterWithTLSSupport) RemoveCertificate(app router.App, cname string) error {
+	_, code, err := r.do(http.MethodDelete, fmt.Sprintf("backend/%s/certificate/%s", app.GetName(), cname), nil)
 	if code == http.StatusNotFound {
 		return router.ErrCertificateNotFound
 	}
 	return err
 }
 
-func (r *apiRouterWithTLSSupport) GetCertificate(cname string) (string, error) {
-	data, code, err := r.do(http.MethodGet, fmt.Sprintf("certificate/%s", cname), nil)
+func (r *apiRouterWithTLSSupport) GetCertificate(app router.App, cname string) (string, error) {
+	data, code, err := r.do(http.MethodGet, fmt.Sprintf("backend/%s/certificate/%s", app.GetName(), cname), nil)
 	switch code {
 	case http.StatusNotFound:
 		return "", router.ErrCertificateNotFound
 	case http.StatusOK:
-		var cert string
+		var cert certData
 		errJSON := json.Unmarshal(data, &cert)
 		if errJSON != nil {
 			return "", errJSON
 		}
-		return cert, nil
+		return cert.Certificate, nil
 	}
 	return "", err
 }
@@ -447,4 +455,46 @@ func (r *apiRouterWithHealthcheckSupport) SetHealthcheck(name string, data route
 		return router.ErrBackendNotFound
 	}
 	return err
+}
+
+func (r *apiRouterWithInfo) GetInfo() (map[string]string, error) {
+	data, _, err := r.do(http.MethodGet, "info", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]string
+	err = json.Unmarshal(data, &result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *apiRouterWithStatus) GetBackendStatus(name string) (router.BackendStatus, string, error) {
+	backendName, err := router.Retrieve(name)
+	if err != nil {
+		return "", "", err
+	}
+	data, _, err := r.do(http.MethodGet, fmt.Sprintf("backend/%s/status", backendName), nil)
+	if err != nil {
+		return "", "", err
+	}
+	var status statusResp
+	err = json.Unmarshal(data, &status)
+	if err != nil {
+		return "", "", err
+	}
+	return status.Status, status.Detail, nil
+}
+
+func addDefaultOpts(app router.App, opts map[string]string) map[string]interface{} {
+	mergedOpts := make(map[string]interface{})
+	for k, v := range opts {
+		mergedOpts[k] = v
+	}
+	prefix := "tsuru.io/"
+	mergedOpts[prefix+"app-pool"] = app.GetPool()
+	mergedOpts[prefix+"app-teamowner"] = app.GetTeamOwner()
+	mergedOpts[prefix+"app-teams"] = app.GetTeamsName()
+	return mergedOpts
 }

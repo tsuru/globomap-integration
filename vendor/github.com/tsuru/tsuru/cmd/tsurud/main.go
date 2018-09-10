@@ -13,6 +13,7 @@ import (
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/api"
 	_ "github.com/tsuru/tsuru/builder/docker"
+	_ "github.com/tsuru/tsuru/builder/kubernetes"
 	"github.com/tsuru/tsuru/cmd"
 	"github.com/tsuru/tsuru/iaas/dockermachine"
 	_ "github.com/tsuru/tsuru/provision/docker"
@@ -33,7 +34,7 @@ func buildManager() *cmd.Manager {
 	m.Register(&tsurudCommand{Command: &migrateCmd{}})
 	m.Register(&tsurudCommand{Command: gandalfSyncCmd{}})
 	m.Register(&tsurudCommand{Command: createRootUserCmd{}})
-	m.Register(&migrationListCmd{})
+	m.Register(&tsurudCommand{Command: &migrationListCmd{}})
 	return m
 }
 
@@ -42,9 +43,7 @@ func inDockerMachineDriverMode() bool {
 }
 
 func main() {
-	err := agent.Listen(&agent.Options{
-		NoShutdownCleanup: true,
-	})
+	err := agent.Listen(agent.Options{})
 	if err != nil {
 		log.Fatalf("Unable to start a Gops agent %s", err)
 	}

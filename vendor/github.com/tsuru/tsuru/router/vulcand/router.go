@@ -54,6 +54,10 @@ func createRouter(routerName, configPrefix string) (router.Router, error) {
 	return vRouter, nil
 }
 
+func (r *vulcandRouter) GetName() string {
+	return r.routerName
+}
+
 func (r *vulcandRouter) frontendHostname(app string) string {
 	return fmt.Sprintf("%s.%s", app, r.domain)
 }
@@ -70,7 +74,8 @@ func (r *vulcandRouter) serverName(address string) string {
 	return fmt.Sprintf("tsuru_%x", md5.Sum([]byte(address)))
 }
 
-func (r *vulcandRouter) AddBackend(name string) (err error) {
+func (r *vulcandRouter) AddBackend(app router.App) (err error) {
+	name := app.GetName()
 	done := router.InstrumentRequest(r.routerName)
 	defer func() {
 		done(err)

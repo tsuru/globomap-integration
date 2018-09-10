@@ -10,6 +10,7 @@ import (
 
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/router"
+	appTypes "github.com/tsuru/tsuru/types/app"
 )
 
 type RebuildRoutesResult struct {
@@ -18,32 +19,39 @@ type RebuildRoutesResult struct {
 }
 
 type RebuildApp interface {
-	GetRouterOpts() map[string]string
-	GetName() string
+	router.App
 	GetCname() []string
-	GetRouter() (router.Router, error)
+	GetRouters() []appTypes.AppRouter
+	GetHealthcheckData() (router.HealthcheckData, error)
 	RoutableAddresses() ([]url.URL, error)
-	UpdateAddr() error
 	InternalLock(string) (bool, error)
 	Unlock()
 }
 
-func RebuildRoutes(app RebuildApp, dry bool) (*RebuildRoutesResult, error) {
+func RebuildRoutes(app RebuildApp, dry bool) (map[string]RebuildRoutesResult, error) {
+	result := make(map[string]RebuildRoutesResult)
+	for _, appRouter := range app.GetRouters() {
+		resultInRouter, err := rebuildRoutesInRouter(app, dry, appRouter)
+		if err != nil {
+			return nil, err
+		}
+		result[appRouter.Name] = *resultInRouter
+	}
+	return result, nil
+}
+
+func rebuildRoutesInRouter(app RebuildApp, dry bool, appRouter appTypes.AppRouter) (*RebuildRoutesResult, error) {
 	log.Debugf("[rebuild-routes] rebuilding routes for app %q", app.GetName())
-	r, err := app.GetRouter()
+	r, err := router.Get(appRouter.Name)
 	if err != nil {
 		return nil, err
 	}
 	if optsRouter, ok := r.(router.OptsRouter); ok {
-		err = optsRouter.AddBackendOpts(app.GetName(), app.GetRouterOpts())
+		err = optsRouter.AddBackendOpts(app, appRouter.Opts)
 	} else {
-		err = r.AddBackend(app.GetName())
+		err = r.AddBackend(app)
 	}
 	if err != nil && err != router.ErrBackendExists {
-		return nil, err
-	}
-	err = app.UpdateAddr()
-	if err != nil {
 		return nil, err
 	}
 	if cnameRouter, ok := r.(router.CNameRouter); ok {
@@ -52,6 +60,16 @@ func RebuildRoutes(app RebuildApp, dry bool) (*RebuildRoutesResult, error) {
 			if err != nil && err != router.ErrCNameExists {
 				return nil, err
 			}
+		}
+	}
+	if hcRouter, ok := r.(router.CustomHealthcheckRouter); ok {
+		hcData, errHc := app.GetHealthcheckData()
+		if errHc != nil {
+			return nil, errHc
+		}
+		errHc = hcRouter.SetHealthcheck(app.GetName(), hcData)
+		if errHc != nil {
+			return nil, errHc
 		}
 	}
 	oldRoutes, err := r.Routes(app.GetName())

@@ -18,6 +18,7 @@ import (
 
 	"github.com/fsouza/go-dockerclient/testing"
 	dtesting "github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/api"
@@ -38,7 +39,6 @@ import (
 	"github.com/tsuru/tsuru/queue"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2"
 )
 
 type HandlersSuite struct {
@@ -60,10 +60,10 @@ func (s *HandlersSuite) SetUpSuite(c *check.C) {
 	config.Set("docker:collection", "docker_handler_suite")
 	config.Set("docker:run-cmd:port", 8888)
 	config.Set("docker:router", "fake")
-	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017")
+	config.Set("docker:cluster:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("docker:cluster:mongo-database", "docker_provision_handlers_tests_cluster_stor")
 	config.Set("docker:repository-namespace", "tsuru")
-	config.Set("queue:mongo-url", "127.0.0.1:27017")
+	config.Set("queue:mongo-url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("queue:mongo-database", "queue_provision_docker_tests_handlers")
 	config.Set("iaas:default", "test-iaas")
 	config.Set("iaas:node-protocol", "http")
@@ -78,8 +78,6 @@ func (s *HandlersSuite) SetUpSuite(c *check.C) {
 	c.Assert(err, check.IsNil)
 	app.AuthScheme = nativeScheme
 	s.team = &authTypes.Team{Name: "admin"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 }
 
 func (s *HandlersSuite) SetUpTest(c *check.C) {

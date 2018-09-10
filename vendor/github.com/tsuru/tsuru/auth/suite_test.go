@@ -37,7 +37,7 @@ func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("auth:token-expire-days", 2)
 	config.Set("auth:hash-cost", bcrypt.MinCost)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_auth_test")
 	s.conn, _ = db.Conn()
 	s.gitHost, _ = config.GetString("git:host")
@@ -60,7 +60,10 @@ func (s *S) SetUpTest(c *check.C) {
 	s.user.Create()
 	s.hashed = s.user.Password
 	s.team = &authTypes.Team{Name: "cobrateam"}
-	err = TeamService().Insert(*s.team)
+	u := authTypes.User(*s.user)
+	svc, err := TeamService()
+	c.Assert(err, check.IsNil)
+	err = svc.Create(s.team.Name, &u)
 	c.Assert(err, check.IsNil)
 	s.server, err = authtest.NewSMTPServer()
 	c.Assert(err, check.IsNil)

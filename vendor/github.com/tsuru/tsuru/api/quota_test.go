@@ -10,8 +10,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	authTypes "github.com/tsuru/tsuru/types/auth"
+
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
@@ -24,9 +27,7 @@ import (
 	"github.com/tsuru/tsuru/quota"
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
-	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type QuotaSuite struct {
@@ -41,7 +42,7 @@ var _ = check.Suite(&QuotaSuite{})
 func (s *QuotaSuite) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_api_quota_test")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("repo-manager", "fake")
@@ -54,8 +55,6 @@ func (s *QuotaSuite) SetUpTest(c *check.C) {
 	dbtest.ClearAllCollections(conn.Apps().Database)
 	repositorytest.Reset()
 	s.team = &authTypes.Team{Name: "superteam"}
-	err := auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
 	_, s.token = permissiontest.CustomUserWithPermission(c, nativeScheme, "quotauser", permission.Permission{
 		Scheme:  permission.PermAppAdminQuota,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -63,6 +62,7 @@ func (s *QuotaSuite) SetUpTest(c *check.C) {
 		Scheme:  permission.PermUserUpdateQuota,
 		Context: permission.Context(permission.CtxGlobal, ""),
 	})
+	var err error
 	s.user, err = s.token.User()
 	c.Assert(err, check.IsNil)
 	app.AuthScheme = nativeScheme
@@ -126,7 +126,7 @@ func (s *QuotaSuite) TestGetUserQuotaUserNotFound(c *check.C) {
 	handler := RunServer(true)
 	handler.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
-	c.Assert(recorder.Body.String(), check.Equals, auth.ErrUserNotFound.Error()+"\n")
+	c.Assert(recorder.Body.String(), check.Equals, authTypes.ErrUserNotFound.Error()+"\n")
 }
 
 func (s *QuotaSuite) TestChangeUserQuota(c *check.C) {
@@ -224,7 +224,7 @@ func (s *QuotaSuite) TestChangeUserQuotaUserNotFound(c *check.C) {
 	handler := RunServer(true)
 	handler.ServeHTTP(recorder, request)
 	c.Assert(recorder.Code, check.Equals, http.StatusNotFound)
-	c.Assert(recorder.Body.String(), check.Equals, auth.ErrUserNotFound.Error()+"\n")
+	c.Assert(recorder.Body.String(), check.Equals, authTypes.ErrUserNotFound.Error()+"\n")
 }
 
 func (s *QuotaSuite) TestGetAppQuota(c *check.C) {

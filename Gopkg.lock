@@ -8,6 +8,18 @@
   version = "v1.2.0"
 
 [[projects]]
+  name = "github.com/kr/pretty"
+  packages = ["."]
+  revision = "73f6ac0b30a98e433b289500d779f50c1a6f0712"
+  version = "v0.1.0"
+
+[[projects]]
+  name = "github.com/kr/text"
+  packages = ["."]
+  revision = "e2ffdb16a802fe2bb95e2e35ff34f0e53aeef34f"
+  version = "v0.1.0"
+
+[[projects]]
   branch = "master"
   name = "github.com/tsuru/gnuflag"
   packages = ["."]
@@ -17,13 +29,13 @@
   branch = "master"
   name = "github.com/tsuru/go-tsuruclient"
   packages = ["pkg/tsuru"]
-  revision = "cc97793b2890aa9f3be385150e8dce7e5d93c98b"
+  revision = "48b7362ac10fd33402292c9c5fb4666aa7f33650"
 
 [[projects]]
   name = "github.com/tsuru/tsuru"
   packages = ["errors"]
-  revision = "c91725578089a31e3b485ea3af94705334bb89ff"
-  version = "1.4.0"
+  revision = "0dc4eabc059a56ac1d6d5f19889587e40b1dc708"
+  version = "1.5.4"
 
 [[projects]]
   branch = "master"
@@ -61,7 +73,7 @@
   branch = "v1"
   name = "gopkg.in/check.v1"
   packages = ["."]
-  revision = "20d25e2804050c1cd24a7eea1e7a6447dd0e74ec"
+  revision = "788fd78401277ebd861206a03c884797c6ec5541"
 
 [[projects]]
   branch = "v2"
@@ -70,7 +82,7 @@
     "bson",
     "internal/json"
   ]
-  revision = "3f83fa5005286a7fe593b055f0d7771a7dce4655"
+  revision = "9856a29383ce1c59f308dd1cf0363a79b5bef6b5"
 
 [solve-meta]
   analyzer-name = "dep"

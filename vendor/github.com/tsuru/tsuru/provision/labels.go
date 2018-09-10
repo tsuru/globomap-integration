@@ -14,14 +14,15 @@ import (
 )
 
 var (
-	labelIsTsuru         = "is-tsuru"
-	labelIsStopped       = "is-stopped"
-	labelIsAsleep        = "is-asleep"
-	labelIsBuild         = "is-build"
-	labelIsDeploy        = "is-deploy"
-	labelIsIsolatedRun   = "is-isolated-run"
-	labelIsNodeContainer = "is-node-container"
-	labelIsService       = "is-service"
+	labelIsTsuru           = "is-tsuru"
+	labelIsStopped         = "is-stopped"
+	labelIsAsleep          = "is-asleep"
+	labelIsBuild           = "is-build"
+	labelIsDeploy          = "is-deploy"
+	labelIsIsolatedRun     = "is-isolated-run"
+	labelIsNodeContainer   = "is-node-container"
+	labelIsService         = "is-service"
+	labelIsHeadlessService = "is-headless-service"
 
 	labelAppName            = "app-name"
 	labelAppProcess         = "app-process"
@@ -32,9 +33,10 @@ var (
 	labelNodeContainerName = "node-container-name"
 	labelNodeContainerPool = "node-container-pool"
 
-	labelNodeInternalPrefix = "tsuru-internal-"
+	labelNodeInternalPrefix = "internal-"
 	labelNodeAddr           = labelNodeInternalPrefix + "node-addr"
 	LabelNodePool           = PoolMetadataName
+	labelNodeIaaSID         = IaaSIDMetadataName
 
 	labelVolumeName = "volume-name"
 	labelVolumePool = "volume-pool"
@@ -50,7 +52,7 @@ var (
 
 	labelBuilder = "builder"
 
-	LabelClusterMetadata = "tsuru.io/cluster"
+	labelClusterMetadata = "tsuru.io/cluster"
 )
 
 type LabelSet struct {
@@ -110,16 +112,65 @@ func (s *LabelSet) NodePool() string {
 	return s.getLabel(LabelNodePool)
 }
 
-func (s *LabelSet) PublicNodeLabels() map[string]string {
-	internalLabels := make(map[string]string)
+func (s *LabelSet) NodeIaaSID() string {
+	return s.getLabel(labelNodeIaaSID)
+}
+
+func (s *LabelSet) WithoutAppReplicas() *LabelSet {
+	ns := LabelSet{Prefix: s.Prefix, Labels: make(map[string]string)}
 	for k, v := range s.Labels {
-		if strings.HasPrefix(k, labelNodeInternalPrefix) ||
-			strings.HasPrefix(k, s.Prefix+labelNodeInternalPrefix) {
+		if k == labelAppProcessReplicas {
 			continue
 		}
-		internalLabels[k] = v
+		ns.Labels[k] = v
 	}
-	return internalLabels
+	return &ns
+}
+
+func filterByPrefix(m map[string]string, prefix string, withPrefix bool) map[string]string {
+	result := make(map[string]string, len(m))
+	for k, v := range m {
+		hasPrefix := strings.HasPrefix(k, prefix)
+		if hasPrefix == withPrefix {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+func (s *LabelSet) NodeMetadata() map[string]string {
+	m := filterByPrefix(s.Labels, s.Prefix, true)
+	for k := range m {
+		if strings.HasPrefix(k, s.Prefix+labelNodeInternalPrefix) {
+			delete(m, k)
+		}
+	}
+	return m
+}
+
+func (s *LabelSet) NodeMetadataNoPrefix() map[string]string {
+	m := filterByPrefix(s.Labels, s.Prefix, true)
+	for k, v := range m {
+		delete(m, k)
+		if !strings.HasPrefix(k, s.Prefix+labelNodeInternalPrefix) {
+			m[strings.TrimPrefix(k, s.Prefix)] = v
+		}
+
+	}
+	return m
+}
+
+func (s *LabelSet) NodeExtraData(cluster string) map[string]string {
+	m := filterByPrefix(s.Labels, s.Prefix, false)
+	for k, v := range s.Labels {
+		if strings.HasPrefix(k, s.Prefix+labelNodeInternalPrefix) {
+			m[k] = v
+		}
+	}
+	if cluster != "" {
+		m[labelClusterMetadata] = cluster
+	}
+	return m
 }
 
 func (s *LabelSet) AppReplicas() int {
@@ -170,6 +221,10 @@ func (s *LabelSet) SetAsleep() {
 
 func (s *LabelSet) SetIsService() {
 	s.addLabel(labelIsService, strconv.FormatBool(true))
+}
+
+func (s *LabelSet) SetIsHeadlessService() {
+	s.addLabel(labelIsHeadlessService, strconv.FormatBool(true))
 }
 
 func (s *LabelSet) SetBuildImage(image string) {
@@ -230,8 +285,9 @@ func ExtendServiceLabels(set *LabelSet, opts ServiceLabelExtendedOpts) {
 
 func ServiceLabels(opts ServiceLabelsOpts) (*LabelSet, error) {
 	set, err := ProcessLabels(ProcessLabelsOpts{
-		App:     opts.App,
-		Process: opts.Process,
+		App:      opts.App,
+		Process:  opts.Process,
+		IsDeploy: opts.IsDeploy,
 	})
 	if err != nil {
 		return nil, err
@@ -241,38 +297,81 @@ func ServiceLabels(opts ServiceLabelsOpts) (*LabelSet, error) {
 	return set, nil
 }
 
+func SplitServiceLabelsAnnotations(ls *LabelSet) (labels *LabelSet, ann *LabelSet) {
+	labels = &LabelSet{Prefix: ls.Prefix, Labels: map[string]string{}}
+	ann = &LabelSet{Prefix: ls.Prefix, Labels: map[string]string{}}
+	annKeys := map[string]struct{}{
+		labelRouterName: {},
+		labelRouterType: {},
+	}
+	for k, v := range ls.Labels {
+		if _, ok := annKeys[k]; ok {
+			ann.Labels[k] = v
+		} else {
+			labels.Labels[k] = v
+		}
+	}
+	return labels, ann
+}
+
 type ProcessLabelsOpts struct {
 	App         App
 	Process     string
 	Provisioner string
 	Builder     string
 	Prefix      string
+	IsDeploy    bool
 }
 
 func ProcessLabels(opts ProcessLabelsOpts) (*LabelSet, error) {
-	routerName, err := opts.App.GetRouterName()
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	routerType, _, err := router.Type(routerName)
-	if err != nil {
-		return nil, errors.WithStack(err)
+	var routerNames, routerTypes []string
+	for _, appRouter := range opts.App.GetRouters() {
+		routerType, _, err := router.Type(appRouter.Name)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
+		routerNames = append(routerNames, appRouter.Name)
+		routerTypes = append(routerTypes, routerType)
 	}
 	return &LabelSet{
 		Labels: map[string]string{
 			labelIsTsuru:     strconv.FormatBool(true),
 			labelIsStopped:   strconv.FormatBool(false),
+			labelIsDeploy:    strconv.FormatBool(opts.IsDeploy),
 			labelAppName:     opts.App.GetName(),
 			labelAppProcess:  opts.Process,
 			labelAppPlatform: opts.App.GetPlatform(),
 			labelAppPool:     opts.App.GetPool(),
-			labelRouterName:  routerName,
-			labelRouterType:  routerType,
+			labelRouterName:  strings.Join(routerNames, ","),
+			labelRouterType:  strings.Join(routerTypes, ","),
 			labelProvisioner: opts.Provisioner,
 			labelBuilder:     opts.Builder,
 		},
 		Prefix: opts.Prefix,
 	}, nil
+}
+
+type ServiceAccountLabelsOpts struct {
+	App               App
+	NodeContainerName string
+	Provisioner       string
+	Prefix            string
+}
+
+func ServiceAccountLabels(opts ServiceAccountLabelsOpts) *LabelSet {
+	labelMap := map[string]string{
+		labelIsTsuru:     strconv.FormatBool(true),
+		labelProvisioner: opts.Provisioner,
+	}
+	if opts.App == nil {
+		labelMap[labelNodeContainerName] = opts.NodeContainerName
+	} else {
+		labelMap[labelAppName] = opts.App.GetName()
+	}
+	return &LabelSet{
+		Labels: labelMap,
+		Prefix: opts.Prefix,
+	}
 }
 
 type NodeContainerLabelsOpts struct {
@@ -298,6 +397,7 @@ func NodeContainerLabels(opts NodeContainerLabelsOpts) *LabelSet {
 }
 
 type NodeLabelsOpts struct {
+	IaaSID       string
 	Addr         string
 	Pool         string
 	Prefix       string
@@ -309,13 +409,16 @@ func NodeLabels(opts NodeLabelsOpts) *LabelSet {
 	for k, v := range opts.CustomLabels {
 		labels[k] = v
 	}
-	for _, r := range []string{LabelNodePool, labelNodeAddr} {
+	for _, r := range []string{LabelNodePool, labelNodeAddr, labelNodeIaaSID} {
 		delete(labels, r)
 		delete(labels, opts.Prefix+r)
 	}
 	labels[LabelNodePool] = opts.Pool
 	if opts.Addr != "" {
 		labels[labelNodeAddr] = opts.Addr
+	}
+	if opts.IaaSID != "" {
+		labels[labelNodeIaaSID] = opts.IaaSID
 	}
 	return &LabelSet{Labels: labels, Prefix: opts.Prefix}
 }

@@ -19,9 +19,13 @@ import (
 	"github.com/tsuru/tsuru/app/bind"
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/router"
+	appTypes "github.com/tsuru/tsuru/types/app"
 )
 
-const defaultDockerProvisioner = "docker"
+const (
+	defaultDockerProvisioner = "docker"
+	DefaultHealthcheckScheme = "http"
+)
 
 var (
 	ErrInvalidStatus = errors.New("invalid status")
@@ -217,9 +221,11 @@ type App interface {
 
 	GetUpdatePlatform() bool
 
-	GetRouterName() (string, error)
+	GetRouters() []appTypes.AppRouter
 
 	GetPool() string
+
+	GetTeamOwner() string
 
 	SetQuotaInUse(int) error
 }
@@ -247,37 +253,14 @@ type ShellOptions struct {
 	Term   string
 }
 
-// ArchiveDeployer is a provisioner that can deploy archives.
-type ArchiveDeployer interface {
-	ArchiveDeploy(app App, archiveURL string, evt *event.Event) (string, error)
-}
-
-// UploadDeployer is a provisioner that can deploy the application from an
-// uploaded file.
-type UploadDeployer interface {
-	UploadDeploy(app App, file io.ReadCloser, fileSize int64, build bool, evt *event.Event) (string, error)
-}
-
-// ImageDeployer is a provisioner that can deploy the application from a
-// previously generated image.
-type ImageDeployer interface {
-	ImageDeploy(app App, image string, evt *event.Event) (string, error)
-}
-
 // RollbackableDeployer is a provisioner that allows rolling back to a
 // previously deployed version.
 type RollbackableDeployer interface {
 	Rollback(App, string, *event.Event) (string, error)
 }
 
-// RebuildableDeployer is a provisioner that allows rebuild the last
-// deployed image.
-type RebuildableDeployer interface {
-	Rebuild(App, *event.Event) (string, error)
-}
-
 type BuilderDockerClient interface {
-	CreateContainer(opts docker.CreateContainerOptions) (*docker.Container, error)
+	PullAndCreateContainer(opts docker.CreateContainerOptions, w io.Writer) (*docker.Container, string, error)
 	RemoveContainer(opts docker.RemoveContainerOptions) error
 	StartContainer(id string, hostConfig *docker.HostConfig) error
 	StopContainer(id string, timeout uint) error
@@ -290,7 +273,6 @@ type BuilderDockerClient interface {
 	WaitContainer(id string) (int, error)
 
 	BuildImage(opts docker.BuildImageOptions) error
-	PullImage(opts docker.PullImageOptions, auth docker.AuthConfiguration) error
 	PushImage(docker.PushImageOptions, docker.AuthConfiguration) error
 	InspectImage(string) (*docker.Image, error)
 	TagImage(string, docker.TagImageOptions) error
@@ -300,11 +282,31 @@ type BuilderDockerClient interface {
 	SetTimeout(timeout time.Duration)
 }
 
+type ExecDockerClient interface {
+	CreateExec(opts docker.CreateExecOptions) (*docker.Exec, error)
+	StartExec(execId string, opts docker.StartExecOptions) error
+	ResizeExecTTY(execId string, height, width int) error
+	InspectExec(execId string) (*docker.ExecInspect, error)
+}
+
+type BuilderKubeClient interface {
+	BuildPod(App, *event.Event, io.Reader, string) (string, error)
+	ImageTagPushAndInspect(App, string, string) (*docker.Image, string, *TsuruYamlData, error)
+}
+
 // BuilderDeploy is a provisioner that allows deploy builded image.
 type BuilderDeploy interface {
 	Deploy(App, string, *event.Event) (string, error)
-	GetDockerClient(App) (BuilderDockerClient, error)
-	CleanImage(appName string, image string)
+}
+
+type BuilderDeployDockerClient interface {
+	BuilderDeploy
+	GetClient(App) (BuilderDockerClient, error)
+}
+
+type BuilderDeployKubeClient interface {
+	BuilderDeploy
+	GetClient(App) (BuilderKubeClient, error)
 }
 
 // Provisioner is the basic interface of this package.
@@ -347,7 +349,7 @@ type Provisioner interface {
 	Stop(App, string) error
 
 	// Units returns information about units by App.
-	Units(App) ([]Unit, error)
+	Units(...App) ([]Unit, error)
 
 	// RoutableAddresses returns the addresses used to access an application.
 	RoutableAddresses(App) ([]url.URL, error)
@@ -412,6 +414,7 @@ type UnitStatusProvisioner interface {
 }
 
 type AddNodeOptions struct {
+	IaaSID     string
 	Address    string
 	Pool       string
 	Metadata   map[string]string
@@ -459,7 +462,7 @@ type NodeProvisioner interface {
 }
 
 type RebalanceNodesOptions struct {
-	Writer         io.Writer
+	Event          *event.Event
 	Pool           string
 	MetadataFilter map[string]string
 	AppFilter      []string
@@ -495,16 +498,29 @@ type VolumeProvisioner interface {
 	DeleteVolume(volumeName, pool string) error
 }
 
+type CleanImageProvisioner interface {
+	CleanImage(appName string, image string) error
+}
+
 type Node interface {
 	Pool() string
+	IaaSID() string
 	Address() string
 	Status() string
+
+	// Metadata returns node metadata exclusively managed by tsuru
 	Metadata() map[string]string
 	Units() ([]Unit, error)
 	Provisioner() NodeProvisioner
+
+	// MetadataNoPrefix returns node metadata managed by tsuru without any
+	// tsuru specific prefix. This can be used with iaas providers.
+	MetadataNoPrefix() map[string]string
 }
 
 type NodeExtraData interface {
+	// ExtraData returns node metadata not managed by tsuru, like metadata
+	// added by external sources.
 	ExtraData() map[string]string
 }
 
@@ -518,6 +534,7 @@ type NodeHealthChecker interface {
 type NodeSpec struct {
 	// BSON tag for bson serialized compatibility with cluster.Node
 	Address     string `bson:"_id"`
+	IaaSID      string
 	Metadata    map[string]string
 	Status      string
 	Pool        string
@@ -541,6 +558,7 @@ func NodeToSpec(n Node) NodeSpec {
 	}
 	return NodeSpec{
 		Address:     n.Address(),
+		IaaSID:      n.IaaSID(),
 		Metadata:    metadata,
 		Status:      n.Status(),
 		Pool:        n.Pool(),
@@ -653,24 +671,33 @@ func (e *Error) Error() string {
 	return err
 }
 
-type TsuruYamlRestartHooks struct {
-	Before []string
-	After  []string
+type TsuruYamlData struct {
+	Hooks       TsuruYamlHooks       `bson:",omitempty"`
+	Healthcheck TsuruYamlHealthcheck `bson:",omitempty"`
 }
 
 type TsuruYamlHooks struct {
-	Restart TsuruYamlRestartHooks
-	Build   []string
+	Restart TsuruYamlRestartHooks `bson:",omitempty"`
+	Build   []string              `bson:",omitempty"`
+}
+
+type TsuruYamlRestartHooks struct {
+	Before []string `bson:",omitempty"`
+	After  []string `bson:",omitempty"`
 }
 
 type TsuruYamlHealthcheck struct {
 	Path            string
 	Method          string
 	Status          int
-	Match           string
-	RouterBody      string
-	UseInRouter     bool `json:"use_in_router" bson:"use_in_router"`
-	AllowedFailures int  `json:"allowed_failures" bson:"allowed_failures"`
+	Scheme          string
+	Match           string `bson:",omitempty"`
+	RouterBody      string `json:"router_body" yaml:"router_body" bson:"router_body,omitempty"`
+	UseInRouter     bool   `json:"use_in_router" yaml:"use_in_router" bson:"use_in_router,omitempty"`
+	ForceRestart    bool   `json:"force_restart" yaml:"force_restart" bson:"force_restart,omitempty"`
+	AllowedFailures int    `json:"allowed_failures" yaml:"allowed_failures" bson:"allowed_failures,omitempty"`
+	IntervalSeconds int    `json:"interval_seconds" yaml:"interval_seconds" bson:"interval_seconds,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds" yaml:"timeout_seconds" bson:"timeout_seconds,omitempty"`
 }
 
 func (hc TsuruYamlHealthcheck) ToRouterHC() router.HealthcheckData {
@@ -686,7 +713,21 @@ func (hc TsuruYamlHealthcheck) ToRouterHC() router.HealthcheckData {
 	}
 }
 
-type TsuruYamlData struct {
-	Hooks       TsuruYamlHooks
-	Healthcheck TsuruYamlHealthcheck
+type ErrUnitStartup struct {
+	Err error
+}
+
+func (e ErrUnitStartup) Error() string {
+	return e.Err.Error()
+}
+
+func (e ErrUnitStartup) IsStartupError() bool {
+	return true
+}
+
+func IsStartupError(err error) bool {
+	se, ok := errors.Cause(err).(interface {
+		IsStartupError() bool
+	})
+	return ok && se.IsStartupError()
 }

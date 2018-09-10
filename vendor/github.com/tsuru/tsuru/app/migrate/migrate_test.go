@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/app/bind"
@@ -17,7 +18,6 @@ import (
 	"github.com/tsuru/tsuru/router"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	check "gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type S struct {
@@ -28,7 +28,7 @@ func Test(t *testing.T) { check.TestingT(t) }
 
 func (s *S) SetUpSuite(c *check.C) {
 	config.Set("log:disable-syslog", true)
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_app_migrate_test")
 	var err error
 	s.conn, err = db.Conn()

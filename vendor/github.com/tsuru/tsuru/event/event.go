@@ -5,18 +5,19 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/auth"
 	internalConfig "github.com/tsuru/tsuru/config"
@@ -25,8 +26,6 @@ import (
 	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/safe"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 var (
@@ -45,6 +44,11 @@ var (
 		Name: "tsuru_events_rejected_total",
 		Help: "The total number of events rejected",
 	}, []string{"kind", "reason"})
+
+	eventsExpired = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "tsuru_events_expired_total",
+		Help: "The total number of events expired",
+	}, []string{"kind"})
 )
 
 const (
@@ -54,13 +58,6 @@ const (
 )
 
 var (
-	lockUpdateInterval = 30 * time.Second
-	lockExpireTimeout  = 5 * time.Minute
-	updater            = lockUpdater{
-		addCh:    make(chan *Target),
-		removeCh: make(chan *Target),
-		once:     &sync.Once{},
-	}
 	throttlingInfo  = map[string]ThrottlingSpec{}
 	errInvalidQuery = errors.New("invalid query")
 
@@ -85,6 +82,7 @@ var (
 	KindTypePermission = kindType("permission")
 	KindTypeInternal   = kindType("internal")
 
+	TargetTypeGlobal          = TargetType("global")
 	TargetTypeApp             = TargetType("app")
 	TargetTypeNode            = TargetType("node")
 	TargetTypeContainer       = TargetType("container")
@@ -188,11 +186,12 @@ type eventData struct {
 	ID              eventID `bson:"_id"`
 	UniqueID        bson.ObjectId
 	StartTime       time.Time
-	EndTime         time.Time `bson:",omitempty"`
-	Target          Target    `bson:",omitempty"`
-	StartCustomData bson.Raw  `bson:",omitempty"`
-	EndCustomData   bson.Raw  `bson:",omitempty"`
-	OtherCustomData bson.Raw  `bson:",omitempty"`
+	EndTime         time.Time     `bson:",omitempty"`
+	Target          Target        `bson:",omitempty"`
+	ExtraTargets    []ExtraTarget `bson:",omitempty"`
+	StartCustomData bson.Raw      `bson:",omitempty"`
+	EndCustomData   bson.Raw      `bson:",omitempty"`
+	OtherCustomData bson.Raw      `bson:",omitempty"`
 	Kind            Kind
 	Owner           Owner
 	LockUpdateTime  time.Time
@@ -223,6 +222,8 @@ type TargetType string
 
 func GetTargetType(t string) (TargetType, error) {
 	switch t {
+	case "global":
+		return TargetTypeGlobal, nil
 	case "app":
 		return TargetTypeApp, nil
 	case "node":
@@ -293,7 +294,16 @@ func throttlingKey(targetType TargetType, kindName string, allTargets bool) stri
 	return key
 }
 
-func LoadThrottling() error {
+func Initialize() error {
+	err := loadThrottling()
+	if err != nil {
+		return errors.Wrap(err, "unable to load event throttling")
+	}
+	cleaner.start()
+	return nil
+}
+
+func loadThrottling() error {
 	var specs []ThrottlingSpec
 	err := internalConfig.UnmarshalConfig("event:throttling", &specs)
 	if err != nil {
@@ -328,12 +338,18 @@ func getThrottling(t *Target, k *Kind, allTargets bool) *ThrottlingSpec {
 
 type Event struct {
 	eventData
-	logBuffer safe.Buffer
+	logBuffer *safe.Buffer
 	logWriter io.Writer
+}
+
+type ExtraTarget struct {
+	Target Target
+	Lock   bool
 }
 
 type Opts struct {
 	Target        Target
+	ExtraTargets  []ExtraTarget
 	Kind          *permission.PermissionScheme
 	InternalKind  string
 	Owner         auth.Token
@@ -389,7 +405,7 @@ type TargetFilter struct {
 type Filter struct {
 	Target         Target
 	KindType       kindType
-	KindName       string
+	KindNames      []string `form:"-"`
 	OwnerType      ownerType
 	OwnerName      string
 	Since          time.Time
@@ -415,9 +431,23 @@ func (f *Filter) PruneUserValues() {
 	}
 }
 
+func (f *Filter) LoadKindNames(form map[string][]string) {
+	for k, values := range form {
+		if strings.ToLower(k) != "kindname" {
+			continue
+		}
+		for _, val := range values {
+			if val != "" {
+				f.KindNames = append(f.KindNames, val)
+			}
+		}
+	}
+}
+
 func (f *Filter) toQuery() (bson.M, error) {
 	query := bson.M{}
 	permMap := map[string][]permission.PermissionContext{}
+	andBlock := []bson.M{}
 	if f.Permissions != nil {
 		for _, p := range f.Permissions {
 			permMap[p.Scheme.FullName()] = append(permMap[p.Scheme.FullName()], p.Context)
@@ -443,33 +473,43 @@ func (f *Filter) toQuery() (bson.M, error) {
 			}
 			permOrBlock = append(permOrBlock, toAppend)
 		}
-		query["$or"] = permOrBlock
+		andBlock = append(andBlock, bson.M{"$or": permOrBlock})
 	}
 	if f.AllowedTargets != nil {
 		var orBlock []bson.M
 		for _, at := range f.AllowedTargets {
 			f := bson.M{"target.type": at.Type}
+			extraF := bson.M{"extratargets.target.type": at.Type}
 			if at.Values != nil {
 				f["target.value"] = bson.M{"$in": at.Values}
+				extraF["extratargets.target.value"] = bson.M{"$in": at.Values}
 			}
-			orBlock = append(orBlock, f)
+			orBlock = append(orBlock, f, extraF)
 		}
 		if len(orBlock) == 0 {
 			return nil, errInvalidQuery
 		}
-		query["$or"] = orBlock
+		andBlock = append(andBlock, bson.M{"$or": orBlock})
 	}
 	if f.Target.Type != "" {
-		query["target.type"] = f.Target.Type
+		orBlock := []bson.M{
+			{"target.type": f.Target.Type},
+			{"extratargets.target.type": f.Target.Type},
+		}
+		andBlock = append(andBlock, bson.M{"$or": orBlock})
 	}
 	if f.Target.Value != "" {
-		query["target.value"] = f.Target.Value
+		orBlock := []bson.M{
+			{"target.value": f.Target.Value},
+			{"extratargets.target.value": f.Target.Value},
+		}
+		andBlock = append(andBlock, bson.M{"$or": orBlock})
 	}
 	if f.KindType != "" {
 		query["kind.type"] = f.KindType
 	}
-	if f.KindName != "" {
-		query["kind.name"] = f.KindName
+	if len(f.KindNames) > 0 {
+		query["kind.name"] = bson.M{"$in": f.KindNames}
 	}
 	if f.OwnerType != "" {
 		query["owner.type"] = f.OwnerType
@@ -485,7 +525,10 @@ func (f *Filter) toQuery() (bson.M, error) {
 		timeParts = append(timeParts, bson.M{"starttime": bson.M{"$lte": f.Until}})
 	}
 	if len(timeParts) != 0 {
-		query["$and"] = timeParts
+		andBlock = append(andBlock, timeParts...)
+	}
+	if len(andBlock) > 0 {
+		query["$and"] = andBlock
 	}
 	if f.Running != nil {
 		query["running"] = *f.Running
@@ -527,6 +570,7 @@ func GetRunning(target Target, kind string) (*Event, error) {
 	defer conn.Close()
 	coll := conn.Events()
 	var evt Event
+	evt.Init()
 	err = coll.Find(bson.M{
 		"_id":       eventID{Target: target},
 		"kind.name": kind,
@@ -549,6 +593,7 @@ func GetByID(id bson.ObjectId) (*Event, error) {
 	defer conn.Close()
 	coll := conn.Events()
 	var evt Event
+	evt.Init()
 	err = coll.Find(bson.M{
 		"uniqueid": id,
 	}).One(&evt.eventData)
@@ -610,6 +655,7 @@ func List(filter *Filter) ([]Event, error) {
 	}
 	evts := make([]Event, len(allData))
 	for i := range evts {
+		evts[i].Init()
 		evts[i].eventData = allData[i]
 	}
 	return evts, nil
@@ -700,11 +746,15 @@ func checkThrottling(coll *storage.Collection, target *Target, kind *Kind, allTa
 	query := bson.M{
 		"target.type": target.Type,
 	}
-	startTimeQuery := bson.M{"$gt": time.Now().UTC().Add(-tSpec.Time)}
+	now := time.Now().UTC()
+	startTimeQuery := bson.M{"$gt": now.Add(-tSpec.Time)}
 	if tSpec.WaitFinish {
 		query["$or"] = []bson.M{
 			{"starttime": startTimeQuery},
-			{"running": true},
+			{
+				"running":        true,
+				"lockupdatetime": bson.M{"$gt": now.Add(-lockExpireTimeout)},
+			},
 		}
 	} else {
 		query["starttime"] = startTimeQuery
@@ -812,6 +862,7 @@ func newEvt(opts *Opts) (evt *Event, err error) {
 	evt = &Event{eventData: eventData{
 		ID:              id,
 		UniqueID:        uniqID,
+		ExtraTargets:    opts.ExtraTargets,
 		Target:          opts.Target,
 		StartTime:       now,
 		Kind:            k,
@@ -823,18 +874,22 @@ func newEvt(opts *Opts) (evt *Event, err error) {
 		Allowed:         opts.Allowed,
 		AllowedCancel:   opts.AllowedCancel,
 	}}
+	evt.Init()
 	maxRetries := 1
 	for i := 0; i < maxRetries+1; i++ {
 		err = coll.Insert(evt.eventData)
 		if err == nil {
+			err = checkLocked(evt, opts.DisableLock)
+			if err != nil {
+				evt.Abort()
+				return nil, err
+			}
 			err = checkIsBlocked(evt)
 			if err != nil {
 				evt.Done(err)
 				return nil, err
 			}
-			if !opts.DisableLock {
-				updater.addCh <- &opts.Target
-			}
+			updater.add(id)
 			return evt, nil
 		}
 		if mgo.IsDup(err) {
@@ -853,6 +908,47 @@ func newEvt(opts *Opts) (evt *Event, err error) {
 		}
 	}
 	return nil, err
+}
+
+func checkLocked(evt *Event, disableLock bool) error {
+	var targets []Target
+	if !disableLock {
+		targets = append(targets, evt.Target)
+	}
+	for _, et := range evt.ExtraTargets {
+		if et.Lock {
+			targets = append(targets, et.Target)
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	var orBlock []bson.M
+	for _, t := range targets {
+		tBson, _ := t.GetBSON()
+		orBlock = append(orBlock, bson.M{"_id": tBson}, bson.M{
+			"extratargets": bson.M{"$elemMatch": bson.M{"target": tBson, "lock": true}},
+		})
+	}
+	conn, err := db.Conn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	coll := conn.Events()
+	var existing Event
+	err = coll.Find(bson.M{
+		"running":  true,
+		"uniqueid": bson.M{"$ne": evt.UniqueID},
+		"$or":      orBlock,
+	}).One(&existing.eventData)
+	if err != nil {
+		if err == mgo.ErrNotFound {
+			return nil
+		}
+		return err
+	}
+	return ErrEventLocked{event: &existing}
 }
 
 func (e *Event) RawInsert(start, other, end interface{}) error {
@@ -895,6 +991,10 @@ func (e *Event) SetLogWriter(w io.Writer) {
 	e.logWriter = w
 }
 
+func (e *Event) GetLogWriter() io.Writer {
+	return e.logWriter
+}
+
 func (e *Event) SetOtherCustomData(data interface{}) error {
 	conn, err := db.Conn()
 	if err != nil {
@@ -913,14 +1013,45 @@ func (e *Event) Logf(format string, params ...interface{}) {
 	if e.logWriter != nil {
 		fmt.Fprintf(e.logWriter, format, params...)
 	}
-	fmt.Fprintf(&e.logBuffer, format, params...)
+	if e.logBuffer != nil {
+		fmt.Fprintf(e.logBuffer, format, params...)
+	}
 }
 
 func (e *Event) Write(data []byte) (int, error) {
 	if e.logWriter != nil {
 		e.logWriter.Write(data)
 	}
-	return e.logBuffer.Write(data)
+	if e.logBuffer != nil {
+		e.logBuffer.Write(data)
+	}
+	return len(data), nil
+}
+
+func (e *Event) CancelableContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	if !e.Cancelable {
+		return ctx, cancel
+	}
+	go func() {
+		for {
+			canceled, err := e.AckCancel()
+			if err != nil {
+				log.Errorf("unable to check if event was canceled: %v", err)
+				continue
+			}
+			if canceled {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func (e *Event) TryCancel(reason, owner string) error {
@@ -1009,7 +1140,7 @@ func (e *Event) done(evtErr error, customData interface{}, abort bool) (err erro
 			log.Errorf("[events] error marking event as done - %#v: %s", e, err)
 		}
 	}()
-	updater.removeCh <- &e.Target
+	updater.remove(e.ID)
 	conn, err := db.Conn()
 	if err != nil {
 		return err
@@ -1030,7 +1161,9 @@ func (e *Event) done(evtErr error, customData interface{}, abort bool) (err erro
 		return err
 	}
 	e.Running = false
-	e.Log = e.logBuffer.String()
+	if e.logBuffer != nil {
+		e.Log = e.logBuffer.String()
+	}
 	var dbEvt Event
 	err = coll.FindId(e.ID).One(&dbEvt.eventData)
 	if err == nil {
@@ -1044,58 +1177,9 @@ func (e *Event) done(evtErr error, customData interface{}, abort bool) (err erro
 	return coll.Insert(e.eventData)
 }
 
-type lockUpdater struct {
-	addCh    chan *Target
-	removeCh chan *Target
-	stopCh   chan struct{}
-	once     *sync.Once
-}
-
-func (l *lockUpdater) start() {
-	l.once.Do(func() {
-		l.stopCh = make(chan struct{})
-		go l.spin()
-	})
-}
-
-func (l *lockUpdater) stop() {
-	if l.stopCh == nil {
-		return
-	}
-	l.stopCh <- struct{}{}
-	l.stopCh = nil
-	l.once = &sync.Once{}
-}
-
-func (l *lockUpdater) spin() {
-	set := map[Target]struct{}{}
-	for {
-		select {
-		case added := <-l.addCh:
-			set[*added] = struct{}{}
-		case removed := <-l.removeCh:
-			delete(set, *removed)
-		case <-l.stopCh:
-			return
-		case <-time.After(lockUpdateInterval):
-		}
-		conn, err := db.Conn()
-		if err != nil {
-			log.Errorf("[events] [lock update] error getting db conn: %s", err)
-			continue
-		}
-		coll := conn.Events()
-		slice := make([]interface{}, len(set))
-		i := 0
-		for id := range set {
-			slice[i], _ = id.GetBSON()
-			i++
-		}
-		err = coll.Update(bson.M{"_id": bson.M{"$in": slice}}, bson.M{"$set": bson.M{"lockupdatetime": time.Now().UTC()}})
-		if err != nil && err != mgo.ErrNotFound {
-			log.Errorf("[events] [lock update] error updating: %s", err)
-		}
-		conn.Close()
+func (e *Event) Init() {
+	if e.logBuffer == nil {
+		e.logBuffer = &safe.Buffer{}
 	}
 }
 
@@ -1136,6 +1220,7 @@ func Migrate(query bson.M, cb func(*Event) error) error {
 	var evtData eventData
 	for iter.Next(&evtData) {
 		evt := &Event{eventData: evtData}
+		evt.Init()
 		err = cb(evt)
 		if err != nil {
 			return errors.Wrapf(err, "unable to migrate %#v", evt)

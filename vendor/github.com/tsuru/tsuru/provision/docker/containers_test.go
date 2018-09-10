@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	dtesting "github.com/fsouza/go-dockerclient/testing"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/tsuru/action"
 	"github.com/tsuru/tsuru/app"
@@ -22,9 +23,9 @@ import (
 	"github.com/tsuru/tsuru/provision/docker/types"
 	"github.com/tsuru/tsuru/provision/pool"
 	"github.com/tsuru/tsuru/provision/provisiontest"
+	"github.com/tsuru/tsuru/router"
 	"github.com/tsuru/tsuru/safe"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestMoveContainers(c *check.C) {
@@ -229,7 +230,7 @@ func (s *S) TestMoveContainerErrorStopped(c *check.C) {
 		provisioner: p,
 	})
 	c.Assert(err, check.IsNil)
-	err = addedConts[0].SetStatus(p, provision.StatusError, true)
+	err = addedConts[0].SetStatus(p.ClusterClient(), provision.StatusError, true)
 	c.Assert(err, check.IsNil)
 	appStruct := s.newAppFromFake(appInstance)
 	err = s.conn.Apps().Insert(appStruct)
@@ -263,7 +264,7 @@ func (s *S) TestMoveContainerErrorStarted(c *check.C) {
 		provisioner: p,
 	})
 	c.Assert(err, check.IsNil)
-	err = addedConts[0].SetStatus(p, provision.StatusError, true)
+	err = addedConts[0].SetStatus(p.ClusterClient(), provision.StatusError, true)
 	c.Assert(err, check.IsNil)
 	appStruct := s.newAppFromFake(appInstance)
 	err = s.conn.Apps().Insert(appStruct)
@@ -303,7 +304,7 @@ func (s *S) TestRebalanceContainers(c *check.C) {
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
 	buf := safe.NewBuffer(nil)
-	err = p.rebalanceContainers(buf, false)
+	_, err = p.rebalanceContainersByFilter(buf, nil, nil, false)
 	c.Assert(err, check.IsNil)
 	c1, err := p.listContainersByHost("localhost")
 	c.Assert(err, check.IsNil)
@@ -356,7 +357,7 @@ func (s *S) TestRebalanceContainersSegScheduler(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(c1, check.HasLen, 5)
 	buf := safe.NewBuffer(nil)
-	err = p.rebalanceContainers(buf, false)
+	_, err = p.rebalanceContainersByFilter(buf, nil, nil, false)
 	c.Assert(err, check.IsNil)
 	c.Assert(p.scheduler.ignoredContainers, check.IsNil)
 	c1, err = p.listContainersByHost("localhost")
@@ -514,7 +515,7 @@ func (s *S) TestRebalanceContainersManyApps(c *check.C) {
 	c1, err := p.listContainersByHost("localhost")
 	c.Assert(err, check.IsNil)
 	c.Assert(c1, check.HasLen, 2)
-	err = p.rebalanceContainers(buf, false)
+	_, err = p.rebalanceContainersByFilter(buf, nil, nil, false)
 	c.Assert(err, check.IsNil)
 	c1, err = p.listContainersByHost("localhost")
 	c.Assert(err, check.IsNil)
@@ -554,9 +555,10 @@ func (s *S) TestRebalanceContainersDry(c *check.C) {
 	appStruct.Pool = "test-default"
 	err = s.conn.Apps().Insert(appStruct)
 	c.Assert(err, check.IsNil)
-	router, err := getRouterForApp(appInstance)
+	routers := appInstance.GetRouters()
+	r, err := router.Get(routers[0].Name)
 	c.Assert(err, check.IsNil)
-	beforeRoutes, err := router.Routes(appStruct.Name)
+	beforeRoutes, err := r.Routes(appStruct.Name)
 	c.Assert(err, check.IsNil)
 	c.Assert(beforeRoutes, check.HasLen, 5)
 	var serviceCalled bool
@@ -566,7 +568,7 @@ func (s *S) TestRebalanceContainersDry(c *check.C) {
 	})
 	defer rollback()
 	buf := safe.NewBuffer(nil)
-	err = p.rebalanceContainers(buf, true)
+	_, err = p.rebalanceContainersByFilter(buf, nil, nil, true)
 	c.Assert(err, check.IsNil)
 	c1, err := p.listContainersByHost("localhost")
 	c.Assert(err, check.IsNil)
@@ -574,7 +576,7 @@ func (s *S) TestRebalanceContainersDry(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(c1, check.HasLen, 5)
 	c.Assert(c2, check.HasLen, 0)
-	routes, err := router.Routes(appStruct.Name)
+	routes, err := r.Routes(appStruct.Name)
 	c.Assert(err, check.IsNil)
 	c.Assert(routes, check.DeepEquals, beforeRoutes)
 	c.Assert(serviceCalled, check.Equals, false)

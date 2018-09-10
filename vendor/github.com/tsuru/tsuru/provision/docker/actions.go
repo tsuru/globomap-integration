@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsouza/go-dockerclient"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/action"
@@ -23,7 +23,6 @@ import (
 	"github.com/tsuru/tsuru/provision/docker/container"
 	"github.com/tsuru/tsuru/provision/docker/types"
 	"github.com/tsuru/tsuru/router"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type runContainerActionsArgs struct {
@@ -127,7 +126,7 @@ func checkCanceled(evt *event.Event) error {
 		return nil
 	}
 	if canceled {
-		return ErrDeployCanceled
+		return ErrUnitRecreationCanceled
 	}
 	return nil
 }
@@ -149,7 +148,6 @@ var insertEmptyContainerInDB = action.Action{
 		}
 		cont := container.Container{
 			Container: types.Container{
-				MongoID:       bson.NewObjectId(),
 				AppName:       args.app.GetName(),
 				ProcessName:   args.processName,
 				Type:          args.app.GetPlatform(),
@@ -160,20 +158,7 @@ var insertEmptyContainerInDB = action.Action{
 				ExposedPort:   args.exposedPort,
 			},
 		}
-		coll := args.provisioner.Collection()
-		defer coll.Close()
-		if err := coll.Insert(cont); err != nil {
-			log.Errorf("error on inserting container into database %s - %s", cont.Name, err)
-			return nil, err
-		}
-		return cont, nil
-	},
-	Backward: func(ctx action.BWContext) {
-		c := ctx.FWResult.(container.Container)
-		args := ctx.Params[0].(runContainerActionsArgs)
-		coll := args.provisioner.Collection()
-		defer coll.Close()
-		coll.RemoveId(c.MongoID)
+		return &cont, nil
 	},
 }
 
@@ -186,7 +171,7 @@ var updateContainerInDB = action.Action{
 		}
 		coll := args.provisioner.Collection()
 		defer coll.Close()
-		cont := ctx.Previous.(container.Container)
+		cont := ctx.Previous.(*container.Container)
 		err := coll.Update(bson.M{"name": cont.Name}, cont)
 		if err != nil {
 			log.Errorf("error on updating container into database %s - %s", cont.ID, err)
@@ -205,21 +190,18 @@ var createContainer = action.Action{
 		if err := checkCanceled(args.event); err != nil {
 			return nil, err
 		}
-		cont := ctx.Previous.(container.Container)
+		cont := ctx.Previous.(*container.Container)
 		log.Debugf("create container for app %s, based on image %s", args.app.GetName(), args.imageID)
-		var building bool
-		if args.buildingImage != "" {
-			building = true
-		}
 		err := cont.Create(&container.CreateArgs{
 			ImageID:          args.imageID,
 			Commands:         args.commands,
 			App:              args.app,
 			Deploy:           args.isDeploy,
-			Provisioner:      args.provisioner,
+			Client:           args.provisioner.ClusterClient(),
 			DestinationHosts: args.destinationHosts,
 			ProcessName:      args.processName,
-			Building:         building,
+			Building:         args.buildingImage != "",
+			Event:            args.event,
 		})
 		if err != nil {
 			log.Errorf("error on create container for app %s - %s", args.app.GetName(), err)
@@ -228,9 +210,9 @@ var createContainer = action.Action{
 		return cont, nil
 	},
 	Backward: func(ctx action.BWContext) {
-		c := ctx.FWResult.(container.Container)
+		c := ctx.FWResult.(*container.Container)
 		args := ctx.Params[0].(runContainerActionsArgs)
-		err := args.provisioner.Cluster().RemoveContainer(docker.RemoveContainerOptions{ID: c.ID})
+		err := c.Remove(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter())
 		if err != nil {
 			log.Errorf("Failed to remove the container %q: %s", c.ID, err)
 		}
@@ -246,7 +228,7 @@ var setContainerID = action.Action{
 		}
 		coll := args.provisioner.Collection()
 		defer coll.Close()
-		cont := ctx.Previous.(container.Container)
+		cont := ctx.Previous.(*container.Container)
 		err := coll.Update(bson.M{"name": cont.Name}, bson.M{"$set": bson.M{"id": cont.ID}})
 		if err != nil {
 			log.Errorf("error on setting container ID %s - %s", cont.Name, err)
@@ -262,8 +244,8 @@ var stopContainer = action.Action{
 	Name: "stop-container",
 	Forward: func(ctx action.FWContext) (action.Result, error) {
 		args := ctx.Params[0].(runContainerActionsArgs)
-		cont := ctx.Previous.(container.Container)
-		err := cont.SetStatus(args.provisioner, provision.StatusStopped, false)
+		cont := ctx.Previous.(*container.Container)
+		err := cont.SetStatus(args.provisioner.ClusterClient(), provision.StatusStopped, false)
 		if err != nil {
 			return nil, err
 		}
@@ -271,17 +253,17 @@ var stopContainer = action.Action{
 	},
 	Backward: func(ctx action.BWContext) {
 		args := ctx.Params[0].(runContainerActionsArgs)
-		c := ctx.FWResult.(container.Container)
-		c.SetStatus(args.provisioner, provision.StatusCreated, false)
+		c := ctx.FWResult.(*container.Container)
+		c.SetStatus(args.provisioner.ClusterClient(), provision.StatusCreated, false)
 	},
 }
 
 var setNetworkInfo = action.Action{
 	Name: "set-network-info",
 	Forward: func(ctx action.FWContext) (action.Result, error) {
-		c := ctx.Previous.(container.Container)
+		c := ctx.Previous.(*container.Container)
 		args := ctx.Params[0].(runContainerActionsArgs)
-		info, err := c.NetworkInfo(args.provisioner)
+		info, err := c.NetworkInfo(args.provisioner.ClusterClient())
 		if err != nil {
 			return nil, err
 		}
@@ -298,12 +280,13 @@ var startContainer = action.Action{
 		if err := checkCanceled(args.event); err != nil {
 			return nil, err
 		}
-		c := ctx.Previous.(container.Container)
+		c := ctx.Previous.(*container.Container)
 		log.Debugf("starting container %s", c.ID)
 		err := c.Start(&container.StartArgs{
-			Provisioner: args.provisioner,
-			App:         args.app,
-			Deploy:      args.isDeploy,
+			Client:  args.provisioner.ClusterClient(),
+			Limiter: args.provisioner.ActionLimiter(),
+			App:     args.app,
+			Deploy:  args.isDeploy,
 		})
 		if err != nil {
 			log.Errorf("error on start container %s - %s", c.ID, err)
@@ -312,7 +295,7 @@ var startContainer = action.Action{
 		return c, nil
 	},
 	Backward: func(ctx action.BWContext) {
-		c := ctx.FWResult.(container.Container)
+		c := ctx.FWResult.(*container.Container)
 		args := ctx.Params[0].(runContainerActionsArgs)
 		err := args.provisioner.Cluster().StopContainer(c.ID, 10)
 		if err != nil {
@@ -351,7 +334,7 @@ var provisionAddUnitsToHost = action.Action{
 		units := len(containers)
 		fmt.Fprintf(w, "\n---- Destroying %d created %s ----\n", units, pluralize("unit", units))
 		runInContainers(containers, func(cont *container.Container, _ chan *container.Container) error {
-			err := cont.Remove(args.provisioner)
+			err := cont.Remove(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter())
 			if err != nil {
 				log.Errorf("Error removing added container %s: %s", cont.ID, err)
 				return nil
@@ -438,6 +421,35 @@ var bindAndHealthcheck = action.Action{
 	OnError: rollbackNotice,
 }
 
+type inRouterFn func(router.Router) error
+
+func runInRouters(app provision.App, fn inRouterFn, rollback inRouterFn) (err error) {
+	var toRollback []router.Router
+	defer func() {
+		if err == nil || rollback == nil {
+			return
+		}
+		for _, r := range toRollback {
+			rollbackErr := rollback(r)
+			if rollbackErr != nil {
+				log.Errorf("Unable to rollback router change in %q: %s", r.GetName(), rollbackErr)
+			}
+		}
+	}()
+	for _, appRouter := range app.GetRouters() {
+		r, err := router.Get(appRouter.Name)
+		if err != nil {
+			return err
+		}
+		err = fn(r)
+		if err != nil {
+			return err
+		}
+		toRollback = append(toRollback, r)
+	}
+	return nil
+}
+
 var addNewRoutes = action.Action{
 	Name: "add-new-routes",
 	Forward: func(ctx action.FWContext) (action.Result, error) {
@@ -450,10 +462,6 @@ var addNewRoutes = action.Action{
 			log.Errorf("[WARNING] cannot get the name of the web process: %s", err)
 		}
 		newContainers := ctx.Previous.([]container.Container)
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			return nil, err
-		}
 		writer := args.writer
 		if writer == nil {
 			writer = ioutil.Discard
@@ -474,9 +482,12 @@ var addNewRoutes = action.Action{
 		if len(routesToAdd) == 0 {
 			return newContainers, nil
 		}
-		err = r.AddRoutes(args.app.GetName(), routesToAdd)
+		err = runInRouters(args.app, func(r router.Router) error {
+			return r.AddRoutes(args.app.GetName(), routesToAdd)
+		}, func(r router.Router) error {
+			return r.RemoveRoutes(args.app.GetName(), routesToAdd)
+		})
 		if err != nil {
-			r.RemoveRoutes(args.app.GetName(), routesToAdd)
 			return nil, err
 		}
 		for _, c := range newContainers {
@@ -489,10 +500,6 @@ var addNewRoutes = action.Action{
 	Backward: func(ctx action.BWContext) {
 		args := ctx.Params[0].(changeUnitsPipelineArgs)
 		newContainers := ctx.FWResult.([]container.Container)
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			log.Errorf("[add-new-routes:Backward] Error geting router: %s", err)
-		}
 		w := args.writer
 		if w == nil {
 			w = ioutil.Discard
@@ -507,7 +514,9 @@ var addNewRoutes = action.Action{
 		if len(routesToRemove) == 0 {
 			return
 		}
-		err = r.RemoveRoutes(args.app.GetName(), routesToRemove)
+		err := runInRouters(args.app, func(r router.Router) error {
+			return r.RemoveRoutes(args.app.GetName(), routesToRemove)
+		}, nil)
 		if err != nil {
 			log.Errorf("[add-new-routes:Backward] Error removing route for [%v]: %s", routesToRemove, err)
 			return
@@ -530,14 +539,6 @@ var setRouterHealthcheck = action.Action{
 			return nil, err
 		}
 		newContainers := ctx.Previous.([]container.Container)
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			return nil, err
-		}
-		hcRouter, ok := r.(router.CustomHealthcheckRouter)
-		if !ok {
-			return newContainers, nil
-		}
 		yamlData, err := image.GetImageTsuruYamlData(args.imageID)
 		if err != nil {
 			return nil, err
@@ -546,36 +547,54 @@ var setRouterHealthcheck = action.Action{
 		if writer == nil {
 			writer = ioutil.Discard
 		}
-		hcData := yamlData.Healthcheck.ToRouterHC()
-		msg := fmt.Sprintf("Path: %s", hcData.Path)
-		if hcData.Status != 0 {
-			msg = fmt.Sprintf("%s, Status: %d", msg, hcData.Status)
+		newHCData := yamlData.Healthcheck.ToRouterHC()
+		msg := fmt.Sprintf("Path: %s", newHCData.Path)
+		if newHCData.Status != 0 {
+			msg = fmt.Sprintf("%s, Status: %d", msg, newHCData.Status)
 		}
-		if hcData.Body != "" {
-			msg = fmt.Sprintf("%s, Body: %s", msg, hcData.Body)
+		if newHCData.Body != "" {
+			msg = fmt.Sprintf("%s, Body: %s", msg, newHCData.Body)
 		}
 		fmt.Fprintf(writer, "\n---- Setting router healthcheck (%s) ----\n", msg)
-		err = hcRouter.SetHealthcheck(args.app.GetName(), hcData)
+		err = runInRouters(args.app, func(r router.Router) error {
+			hcRouter, ok := r.(router.CustomHealthcheckRouter)
+			if !ok {
+				return nil
+			}
+			return hcRouter.SetHealthcheck(args.app.GetName(), newHCData)
+		}, func(r router.Router) error {
+			hcRouter, ok := r.(router.CustomHealthcheckRouter)
+			if !ok {
+				return nil
+			}
+			var currentImageName string
+			currentImageName, err = image.AppCurrentImageName(args.app.GetName())
+			if err != nil {
+				return err
+			}
+			yamlData, err = image.GetImageTsuruYamlData(currentImageName)
+			if err != nil {
+				return err
+			}
+			return hcRouter.SetHealthcheck(args.app.GetName(), yamlData.Healthcheck.ToRouterHC())
+		})
 		return newContainers, err
 	},
 	Backward: func(ctx action.BWContext) {
 		args := ctx.Params[0].(changeUnitsPipelineArgs)
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			log.Errorf("[set-router-healthcheck:Backward] Error getting router: %s", err)
-			return
-		}
-		hcRouter, ok := r.(router.CustomHealthcheckRouter)
-		if !ok {
-			return
-		}
 		currentImageName, _ := image.AppCurrentImageName(args.app.GetName())
 		yamlData, err := image.GetImageTsuruYamlData(currentImageName)
 		if err != nil {
 			log.Errorf("[set-router-healthcheck:Backward] Error getting yaml data: %s", err)
 		}
 		hcData := yamlData.Healthcheck.ToRouterHC()
-		err = hcRouter.SetHealthcheck(args.app.GetName(), hcData)
+		err = runInRouters(args.app, func(r router.Router) error {
+			hcRouter, ok := r.(router.CustomHealthcheckRouter)
+			if !ok {
+				return nil
+			}
+			return hcRouter.SetHealthcheck(args.app.GetName(), hcData)
+		}, nil)
 		if err != nil {
 			log.Errorf("[set-router-healthcheck:Backward] Error setting healthcheck: %s", err)
 		}
@@ -597,10 +616,6 @@ var removeOldRoutes = action.Action{
 				}
 				err = nil
 			}()
-		}
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			return
 		}
 		writer := args.writer
 		if writer == nil {
@@ -630,12 +645,16 @@ var removeOldRoutes = action.Action{
 		if len(routesToRemove) == 0 {
 			return
 		}
-		err = r.RemoveRoutes(args.app.GetName(), routesToRemove)
-		if err != nil {
-			if !args.appDestroy {
-				r.AddRoutes(args.app.GetName(), routesToRemove)
+		err = runInRouters(args.app, func(r router.Router) error {
+			return r.RemoveRoutes(args.app.GetName(), routesToRemove)
+		}, func(r router.Router) error {
+			if args.appDestroy {
+				return nil
 			}
-			return
+			return r.AddRoutes(args.app.GetName(), routesToRemove)
+		})
+		if err != nil {
+			return nil, err
 		}
 		for _, c := range args.toRemove {
 			if c.Routable {
@@ -646,10 +665,6 @@ var removeOldRoutes = action.Action{
 	},
 	Backward: func(ctx action.BWContext) {
 		args := ctx.Params[0].(changeUnitsPipelineArgs)
-		r, err := getRouterForApp(args.app)
-		if err != nil {
-			log.Errorf("[remove-old-routes:Backward] Error geting router: %s", err)
-		}
 		w := args.writer
 		if w == nil {
 			w = ioutil.Discard
@@ -664,7 +679,9 @@ var removeOldRoutes = action.Action{
 		if len(routesToAdd) == 0 {
 			return
 		}
-		err = r.AddRoutes(args.app.GetName(), routesToAdd)
+		err := runInRouters(args.app, func(r router.Router) error {
+			return r.AddRoutes(args.app.GetName(), routesToAdd)
+		}, nil)
 		if err != nil {
 			log.Errorf("[remove-old-routes:Backward] Error adding back route for [%v]: %s", routesToAdd, err)
 			return
@@ -690,7 +707,7 @@ var provisionRemoveOldUnits = action.Action{
 		total := len(args.toRemove)
 		fmt.Fprintf(writer, "\n---- Removing %d old %s ----\n", total, pluralize("unit", total))
 		runInContainers(args.toRemove, func(c *container.Container, toRollback chan *container.Container) error {
-			err := c.Remove(args.provisioner)
+			err := c.Remove(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter())
 			if err != nil {
 				log.Errorf("Ignored error trying to remove old container %q: %s", c.ID, err)
 			}
@@ -738,7 +755,7 @@ var followLogsAndCommit = action.Action{
 		if err := checkCanceled(args.event); err != nil {
 			return nil, err
 		}
-		c, ok := ctx.Previous.(container.Container)
+		c, ok := ctx.Previous.(*container.Container)
 		if !ok {
 			return nil, errors.New("Previous result must be a container.")
 		}
@@ -767,7 +784,7 @@ var followLogsAndCommit = action.Action{
 			}
 		}()
 		go func() {
-			status, err := c.Logs(args.provisioner, args.writer)
+			status, err := c.Logs(args.provisioner.ClusterClient(), args.writer)
 			select {
 			case resultCh <- logsResult{status: status, err: err}:
 			default:
@@ -787,13 +804,13 @@ var followLogsAndCommit = action.Action{
 			}
 		}
 		fmt.Fprintf(args.writer, "\n---- Deploying application image ----\n")
-		imageID, err := c.Commit(args.provisioner, args.writer)
+		imageID, err := c.Commit(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter(), args.writer, true)
 		if err != nil {
 			log.Errorf("error on commit container %s - %s", c.ID, err)
 			return nil, err
 		}
 		fmt.Fprintf(args.writer, " ---> Cleaning up\n")
-		c.Remove(args.provisioner)
+		c.Remove(args.provisioner.ClusterClient(), args.provisioner.ActionLimiter())
 		return imageID, nil
 	},
 	Backward: func(ctx action.BWContext) {
@@ -814,22 +831,6 @@ var updateAppImage = action.Action{
 			if err != nil {
 				return nil, errors.Wrap(err, "unable to save image name")
 			}
-		}
-		imgHistorySize := image.ImageHistorySize()
-		allImages, err := image.ListAppImages(args.app.GetName())
-		if err != nil {
-			log.Errorf("Couldn't list images for cleaning: %s", err)
-			return ctx.Previous, nil
-		}
-		for i, imgName := range allImages {
-			if i > len(allImages)-imgHistorySize-1 {
-				err := args.provisioner.Cluster().RemoveImageIgnoreLast(imgName)
-				if err != nil {
-					log.Debugf("Ignored error removing old image %q: %s", imgName, err.Error())
-				}
-				continue
-			}
-			args.provisioner.CleanImage(args.app.GetName(), imgName)
 		}
 		return ctx.Previous, nil
 	},

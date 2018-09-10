@@ -10,12 +10,13 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/tsuru/tsuru/provision"
+	"github.com/tsuru/tsuru/set"
 	"github.com/tsuru/tsuru/volume"
 	"github.com/ugorji/go/codec"
+	apiv1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
 )
 
 type volumeOptions struct {
@@ -25,7 +26,13 @@ type volumeOptions struct {
 	AccessModes  string `json:"access-modes"`
 }
 
-func createVolumesForApp(client *clusterClient, app provision.App) ([]apiv1.Volume, []apiv1.VolumeMount, error) {
+var allowedNonPersistentVolumes = set.FromValues("emptyDir")
+
+func (opts *volumeOptions) isPersistent() bool {
+	return !allowedNonPersistentVolumes.Includes(opts.Plugin)
+}
+
+func createVolumesForApp(client *ClusterClient, app provision.App) ([]apiv1.Volume, []apiv1.VolumeMount, error) {
 	volumes, err := volume.ListByApp(app.GetName())
 	if err != nil {
 		return nil, nil, errors.WithStack(err)
@@ -33,24 +40,29 @@ func createVolumesForApp(client *clusterClient, app provision.App) ([]apiv1.Volu
 	var kubeVolumes []apiv1.Volume
 	var kubeMounts []apiv1.VolumeMount
 	for i := range volumes {
-		err = createVolumeForApp(client, app, &volumes[i])
+		opts, err := validateVolume(&volumes[i])
 		if err != nil {
 			return nil, nil, err
 		}
-		volumes, mounts, err := bindsForVolume(&volumes[i])
+		if opts.isPersistent() {
+			err = createVolume(client, &volumes[i], opts)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		volume, mounts, err := bindsForVolume(&volumes[i], opts, app.GetName())
 		if err != nil {
 			return nil, nil, err
 		}
 		kubeMounts = append(kubeMounts, mounts...)
-		kubeVolumes = append(kubeVolumes, volumes...)
+		kubeVolumes = append(kubeVolumes, *volume)
 	}
 	return kubeVolumes, kubeMounts, nil
 }
 
-func bindsForVolume(v *volume.Volume) ([]apiv1.Volume, []apiv1.VolumeMount, error) {
-	var kubeVolumes []apiv1.Volume
+func bindsForVolume(v *volume.Volume, opts *volumeOptions, appName string) (*apiv1.Volume, []apiv1.VolumeMount, error) {
 	var kubeMounts []apiv1.VolumeMount
-	binds, err := v.LoadBinds()
+	binds, err := v.LoadBindsForApp(appName)
 	if err != nil {
 		return nil, nil, errors.WithStack(err)
 	}
@@ -63,20 +75,42 @@ func bindsForVolume(v *volume.Volume) ([]apiv1.Volume, []apiv1.VolumeMount, erro
 		})
 		if !b.ReadOnly {
 			allReadOnly = false
-			break
 		}
 	}
 	kubeVol := apiv1.Volume{
 		Name: volumeName(v.Name),
-		VolumeSource: apiv1.VolumeSource{
+	}
+	if opts.isPersistent() {
+		kubeVol.VolumeSource = apiv1.VolumeSource{
 			PersistentVolumeClaim: &apiv1.PersistentVolumeClaimVolumeSource{
 				ClaimName: volumeClaimName(v.Name),
 				ReadOnly:  allReadOnly,
 			},
-		},
+		}
+	} else {
+		kubeVol.VolumeSource, err = nonPersistentVolume(v, opts)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	kubeVolumes = append(kubeVolumes, kubeVol)
-	return kubeVolumes, kubeMounts, nil
+	return &kubeVol, kubeMounts, nil
+}
+
+func nonPersistentVolume(v *volume.Volume, opts *volumeOptions) (apiv1.VolumeSource, error) {
+	var volumeSrc apiv1.VolumeSource
+	data, err := json.Marshal(map[string]interface{}{
+		opts.Plugin: v.Opts,
+	})
+	if err != nil {
+		return volumeSrc, errors.WithStack(err)
+	}
+	h := &codec.JsonHandle{}
+	dec := codec.NewDecoderBytes(data, h)
+	err = dec.Decode(&volumeSrc)
+	if err != nil {
+		return volumeSrc, errors.WithStack(err)
+	}
+	return volumeSrc, nil
 }
 
 func validateVolume(v *volume.Volume) (*volumeOptions, error) {
@@ -90,6 +124,9 @@ func validateVolume(v *volume.Volume) (*volumeOptions, error) {
 	}
 	if opts.Plugin == "" && opts.StorageClass == "" {
 		return nil, errors.New("both volume plan plugin and storage-class are empty")
+	}
+	if !opts.isPersistent() {
+		return &opts, nil
 	}
 	if capRaw, ok := v.Opts["capacity"]; ok {
 		delete(v.Opts, "capacity")
@@ -111,14 +148,14 @@ func validateVolume(v *volume.Volume) (*volumeOptions, error) {
 	return &opts, nil
 }
 
-func deleteVolume(client *clusterClient, name string) error {
-	err := client.Core().PersistentVolumes().Delete(volumeName(name), &metav1.DeleteOptions{
+func deleteVolume(client *ClusterClient, name string) error {
+	err := client.CoreV1().PersistentVolumes().Delete(volumeName(name), &metav1.DeleteOptions{
 		PropagationPolicy: propagationPtr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !k8sErrors.IsNotFound(err) {
 		return errors.WithStack(err)
 	}
-	err = client.Core().PersistentVolumeClaims(client.Namespace()).Delete(volumeClaimName(name), &metav1.DeleteOptions{
+	err = client.CoreV1().PersistentVolumeClaims(client.Namespace()).Delete(volumeClaimName(name), &metav1.DeleteOptions{
 		PropagationPolicy: propagationPtr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !k8sErrors.IsNotFound(err) {
@@ -127,11 +164,7 @@ func deleteVolume(client *clusterClient, name string) error {
 	return nil
 }
 
-func createVolumeForApp(client *clusterClient, app provision.App, v *volume.Volume) error {
-	opts, err := validateVolume(v)
-	if err != nil {
-		return err
-	}
+func createVolume(client *ClusterClient, v *volume.Volume, opts *volumeOptions) error {
 	labelSet := provision.VolumeLabels(provision.VolumeLabelsOpts{
 		Name:        v.Name,
 		Provisioner: provisionerName,
@@ -162,7 +195,7 @@ func createVolumeForApp(client *clusterClient, app provision.App, v *volume.Volu
 	var volName string
 	var selector *metav1.LabelSelector
 	if opts.Plugin != "" {
-		_, err = client.Core().PersistentVolumes().Create(&apiv1.PersistentVolume{
+		_, err = client.CoreV1().PersistentVolumes().Create(&apiv1.PersistentVolume{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:   volumeName(v.Name),
 				Labels: labelSet.ToLabels(),
@@ -180,7 +213,7 @@ func createVolumeForApp(client *clusterClient, app provision.App, v *volume.Volu
 	if opts.StorageClass != "" {
 		storageClass = &opts.StorageClass
 	}
-	_, err = client.Core().PersistentVolumeClaims(client.Namespace()).Create(&apiv1.PersistentVolumeClaim{
+	_, err = client.CoreV1().PersistentVolumeClaims(client.Namespace()).Create(&apiv1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   volumeClaimName(v.Name),
 			Labels: labelSet.ToLabels(),

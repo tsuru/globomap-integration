@@ -6,15 +6,13 @@ package docker
 
 import (
 	"github.com/fsouza/go-dockerclient"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/docker-cluster/cluster"
 	"github.com/tsuru/docker-cluster/storage"
 	"github.com/tsuru/tsuru/app"
-	"github.com/tsuru/tsuru/app/image"
-	"github.com/tsuru/tsuru/log"
 	"github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision/dockercommon"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func MigrateImages() error {
@@ -22,9 +20,9 @@ func MigrateImages() error {
 	if registry != "" {
 		registry += "/"
 	}
-	repoNamespace, err := config.GetString("docker:repository-namespace")
-	if err != nil {
-		return err
+	repoNamespace, _ := config.GetString("docker:repository-namespace")
+	if repoNamespace == "" {
+		repoNamespace = "tsuru"
 	}
 	apps, err := app.List(nil)
 	if err != nil {
@@ -68,24 +66,10 @@ func MigrateImages() error {
 	return nil
 }
 
-func (p *dockerProvisioner) CleanImage(appName, imgName string) {
-	shouldRemove := true
+func (p *dockerProvisioner) CleanImage(appName, imgName string) error {
 	err := p.Cluster().RemoveImage(imgName)
-	if err != nil && err != docker.ErrNoSuchImage {
-		shouldRemove = false
-		log.Errorf("Ignored error removing old image %q: %s. Image kept on list to retry later.",
-			imgName, err.Error())
+	if err != nil && err != docker.ErrNoSuchImage && err != storage.ErrNoSuchImage {
+		return err
 	}
-	err = p.Cluster().RemoveFromRegistry(imgName)
-	if err != nil {
-		shouldRemove = false
-		log.Errorf("Ignored error removing old image from registry %q: %s. Image kept on list to retry later.",
-			imgName, err.Error())
-	}
-	if shouldRemove {
-		err = image.PullAppImageNames(appName, []string{imgName})
-		if err != nil {
-			log.Errorf("Ignored error pulling old images from database: %s", err)
-		}
-	}
+	return nil
 }

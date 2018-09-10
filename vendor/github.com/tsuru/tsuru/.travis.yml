@@ -7,44 +7,55 @@ addons:
       - rsyslog
       - xmlsec1
       - rpm
+# test stage automatically added for each go version
 go:
-  - 1.9
+  - 1.10.x
+  - master
+# script used in the automatically added test stage
+script:
+  - 'if [ "${JOB}" = "test" ]; then make race; fi'
+  - 'if [ "${JOB}" = "leakdetector" ]; then make leakdetector; fi'
+  - 'if [[ "${JOB}" == "bench" && "${TRAVIS_PULL_REQUEST}" == "false" ]]; then while true; do echo .; sleep 30; done & ./misc/bench.sh; fi'
+  - 'if [ "${JOB}" = "gometalinter" ]; then while true; do echo .; sleep 30; done & if [ "${TRAVIS_EVENT_TYPE}" = "push" ] && [ "${TRAVIS_BRANCH}" = "master" ]; then make lint; else make metalint; fi; fi'
+  - 'if [ "${JOB}" = "checkhandlers" ]; then ./misc/check-handlers.sh; fi'
+  - 'if [ "${JOB}" = "checkevents" ]; then ./misc/check-events.sh; fi'
+  - 'if [ "${JOB}" = "checkapidocs" ]; then make check-api-doc; fi'
 env:
   global:
     - GOARCH=amd64
-    - GO_FOR_RELEASE=1.9
+    - GO_FOR_RELEASE=1.10
     - IMAGE_NAME=tsuru/api
+  matrix:
+    - JOB=test
+    - JOB=bench
+    - JOB=leakdetector
+    - JOB=gometalinter
+    - JOB=checkhandlers
+    - JOB=checkevents
+    - JOB=checkapidocs
 jobs:
   fast_finish: true
+  allow_failures:
+    - go: master
+  exclude:
+    - go: master
+      env: JOB=bench
+    - go: master
+      env: JOB=gometalinter
+    - go: master
+      env: JOB=checkhandlers
+    - go: master
+      env: JOB=checkevents
+    - go: master
+      env: JOB=checkapidocs
   include:
-    - stage: test
-      before_script:
-        - rsyslogd &
-        - sleep 1
-      before_install:
-        - git fetch --unshallow || true
-        - sleep 15
-        - sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
-        - sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=0
-        - sudo ifconfig
-        - sudo sysctl -a | grep ipv6.conf
-        - sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
-        - echo "deb http://repo.mongodb.org/apt/ubuntu "$(lsb_release -sc)"/mongodb-org/3.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-3.0.list
-        - sudo apt-get -qq update
-        - sudo apt-get install -y mongodb-org --allow-unauthenticated
-        - sudo service mongod start || true
-        - service mongod status
-        - go env && pwd
-      script: make test
-    - stage: lint
-      script: ./misc/check-handlers.sh
-    - script: ./misc/check-events.sh
-    - script: make check-api-doc
     - stage: deploy
       script:
         - CGO_ENABLED=0 go build -ldflags "-X github.com/tsuru/tsuru/cmd.GitHash=`git rev-parse HEAD`" ./cmd/tsurud/
         - curl https://raw.githubusercontent.com/tsuru/push-to-docker/master/push.sh | bash
+      env: JOB=docker hub
     - script: if [ -n "$TRAVIS_TAG" ]; then curl -sL https://raw.githubusercontent.com/tsuru/push-to-packagecloud/master/push.sh | PACKAGE_NAME=tsuru-server bash; fi
+      env: JOB=package cloud
     - stage: integration-check
       script: ./misc/trigger-integration.sh
 notifications:

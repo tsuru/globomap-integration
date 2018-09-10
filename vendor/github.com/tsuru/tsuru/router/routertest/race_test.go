@@ -18,13 +18,14 @@ import (
 func (s *S) TestAddRouteAndRemoteRouteAreSafe(c *check.C) {
 	var wg sync.WaitGroup
 	fake := newFakeRouter()
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
+	originalMaxProcs := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	for i := 1; i < 256; i++ {
 		wg.Add(5)
 		name := fmt.Sprintf("route-%d", i)
 		addr, _ := url.Parse(fmt.Sprintf("http://10.10.10.%d", i))
 		go func() {
-			fake.AddBackend(name)
+			fake.AddBackend(FakeApp{Name: name})
 			wg.Done()
 		}()
 		go func() {

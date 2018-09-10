@@ -17,11 +17,11 @@ import (
 	"github.com/tsuru/tsuru/provision/cluster"
 	"github.com/tsuru/tsuru/provision/nodecontainer"
 	"github.com/tsuru/tsuru/provision/servicecommon"
+	"k8s.io/api/apps/v1beta2"
+	apiv1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 )
 
 const alphaAffinityAnnotation = "scheduler.alpha.kubernetes.io/affinity"
@@ -29,8 +29,8 @@ const alphaAffinityAnnotation = "scheduler.alpha.kubernetes.io/affinity"
 type nodeContainerManager struct{}
 
 func (m *nodeContainerManager) DeployNodeContainer(config *nodecontainer.NodeContainerConfig, pool string, filter servicecommon.PoolFilter, placementOnly bool) error {
-	err := forEachCluster(func(cluster *clusterClient) error {
-		return m.deployNodeContainerForCluster(cluster, config, pool, filter, placementOnly)
+	err := forEachCluster(func(cluster *ClusterClient) error {
+		return m.deployNodeContainerForCluster(cluster, *config, pool, filter, placementOnly)
 	})
 	if err == cluster.ErrNoCluster {
 		return nil
@@ -38,9 +38,9 @@ func (m *nodeContainerManager) DeployNodeContainer(config *nodecontainer.NodeCon
 	return err
 }
 
-func (m *nodeContainerManager) deployNodeContainerForCluster(client *clusterClient, config *nodecontainer.NodeContainerConfig, pool string, filter servicecommon.PoolFilter, placementOnly bool) error {
+func (m *nodeContainerManager) deployNodeContainerForCluster(client *ClusterClient, config nodecontainer.NodeContainerConfig, pool string, filter servicecommon.PoolFilter, placementOnly bool) error {
 	dsName := daemonSetName(config.Name, pool)
-	oldDs, err := client.Extensions().DaemonSets(client.Namespace()).Get(dsName, metav1.GetOptions{})
+	oldDs, err := client.AppsV1beta2().DaemonSets(client.Namespace()).Get(dsName, metav1.GetOptions{})
 	if err != nil {
 		if !k8sErrors.IsNotFound(err) {
 			return errors.WithStack(err)
@@ -87,7 +87,7 @@ func (m *nodeContainerManager) deployNodeContainerForCluster(client *clusterClie
 		}
 		oldDs.Spec.Template.ObjectMeta.Annotations = affinityAnnotation
 		oldDs.Spec.Template.Spec.Affinity = affinity
-		_, err = client.Extensions().DaemonSets(client.Namespace()).Update(oldDs)
+		_, err = client.AppsV1beta2().DaemonSets(client.Namespace()).Update(oldDs)
 		return errors.WithStack(err)
 	}
 	ls := provision.NodeContainerLabels(provision.NodeContainerLabelsOpts{
@@ -151,18 +151,33 @@ func (m *nodeContainerManager) deployNodeContainerForCluster(client *clusterClie
 		restartPolicy = apiv1.RestartPolicyNever
 	}
 	maxUnavailable := intstr.FromString("20%")
-	ds := &v1beta1.DaemonSet{
+	serviceAccountName := serviceAccountNameForNodeContainer(config)
+	accountLabels := provision.ServiceAccountLabels(provision.ServiceAccountLabelsOpts{
+		NodeContainerName: config.Name,
+		Provisioner:       provisionerName,
+		Prefix:            tsuruLabelPrefix,
+	})
+	err = ensureServiceAccount(client, serviceAccountName, accountLabels)
+	if err != nil {
+		return err
+	}
+	pullSecrets, err := getImagePullSecrets(client, config.Image())
+	if err != nil {
+		return err
+	}
+	ds := &v1beta2.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dsName,
 			Namespace: client.Namespace(),
+			Labels:    ls.ToLabels(),
 		},
-		Spec: v1beta1.DaemonSetSpec{
+		Spec: v1beta2.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{
 				MatchLabels: ls.ToNodeContainerSelector(),
 			},
-			UpdateStrategy: v1beta1.DaemonSetUpdateStrategy{
-				Type: v1beta1.RollingUpdateDaemonSetStrategyType,
-				RollingUpdate: &v1beta1.RollingUpdateDaemonSet{
+			UpdateStrategy: v1beta2.DaemonSetUpdateStrategy{
+				Type: v1beta2.RollingUpdateDaemonSetStrategyType,
+				RollingUpdate: &v1beta2.RollingUpdateDaemonSet{
 					MaxUnavailable: &maxUnavailable,
 				},
 			},
@@ -172,10 +187,12 @@ func (m *nodeContainerManager) deployNodeContainerForCluster(client *clusterClie
 					Annotations: affinityAnnotation,
 				},
 				Spec: apiv1.PodSpec{
-					Affinity:      affinity,
-					Volumes:       volumes,
-					RestartPolicy: restartPolicy,
-					HostNetwork:   config.HostConfig.NetworkMode == "host",
+					ImagePullSecrets:   pullSecrets,
+					ServiceAccountName: serviceAccountName,
+					Affinity:           affinity,
+					Volumes:            volumes,
+					RestartPolicy:      restartPolicy,
+					HostNetwork:        config.HostConfig.NetworkMode == "host",
 					Containers: []apiv1.Container{
 						{
 							Name:            config.Name,
@@ -189,14 +206,20 @@ func (m *nodeContainerManager) deployNodeContainerForCluster(client *clusterClie
 							SecurityContext: secCtx,
 						},
 					},
+					Tolerations: []apiv1.Toleration{
+						{
+							Key:      tsuruNodeDisabledTaint,
+							Operator: apiv1.TolerationOpExists,
+						},
+					},
 				},
 			},
 		},
 	}
 	if oldDs != nil {
-		_, err = client.Extensions().DaemonSets(client.Namespace()).Update(ds)
+		_, err = client.AppsV1beta2().DaemonSets(client.Namespace()).Update(ds)
 	} else {
-		_, err = client.Extensions().DaemonSets(client.Namespace()).Create(ds)
+		_, err = client.AppsV1beta2().DaemonSets(client.Namespace()).Create(ds)
 	}
 	return errors.WithStack(err)
 }

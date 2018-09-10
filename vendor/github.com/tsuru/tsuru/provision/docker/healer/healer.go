@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/globalsign/mgo"
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
@@ -19,8 +21,6 @@ import (
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/docker/types"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
 )
 
 var (
@@ -82,8 +82,8 @@ func toHealingEvt(evt *event.Event) (types.HealingEvent, error) {
 
 func ListHealingHistory(filter string) ([]types.HealingEvent, error) {
 	evtFilter := event.Filter{
-		KindName: "healer",
-		KindType: event.KindTypeInternal,
+		KindNames: []string{"healer"},
+		KindType:  event.KindTypeInternal,
 	}
 	if filter != "" {
 		t, err := event.GetTargetType(filter)

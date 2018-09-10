@@ -131,6 +131,9 @@ func (ProvisionSuite) TestUnitNotFoundError(c *check.C) {
 
 type testNode struct{}
 
+func (n *testNode) IaaSID() string {
+	return "1"
+}
 func (n *testNode) Pool() string {
 	return "a"
 }
@@ -143,6 +146,9 @@ func (n *testNode) Status() string {
 func (n *testNode) Metadata() map[string]string {
 	return map[string]string{"d": "e"}
 }
+func (n *testNode) MetadataNoPrefix() map[string]string {
+	return n.Metadata()
+}
 func (n *testNode) Units() ([]Unit, error) {
 	return nil, nil
 }
@@ -154,13 +160,14 @@ func (ProvisionSuite) TestNodeToJson(c *check.C) {
 	n := testNode{}
 	data, err := NodeToJSON(&n)
 	c.Assert(err, check.IsNil)
-	c.Assert(string(data), check.Equals, `{"Address":"b","Metadata":{"d":"e"},"Status":"c","Pool":"a","Provisioner":""}`)
+	c.Assert(string(data), check.Equals, `{"Address":"b","IaaSID":"1","Metadata":{"d":"e"},"Status":"c","Pool":"a","Provisioner":""}`)
 }
 
 func (ProvisionSuite) TestNodeToSpec(c *check.C) {
 	n := testNode{}
 	spec := NodeToSpec(&n)
 	c.Assert(spec, check.DeepEquals, NodeSpec{
+		IaaSID:   "1",
 		Address:  "b",
 		Metadata: map[string]string{"d": "e"},
 		Status:   "c",
@@ -180,6 +187,7 @@ func (ProvisionSuite) TestNodeToSpecExtraData(c *check.C) {
 	n := extraNode{}
 	spec := NodeToSpec(&n)
 	c.Assert(spec, check.DeepEquals, NodeSpec{
+		IaaSID:   "1",
 		Address:  "b",
 		Metadata: map[string]string{"d": "e", "e1": "v1"},
 		Status:   "c",

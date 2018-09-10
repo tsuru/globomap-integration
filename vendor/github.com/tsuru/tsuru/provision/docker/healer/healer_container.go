@@ -7,8 +7,10 @@ package healer
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"time"
 
+	"github.com/globalsign/mgo/bson"
 	"github.com/pkg/errors"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/event"
@@ -16,7 +18,6 @@ import (
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision"
 	"github.com/tsuru/tsuru/provision/docker/container"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type ContainerHealer struct {
@@ -100,7 +101,7 @@ func (h *ContainerHealer) healContainerIfNeeded(cont container.Container) error 
 		log.Errorf("Containers healing: couldn't verify running processes in container %q: %s", cont.ID, err)
 	}
 	if isAsExpected {
-		cont.SetStatus(h.provisioner, cont.ExpectedStatus(), true)
+		cont.SetStatus(h.provisioner.ClusterClient(), cont.ExpectedStatus(), true)
 		return nil
 	}
 	locked := h.locker.Lock(cont.AppName)
@@ -122,7 +123,10 @@ func (h *ContainerHealer) healContainerIfNeeded(cont container.Container) error 
 	}
 	log.Errorf("Initiating healing process for container %q, unresponsive since %s.", cont.ID, cont.LastSuccessStatusUpdate)
 	evt, err := event.NewInternal(&event.Opts{
-		Target:       event.Target{Type: event.TargetTypeContainer, Value: cont.ID},
+		Target: event.Target{Type: event.TargetTypeContainer, Value: cont.ID},
+		ExtraTargets: []event.ExtraTarget{
+			{Target: event.Target{Type: event.TargetTypeApp, Value: cont.AppName}},
+		},
 		InternalKind: "healer",
 		CustomData:   cont,
 		Allowed: event.Allowed(permission.PermAppReadEvents, append(permission.Contexts(permission.CtxTeam, a.Teams),
@@ -136,6 +140,9 @@ func (h *ContainerHealer) healContainerIfNeeded(cont container.Container) error 
 	newCont, healErr := h.healContainer(cont)
 	if healErr != nil {
 		healErr = errors.Errorf("Error healing container %q: %s", cont.ID, healErr.Error())
+	}
+	if newCont.ID != "" {
+		evt.ExtraTargets = append(evt.ExtraTargets, event.ExtraTarget{Target: event.Target{Type: event.TargetTypeContainer, Value: newCont.ID}})
 	}
 	err = evt.DoneCustomData(healErr, newCont)
 	if err != nil {
@@ -157,9 +164,11 @@ func (h *ContainerHealer) runContainerHealerOnce() {
 	}
 }
 
+var localSkip uint64
+
 func listUnresponsiveContainers(p DockerProvisioner, maxUnresponsiveTime time.Duration) ([]container.Container, error) {
 	now := time.Now().UTC()
-	return p.ListContainers(bson.M{
+	conts, err := p.ListContainers(bson.M{
 		"id":                      bson.M{"$ne": ""},
 		"appname":                 bson.M{"$ne": ""},
 		"lastsuccessstatusupdate": bson.M{"$lt": now.Add(-maxUnresponsiveTime)},
@@ -172,4 +181,14 @@ func listUnresponsiveContainers(p DockerProvisioner, maxUnresponsiveTime time.Du
 			provision.StatusAsleep.String(),
 		}},
 	})
+	if err != nil {
+		return nil, err
+	}
+	if len(conts) > 0 {
+		pivot := atomic.AddUint64(&localSkip, 1) % uint64(len(conts))
+		// Rotate the queried slice on pivot index to avoid the same node to always
+		// be selected.
+		conts = append(conts[pivot:], conts[:pivot]...)
+	}
+	return conts, nil
 }

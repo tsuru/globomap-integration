@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/fsouza/go-dockerclient"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app/bind"
 	"github.com/tsuru/tsuru/app/image"
@@ -42,9 +43,9 @@ import (
 	"github.com/tsuru/tsuru/tsurutest"
 	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
+	"github.com/tsuru/tsuru/types/cache"
 	"github.com/tsuru/tsuru/volume"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 func (s *S) TestGetAppByName(c *check.C) {
@@ -80,7 +81,14 @@ func (s *S) TestDelete(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = image.AppendAppImageName(app.Name, "testimage")
 	c.Assert(err, check.IsNil)
-	err = Delete(app, nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	err = Delete(app, evt, "")
 	c.Assert(err, check.IsNil)
 	c.Assert(routertest.FakeRouter.HasBackend(app.Name), check.Equals, false)
 	_, err = GetByName(app.Name)
@@ -111,12 +119,14 @@ func (s *S) TestDeleteWithEvents(c *check.C) {
 	c.Assert(err, check.IsNil)
 	app, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
-	_, err = event.New(&event.Opts{
+	evt1, err := event.New(&event.Opts{
 		Target:   event.Target{Type: "app", Value: a.Name},
 		Kind:     permission.PermAppUpdateEnvSet,
 		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
 		Allowed:  event.Allowed(permission.PermApp),
 	})
+	c.Assert(err, check.IsNil)
+	err = evt1.Done(nil)
 	c.Assert(err, check.IsNil)
 	evt2, err := event.New(&event.Opts{
 		Target:   event.Target{Type: "app", Value: "other"},
@@ -125,13 +135,20 @@ func (s *S) TestDeleteWithEvents(c *check.C) {
 		Allowed:  event.Allowed(permission.PermApp),
 	})
 	c.Assert(err, check.IsNil)
-	Delete(app, nil)
+	deleteEvt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	Delete(app, deleteEvt, "")
 	evts, err := event.List(&event.Filter{})
 	c.Assert(err, check.IsNil)
 	c.Assert(evts, eventtest.EvtEquals, evt2)
 	evts, err = event.List(&event.Filter{IncludeRemoved: true})
 	c.Assert(err, check.IsNil)
-	c.Assert(evts, check.HasLen, 2)
+	c.Assert(evts, check.HasLen, 3)
 	_, err = repository.Manager().GetRepository(a.Name)
 	c.Assert(err, check.NotNil)
 	c.Assert(err.Error(), check.Equals, "repository not found")
@@ -143,7 +160,14 @@ func (s *S) TestDeleteWithoutUnits(c *check.C) {
 	c.Assert(err, check.IsNil)
 	a, err := GetByName(app.Name)
 	c.Assert(err, check.IsNil)
-	Delete(a, nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	Delete(a, evt, "")
 	_, err = repository.Manager().GetRepository(app.Name)
 	c.Assert(err, check.NotNil)
 	c.Assert(err.Error(), check.Equals, "repository not found")
@@ -163,7 +187,14 @@ func (s *S) TestDeleteSwappedApp(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = Swap(&a, app2, false)
 	c.Assert(err, check.IsNil)
-	err = Delete(&a, nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	err = Delete(&a, evt, "")
 	c.Assert(err, check.ErrorMatches, "application is swapped with \"app2\", cannot remove it")
 	c.Assert(s.provisioner.Provisioned(&a), check.Equals, true)
 }
@@ -182,7 +213,14 @@ func (s *S) TestDeleteSwappedAppOnlyCname(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = Swap(&a, app2, true)
 	c.Assert(err, check.IsNil)
-	err = Delete(&a, nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	err = Delete(&a, evt, "")
 	c.Assert(err, check.IsNil)
 	c.Assert(s.provisioner.Provisioned(&a), check.Equals, false)
 }
@@ -207,7 +245,14 @@ func (s *S) TestDeleteWithBoundVolumes(c *check.C) {
 	c.Assert(err, check.IsNil)
 	app, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
-	err = Delete(app, nil)
+	evt, err := event.New(&event.Opts{
+		Target:   event.Target{Type: "app", Value: a.Name},
+		Kind:     permission.PermAppDelete,
+		RawOwner: event.Owner{Type: event.OwnerTypeUser, Name: s.user.Email},
+		Allowed:  event.Allowed(permission.PermApp),
+	})
+	c.Assert(err, check.IsNil)
+	err = Delete(app, evt, "")
 	c.Assert(err, check.IsNil)
 	dbV, err := volume.Load(v1.Name)
 	c.Assert(err, check.IsNil)
@@ -271,7 +316,7 @@ func (s *S) TestCreateAppDefaultPlan(c *check.C) {
 func (s *S) TestCreateAppDefaultRouterForPool(c *check.C) {
 	pool.SetPoolConstraint(&pool.PoolConstraint{
 		PoolExpr: "pool1",
-		Field:    "router",
+		Field:    pool.ConstraintTypeRouter,
 		Values:   []string{"fake-tls", "fake"},
 	})
 	a := App{
@@ -288,34 +333,7 @@ func (s *S) TestCreateAppDefaultRouterForPool(c *check.C) {
 	c.Assert(err, check.IsNil)
 	retrievedApp, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
-	c.Assert(retrievedApp.Router, check.Equals, "fake-tls")
-}
-
-func (s *S) TestCreateAppWithoutDefaultPlan(c *check.C) {
-	err := PlanService().Delete(s.defaultPlan)
-	c.Assert(err, check.IsNil)
-	a := App{
-		Name:      "appname",
-		Platform:  "python",
-		TeamOwner: s.team.Name,
-	}
-	expectedHost := "localhost"
-	config.Set("host", expectedHost)
-	s.conn.Users().Update(bson.M{"email": s.user.Email}, bson.M{"$set": bson.M{"quota.limit": 1}})
-	config.Set("quota:units-per-app", 3)
-	defer config.Unset("quota:units-per-app")
-	err = CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	retrievedApp, err := GetByName(a.Name)
-	c.Assert(err, check.IsNil)
-	c.Assert(retrievedApp.Plan, check.DeepEquals, appTypes.Plan{
-		Name:     "autogenerated",
-		Memory:   0,
-		Swap:     0,
-		CpuShare: 100,
-	})
-	_, err = repository.Manager().GetRepository(a.Name)
-	c.Assert(err, check.IsNil)
+	c.Assert(retrievedApp.GetRouters(), check.DeepEquals, []appTypes.AppRouter{{Name: "fake-tls", Opts: map[string]string{}}})
 }
 
 func (s *S) TestCreateAppWithExplicitPlan(c *check.C) {
@@ -325,8 +343,10 @@ func (s *S) TestCreateAppWithExplicitPlan(c *check.C) {
 		Swap:     2,
 		CpuShare: 3,
 	}
-	err := SavePlan(myPlan)
-	c.Assert(err, check.IsNil)
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		c.Assert(name, check.Equals, myPlan.Name)
+		return &myPlan, nil
+	}
 	a := App{
 		Name:      "appname",
 		Platform:  "python",
@@ -338,7 +358,7 @@ func (s *S) TestCreateAppWithExplicitPlan(c *check.C) {
 	s.conn.Users().Update(bson.M{"email": s.user.Email}, bson.M{"$set": bson.M{"quota.limit": 1}})
 	config.Set("quota:units-per-app", 3)
 	defer config.Unset("quota:units-per-app")
-	err = CreateApp(&a, s.user)
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	retrievedApp, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
@@ -657,7 +677,7 @@ func (s *S) TestAddUnitsQuota(c *check.C) {
 }
 
 func (s *S) TestAddUnitsQuotaExceeded(c *check.C) {
-	app := App{Name: "warpaint", Platform: "ruby", TeamOwner: s.team.Name, Router: "fake"}
+	app := App{Name: "warpaint", Platform: "ruby", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake"}}}
 	err := s.conn.Apps().Insert(app)
 	c.Assert(err, check.IsNil)
 	err = app.AddUnits(1, "web", nil)
@@ -698,7 +718,7 @@ func (s *S) TestAddUnitsFailureInProvisioner(c *check.C) {
 		Platform:  "golang",
 		Quota:     quota.Unlimited,
 		TeamOwner: s.team.Name,
-		Router:    "fake",
+		Routers:   []appTypes.AppRouter{{Name: "fake"}},
 	}
 	err := s.conn.Apps().Insert(app)
 	c.Assert(err, check.IsNil)
@@ -895,8 +915,15 @@ func (s *S) TestUpdateNodeStatusNotFound(c *check.C) {
 		{ID: units[2].ID, Status: provision.Status("error")},
 		{ID: units[2].ID + "-not-found", Status: provision.Status("error")},
 	}
-	_, err = UpdateNodeStatus(provision.NodeStatusData{Addrs: []string{"addr1"}, Units: unitStates})
-	c.Assert(err, check.Equals, provision.ErrNodeNotFound)
+	result, err := UpdateNodeStatus(provision.NodeStatusData{Addrs: []string{"addr1"}, Units: unitStates})
+	c.Assert(err, check.IsNil)
+	expected := []UpdateUnitsResult{
+		{ID: units[0].ID, Found: false},
+		{ID: units[1].ID, Found: false},
+		{ID: units[2].ID, Found: false},
+		{ID: units[2].ID + "-not-found", Found: false},
+	}
+	c.Assert(result, check.DeepEquals, expected)
 }
 
 func (s *S) TestGrantAccess(c *check.C) {
@@ -931,10 +958,8 @@ func (s *S) TestRevokeAccess(c *check.C) {
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
 	})
 	team := authTypes.Team{Name: "abcd"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
 	app := App{Name: "app-name", Platform: "django", Teams: []string{s.team.Name, team.Name}}
-	err = s.conn.Apps().Insert(app)
+	err := s.conn.Apps().Insert(app)
 	c.Assert(err, check.IsNil)
 	err = repository.Manager().CreateRepository(app.Name, nil)
 	c.Assert(err, check.IsNil)
@@ -953,8 +978,6 @@ func (s *S) TestRevokeAccess(c *check.C) {
 
 func (s *S) TestRevokeAccessKeepsUsersThatBelongToTwoTeams(c *check.C) {
 	team := authTypes.Team{Name: "abcd"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
 	user, _ := permissiontest.CustomUserWithPermission(c, nativeScheme, "myuser", permission.Permission{
 		Scheme:  permission.PermAppDeploy,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -963,7 +986,7 @@ func (s *S) TestRevokeAccessKeepsUsersThatBelongToTwoTeams(c *check.C) {
 		Context: permission.Context(permission.CtxTeam, team.Name),
 	})
 	app := App{Name: "app-name", Platform: "django", Teams: []string{s.team.Name, team.Name}}
-	err = s.conn.Apps().Insert(app)
+	err := s.conn.Apps().Insert(app)
 	c.Assert(err, check.IsNil)
 	err = repository.Manager().CreateRepository(app.Name, nil)
 	c.Assert(err, check.IsNil)
@@ -1432,7 +1455,7 @@ func (s *S) TestAddCNamePartialUpdate(c *check.C) {
 	a := &App{Name: "master", Platform: "puppet", TeamOwner: s.team.Name}
 	err := CreateApp(a, s.user)
 	c.Assert(err, check.IsNil)
-	other := App{Name: a.Name, Router: "fake"}
+	other := App{Name: a.Name, Routers: []appTypes.AppRouter{{Name: "fake"}}}
 	err = other.AddCName("ktulu.mycompany.com")
 	c.Assert(err, check.IsNil)
 	a, err = GetByName(a.Name)
@@ -2098,12 +2121,17 @@ func (s *S) TestRemoveInstanceWithUnitsNoRestart(c *check.C) {
 }
 
 func (s *S) TestIsValid(c *check.C) {
-	err := auth.CreateTeam("noaccessteam", s.user)
-	c.Assert(err, check.IsNil)
-	err = pool.SetPoolConstraint(&pool.PoolConstraint{
+	teamName := "noaccessteam"
+	s.mockService.Team.OnFindByName = func(name string) (*authTypes.Team, error) {
+		if name == teamName || name == s.team.Name {
+			return &authTypes.Team{Name: teamName}, nil
+		}
+		return nil, authTypes.ErrTeamNotFound
+	}
+	err := pool.SetPoolConstraint(&pool.PoolConstraint{
 		PoolExpr:  "pool1",
-		Field:     "team",
-		Values:    []string{"noaccessteam"},
+		Field:     pool.ConstraintTypeTeam,
+		Values:    []string{teamName},
 		Blacklist: true,
 	})
 	c.Assert(err, check.IsNil)
@@ -2133,7 +2161,7 @@ func (s *S) TestIsValid(c *check.C) {
 		{"myapp", "noaccessteam", "pool1", "fake", "App team owner \"noaccessteam\" has no access to pool \"pool1\""},
 	}
 	for _, d := range data {
-		a := App{Name: d.name, TeamOwner: d.teamOwner, Pool: d.pool, Router: d.router}
+		a := App{Name: d.name, TeamOwner: d.teamOwner, Pool: d.pool, Routers: []appTypes.AppRouter{{Name: d.router}}}
 		if valid := a.validate(); valid != nil && valid.Error() != d.expected {
 			c.Errorf("Is %q a valid app? Expected: %v. Got: %v.", d.name, d.expected, valid)
 		}
@@ -2147,7 +2175,7 @@ func (s *S) TestRestart(c *check.C) {
 		Platform:  "django",
 		Teams:     []string{s.team.Name},
 		TeamOwner: s.team.Name,
-		Router:    "fake",
+		Routers:   []appTypes.AppRouter{{Name: "fake"}},
 	}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
@@ -2181,11 +2209,11 @@ func (s *S) TestSleep(c *check.C) {
 		Platform:  "django",
 		Teams:     []string{s.team.Name},
 		TeamOwner: s.team.Name,
-		Router:    "fake",
+		Routers:   []appTypes.AppRouter{{Name: "fake"}},
 	}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
-	routertest.FakeRouter.AddBackend(a.Name)
+	routertest.FakeRouter.AddBackend(&a)
 	var b bytes.Buffer
 	err = a.Start(&b, "")
 	c.Assert(err, check.IsNil)
@@ -2422,7 +2450,6 @@ func (s *S) TestAppMarshalJSON(c *check.C) {
 		Name:        "name",
 		Platform:    "Framework",
 		Teams:       []string{"team1"},
-		IP:          "10.10.10.1",
 		CName:       []string{"name.mycompany.com"},
 		Owner:       "appOwner",
 		Deploys:     7,
@@ -2430,17 +2457,18 @@ func (s *S) TestAppMarshalJSON(c *check.C) {
 		Description: "description",
 		Plan:        appTypes.Plan{Name: "myplan", Memory: 64, Swap: 128, CpuShare: 100},
 		TeamOwner:   "myteam",
-		Router:      "fake",
-		RouterOpts:  map[string]string{"opt1": "val1"},
+		Routers:     []appTypes.AppRouter{{Name: "fake", Opts: map[string]string{"opt1": "val1"}}},
 		Tags:        []string{"tag a", "tag b"},
 	}
+	err = routertest.FakeRouter.AddBackend(&app)
+	c.Assert(err, check.IsNil)
 	expected := map[string]interface{}{
 		"name":        "name",
 		"platform":    "Framework",
 		"repository":  "git@" + repositorytest.ServerHost + ":name.git",
 		"teams":       []interface{}{"team1"},
 		"units":       []interface{}{},
-		"ip":          "10.10.10.1",
+		"ip":          "name.fakerouter.com",
 		"cname":       []interface{}{"name.mycompany.com"},
 		"owner":       "appOwner",
 		"deploys":     float64(7),
@@ -2457,7 +2485,15 @@ func (s *S) TestAppMarshalJSON(c *check.C) {
 		},
 		"router":     "fake",
 		"routeropts": map[string]interface{}{"opt1": "val1"},
-		"tags":       []interface{}{"tag a", "tag b"},
+		"routers": []interface{}{
+			map[string]interface{}{
+				"name":    "fake",
+				"address": "name.fakerouter.com",
+				"type":    "fake",
+				"opts":    map[string]interface{}{"opt1": "val1"},
+			},
+		},
+		"tags": []interface{}{"tag a", "tag b"},
 	}
 	data, err := app.MarshalJSON()
 	c.Assert(err, check.IsNil)
@@ -2472,7 +2508,6 @@ func (s *S) TestAppMarshalJSONWithoutRepository(c *check.C) {
 		Name:        "name",
 		Platform:    "Framework",
 		Teams:       []string{"team1"},
-		IP:          "10.10.10.1",
 		CName:       []string{"name.mycompany.com"},
 		Owner:       "appOwner",
 		Deploys:     7,
@@ -2480,17 +2515,18 @@ func (s *S) TestAppMarshalJSONWithoutRepository(c *check.C) {
 		Description: "description",
 		Plan:        appTypes.Plan{Name: "myplan", Memory: 64, Swap: 128, CpuShare: 100},
 		TeamOwner:   "myteam",
-		Router:      "fake",
-		RouterOpts:  map[string]string{},
+		Routers:     []appTypes.AppRouter{{Name: "fake", Opts: map[string]string{}}},
 		Tags:        []string{},
 	}
+	err := routertest.FakeRouter.AddBackend(&app)
+	c.Assert(err, check.IsNil)
 	expected := map[string]interface{}{
 		"name":        "name",
 		"platform":    "Framework",
 		"repository":  "",
 		"teams":       []interface{}{"team1"},
 		"units":       []interface{}{},
-		"ip":          "10.10.10.1",
+		"ip":          "name.fakerouter.com",
 		"cname":       []interface{}{"name.mycompany.com"},
 		"owner":       "appOwner",
 		"deploys":     float64(7),
@@ -2507,7 +2543,15 @@ func (s *S) TestAppMarshalJSONWithoutRepository(c *check.C) {
 		},
 		"router":     "fake",
 		"routeropts": map[string]interface{}{},
-		"tags":       []interface{}{},
+		"routers": []interface{}{
+			map[string]interface{}{
+				"name":    "fake",
+				"address": "name.fakerouter.com",
+				"type":    "fake",
+				"opts":    map[string]interface{}{},
+			},
+		},
+		"tags": []interface{}{},
 	}
 	data, err := app.MarshalJSON()
 	c.Assert(err, check.IsNil)
@@ -2520,8 +2564,11 @@ func (s *S) TestAppMarshalJSONWithoutRepository(c *check.C) {
 func (s *S) TestAppMarshalJSONUnitsError(c *check.C) {
 	provisiontest.ProvisionerInstance.PrepareFailure("Units", fmt.Errorf("my err"))
 	app := App{
-		Name: "name",
+		Name:    "name",
+		Routers: []appTypes.AppRouter{{Name: "fake", Opts: map[string]string{}}},
 	}
+	err := routertest.FakeRouter.AddBackend(&app)
+	c.Assert(err, check.IsNil)
 	expected := map[string]interface{}{
 		"name":        "name",
 		"platform":    "",
@@ -2529,7 +2576,7 @@ func (s *S) TestAppMarshalJSONUnitsError(c *check.C) {
 		"teams":       nil,
 		"units":       []interface{}{},
 		"error":       "unable to list app units: my err",
-		"ip":          "",
+		"ip":          "name.fakerouter.com",
 		"cname":       nil,
 		"owner":       "",
 		"deploys":     float64(0),
@@ -2542,11 +2589,19 @@ func (s *S) TestAppMarshalJSONUnitsError(c *check.C) {
 			"memory":   float64(0),
 			"swap":     float64(0),
 			"cpushare": float64(0),
-			"router":   "",
+			"router":   "fake",
 		},
-		"router":     "",
-		"routeropts": nil,
-		"tags":       nil,
+		"router":     "fake",
+		"routeropts": map[string]interface{}{},
+		"routers": []interface{}{
+			map[string]interface{}{
+				"name":    "fake",
+				"address": "name.fakerouter.com",
+				"type":    "fake",
+				"opts":    map[string]interface{}{},
+			},
+		},
+		"tags": nil,
 	}
 	data, err := app.MarshalJSON()
 	c.Assert(err, check.IsNil)
@@ -2918,6 +2973,146 @@ func (s *S) TestListAll(c *check.C) {
 	c.Assert(apps, check.HasLen, 2)
 }
 
+func (s *S) TestListUsesCachedRouterAddrs(c *check.C) {
+	a := App{
+		Name:      "app1",
+		TeamOwner: s.team.Name,
+	}
+	a2 := App{
+		Name:      "app2",
+		TeamOwner: s.team.Name,
+	}
+	err := CreateApp(&a, s.user)
+	c.Assert(err, check.IsNil)
+	err = CreateApp(&a2, s.user)
+	c.Assert(err, check.IsNil)
+	apps, err := List(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(apps, check.HasLen, 2)
+	delete(apps[0].Env, "TSURU_APP_TOKEN")
+	delete(apps[1].Env, "TSURU_APP_TOKEN")
+	sort.Slice(apps, func(i, j int) bool {
+		return apps[i].Name < apps[j].Name
+	})
+	c.Assert(apps, check.DeepEquals, []App{
+		{
+			Name:      "app1",
+			CName:     []string{},
+			Teams:     []string{"tsuruteam"},
+			TeamOwner: "tsuruteam",
+			Owner:     "whydidifall@thewho.com",
+			Env: map[string]bind.EnvVar{
+				"TSURU_APPNAME": {Name: "TSURU_APPNAME", Value: "app1"},
+				"TSURU_APPDIR":  {Name: "TSURU_APPDIR", Value: "/home/application/current"},
+			},
+			ServiceEnvs: []bind.ServiceEnvVar{},
+			Plan: appTypes.Plan{
+				Name:     "default-plan",
+				Memory:   1024,
+				Swap:     1024,
+				CpuShare: 100,
+				Default:  true,
+			},
+			Pool:       "pool1",
+			RouterOpts: map[string]string{},
+			Tags:       []string{},
+			Routers: []appTypes.AppRouter{
+				{Name: "fake", Opts: map[string]string{}},
+			},
+			Quota: quota.Quota{Limit: -1, InUse: 0},
+		},
+		{
+			Name:      "app2",
+			CName:     []string{},
+			Teams:     []string{"tsuruteam"},
+			TeamOwner: "tsuruteam",
+			Owner:     "whydidifall@thewho.com",
+			Env: map[string]bind.EnvVar{
+				"TSURU_APPNAME": {Name: "TSURU_APPNAME", Value: "app2"},
+				"TSURU_APPDIR":  {Name: "TSURU_APPDIR", Value: "/home/application/current"},
+			},
+			ServiceEnvs: []bind.ServiceEnvVar{},
+			Plan: appTypes.Plan{
+				Name:     "default-plan",
+				Memory:   1024,
+				Swap:     1024,
+				CpuShare: 100,
+				Default:  true,
+			},
+			Pool:       "pool1",
+			RouterOpts: map[string]string{},
+			Tags:       []string{},
+			Routers: []appTypes.AppRouter{
+				{Name: "fake", Opts: map[string]string{}},
+			},
+			Quota: quota.Quota{Limit: -1, InUse: 0},
+		},
+	})
+	timeout := time.After(5 * time.Second)
+	for {
+		apps, err = List(nil)
+		c.Assert(err, check.IsNil)
+		c.Assert(apps, check.HasLen, 2)
+		if apps[0].Routers[0].Address != "" && apps[1].Routers[0].Address != "" {
+			break
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-timeout:
+			c.Fatal("timeout waiting for routers addr to show up")
+		}
+	}
+	c.Assert(apps[0].Routers[0].Address, check.Equals, "app1.fakerouter.com")
+	c.Assert(apps[1].Routers[0].Address, check.Equals, "app2.fakerouter.com")
+}
+
+func (s *S) TestListUsesCachedRouterAddrsWithLegacyRouter(c *check.C) {
+	a := App{
+		Name:      "app1",
+		TeamOwner: s.team.Name,
+		Teams:     []string{s.team.Name},
+		Router:    "fake",
+	}
+	err := s.conn.Apps().Insert(a)
+	c.Assert(err, check.IsNil)
+	err = routertest.FakeRouter.AddBackend(&a)
+	c.Assert(err, check.IsNil)
+	apps, err := List(nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(apps, check.HasLen, 1)
+	c.Assert(apps, check.DeepEquals, []App{
+		{
+			Name:        "app1",
+			CName:       []string{},
+			Teams:       []string{"tsuruteam"},
+			TeamOwner:   "tsuruteam",
+			Env:         map[string]bind.EnvVar{},
+			ServiceEnvs: []bind.ServiceEnvVar{},
+			Router:      "fake",
+			RouterOpts:  map[string]string{},
+			Tags:        []string{},
+			Routers: []appTypes.AppRouter{
+				{Name: "fake", Opts: map[string]string{}},
+			},
+		},
+	})
+	timeout := time.After(5 * time.Second)
+	for {
+		apps, err = List(nil)
+		c.Assert(err, check.IsNil)
+		c.Assert(apps, check.HasLen, 1)
+		if apps[0].Routers[0].Address != "" {
+			break
+		}
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-timeout:
+			c.Fatal("timeout waiting for routers addr to show up")
+		}
+	}
+	c.Assert(apps[0].Routers[0].Address, check.Equals, "app1.fakerouter.com")
+}
+
 func (s *S) TestListFilteringByNameMatch(c *check.C) {
 	a := App{
 		Name:      "app1",
@@ -3097,7 +3292,7 @@ func (s *S) TestListFilteringByStatuses(c *check.C) {
 				Limit: 10,
 			},
 			TeamOwner: s.team.Name,
-			Router:    "fake",
+			Routers:   []appTypes.AppRouter{{Name: "fake"}},
 		}
 		err := CreateApp(&a, s.user)
 		c.Assert(err, check.IsNil)
@@ -3203,11 +3398,6 @@ func (s *S) TestListFilteringExtraWithOr(c *check.C) {
 func (s *S) TestGetName(c *check.C) {
 	a := App{Name: "something"}
 	c.Assert(a.GetName(), check.Equals, a.Name)
-}
-
-func (s *S) TestGetIP(c *check.C) {
-	a := App{IP: "10.10.10.10"}
-	c.Assert(a.GetIp(), check.Equals, a.IP)
 }
 
 func (s *S) TestGetQuota(c *check.C) {
@@ -3324,42 +3514,52 @@ func (s *S) TestSwap(c *check.C) {
 	app1 := &App{Name: "app1", CName: []string{"cname"}, TeamOwner: s.team.Name}
 	err := CreateApp(app1, s.user)
 	c.Assert(err, check.IsNil)
-	app1.IP, err = s.provisioner.Addr(app1)
+	oldAddrs1, err := app1.GetAddresses()
 	c.Assert(err, check.IsNil)
-	oldIp1 := app1.IP
 	app2 := &App{Name: "app2", TeamOwner: s.team.Name}
 	err = CreateApp(app2, s.user)
 	c.Assert(err, check.IsNil)
-	app2.IP, err = s.provisioner.Addr(app2)
+	oldAddrs2, err := app2.GetAddresses()
 	c.Assert(err, check.IsNil)
-	oldIp2 := app2.IP
 	err = Swap(app1, app2, false)
+	c.Assert(err, check.IsNil)
+	entry, err := cacheService().Get(appRouterAddrKey("app1", "fake"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, oldAddrs2[0])
+	entry, err = cacheService().Get(appRouterAddrKey("app2", "fake"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, oldAddrs1[0])
+	newAddrs1, err := app1.GetAddresses()
+	c.Assert(err, check.IsNil)
+	newAddrs2, err := app2.GetAddresses()
 	c.Assert(err, check.IsNil)
 	c.Assert(app1.CName, check.IsNil)
 	c.Assert(app2.CName, check.DeepEquals, []string{"cname"})
-	c.Assert(app1.IP, check.Equals, oldIp2)
-	c.Assert(app2.IP, check.Equals, oldIp1)
+	c.Assert(newAddrs1, check.DeepEquals, oldAddrs2)
+	c.Assert(newAddrs2, check.DeepEquals, oldAddrs1)
 }
 
 func (s *S) TestSwapCnameOnly(c *check.C) {
 	app1 := &App{Name: "app1", CName: []string{"app1.cname", "app1.cname2"}, TeamOwner: s.team.Name}
 	err := CreateApp(app1, s.user)
 	c.Assert(err, check.IsNil)
-	app1.IP, err = s.provisioner.Addr(app1)
+	oldAddrs1, err := app1.GetAddresses()
 	c.Assert(err, check.IsNil)
-	oldIp1 := app1.IP
 	app2 := &App{Name: "app2", CName: []string{"app2.cname"}, TeamOwner: s.team.Name}
 	err = CreateApp(app2, s.user)
 	c.Assert(err, check.IsNil)
-	app2.IP, err = s.provisioner.Addr(app2)
+	oldAddrs2, err := app2.GetAddresses()
 	c.Assert(err, check.IsNil)
-	oldIp2 := app2.IP
 	err = Swap(app1, app2, true)
+	c.Assert(err, check.IsNil)
+	newAddrs1, err := app1.GetAddresses()
+	c.Assert(err, check.IsNil)
+	newAddrs2, err := app2.GetAddresses()
 	c.Assert(err, check.IsNil)
 	c.Assert(app1.CName, check.DeepEquals, []string{"app2.cname"})
 	c.Assert(app2.CName, check.DeepEquals, []string{"app1.cname", "app1.cname2"})
-	c.Assert(app1.IP, check.Equals, oldIp1)
-	c.Assert(app2.IP, check.Equals, oldIp2)
+	c.Assert(newAddrs1, check.DeepEquals, oldAddrs1)
+	c.Assert(newAddrs2, check.DeepEquals, oldAddrs2)
 }
 
 func (s *S) TestStart(c *check.C) {
@@ -3369,7 +3569,7 @@ func (s *S) TestStart(c *check.C) {
 		Platform:  "django",
 		Teams:     []string{s.team.Name},
 		TeamOwner: s.team.Name,
-		Router:    "fake",
+		Routers:   []appTypes.AppRouter{{Name: "fake"}},
 	}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
@@ -3381,7 +3581,7 @@ func (s *S) TestStart(c *check.C) {
 }
 
 func (s *S) TestStartAsleepApp(c *check.C) {
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake"}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake"}}}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 1, "web", nil)
@@ -3403,7 +3603,7 @@ func (s *S) TestStartAsleepApp(c *check.C) {
 }
 
 func (s *S) TestRestartAsleepApp(c *check.C) {
-	a := App{Name: "my-test-app", Router: "fake", TeamOwner: s.team.Name}
+	a := App{Name: "my-test-app", Routers: []appTypes.AppRouter{{Name: "fake"}}, TeamOwner: s.team.Name}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 1, "web", nil)
@@ -3721,10 +3921,15 @@ func (s *S) TestAppRegisterUnitInvalidUnit(c *check.C) {
 
 func (s *S) TestCreateAppValidateTeamOwner(c *check.C) {
 	team := authTypes.Team{Name: "test"}
-	err := auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{team, {Name: s.team.Name}}, nil
+	}
+	s.mockService.Team.OnFindByName = func(name string) (*authTypes.Team, error) {
+		c.Assert(name, check.Equals, team.Name)
+		return &team, nil
+	}
 	a := App{Name: "test", Platform: "python", TeamOwner: team.Name}
-	err = CreateApp(&a, s.user)
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 }
 
@@ -3761,7 +3966,7 @@ func (s *S) TestValidateBlacklistedAppService(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = app.ValidateService(serv.Name)
 	c.Assert(err, check.IsNil)
-	poolConstraint := pool.PoolConstraint{PoolExpr: s.Pool, Field: "service", Values: []string{serv.Name}, Blacklist: true}
+	poolConstraint := pool.PoolConstraint{PoolExpr: s.Pool, Field: pool.ConstraintTypeService, Values: []string{serv.Name}, Blacklist: true}
 	err = pool.SetPoolConstraint(&poolConstraint)
 	c.Assert(err, check.IsNil)
 	err = app.ValidateService(serv.Name)
@@ -3786,11 +3991,11 @@ func (s *S) TestAppCreateValidateTeamOwnerSetAnTeamWhichNotExists(c *check.C) {
 func (s *S) TestAppCreateValidateRouterNotAvailableForPool(c *check.C) {
 	pool.SetPoolConstraint(&pool.PoolConstraint{
 		PoolExpr:  "pool1",
-		Field:     "router",
+		Field:     pool.ConstraintTypeRouter,
 		Values:    []string{"fake-tls"},
 		Blacklist: true,
 	})
-	a := App{Name: "test", Platform: "python", TeamOwner: s.team.Name, Router: "fake-tls"}
+	a := App{Name: "test", Platform: "python", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.DeepEquals, &errors.ValidationError{
 		Message: "router \"fake-tls\" is not available for pool \"pool1\". Available routers are: \"fake, fake-hc\"",
@@ -3857,13 +4062,16 @@ func (s *S) TestAppSetPoolManyPools(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = pool.AddTeamsToPool("pool2", []string{"test"})
 	c.Assert(err, check.IsNil)
+	opts = pool.AddPoolOptions{Name: "pool3", Public: true}
+	err = pool.AddPool(opts)
+	c.Assert(err, check.IsNil)
 	app := App{
 		Name:      "test",
 		TeamOwner: "test",
 	}
 	err = app.SetPool()
 	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "you have access to \"test\",\"pool2\" pools. Please choose one in app creation")
+	c.Assert(err.Error(), check.Equals, "you have access to \"test\",\"pool2\",\"pool1\",\"pool3\" pools. Please choose one in app creation")
 }
 
 func (s *S) TestAppSetPoolNoDefault(c *check.C) {
@@ -3952,15 +4160,13 @@ func (s *S) TestShellToAnApp(c *check.C) {
 
 func (s *S) TestSetCertificateForApp(c *check.C) {
 	cname := "app.io"
+	routertest.TLSRouter.SetBackendAddr("my-test-app", cname)
 	cert, err := ioutil.ReadFile("testdata/certificate.crt")
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls"}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}}
 	err = CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	a.IP = "app.io"
-	err = s.conn.Apps().Update(bson.M{"name": a.Name}, bson.M{"$set": bson.M{"ip": a.IP}})
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
 	c.Assert(err, check.IsNil)
@@ -3974,7 +4180,7 @@ func (s *S) TestSetCertificateForAppCName(c *check.C) {
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls", CName: []string{cname}}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}, CName: []string{cname}}
 	err = CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
@@ -3984,15 +4190,19 @@ func (s *S) TestSetCertificateForAppCName(c *check.C) {
 }
 
 func (s *S) TestSetCertificateNonTLSRouter(c *check.C) {
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, CName: []string{"app.io"}}
-	err := CreateApp(&a, s.user)
+	cert, err := ioutil.ReadFile("testdata/certificate.crt")
 	c.Assert(err, check.IsNil)
-	err = a.SetCertificate("app.io", "cert", "key")
-	c.Assert(err, check.ErrorMatches, "router does not support tls")
+	key, err := ioutil.ReadFile("testdata/private.key")
+	c.Assert(err, check.IsNil)
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, CName: []string{"app.io"}}
+	err = CreateApp(&a, s.user)
+	c.Assert(err, check.IsNil)
+	err = a.SetCertificate("app.io", string(cert), string(key))
+	c.Assert(err, check.ErrorMatches, "no router with tls support")
 }
 
 func (s *S) TestSetCertificateInvalidCName(c *check.C) {
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls"}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}}
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate("example.com", "cert", "key")
@@ -4007,7 +4217,7 @@ func (s *S) TestSetCertificateInvalidCertificateForCName(c *check.C) {
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls", CName: []string{cname}}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}, CName: []string{cname}}
 	err = CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
@@ -4018,15 +4228,13 @@ func (s *S) TestSetCertificateInvalidCertificateForCName(c *check.C) {
 
 func (s *S) TestRemoveCertificate(c *check.C) {
 	cname := "app.io"
+	routertest.TLSRouter.SetBackendAddr("my-test-app", cname)
 	cert, err := ioutil.ReadFile("testdata/certificate.crt")
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls"}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}}
 	err = CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	a.IP = "app.io"
-	err = s.conn.Apps().Update(bson.M{"name": a.Name}, bson.M{"$set": bson.M{"ip": a.IP}})
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
 	c.Assert(err, check.IsNil)
@@ -4042,7 +4250,7 @@ func (s *S) TestRemoveCertificateForAppCName(c *check.C) {
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls", CName: []string{cname}}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}, CName: []string{cname}}
 	err = CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
@@ -4059,18 +4267,20 @@ func (s *S) TestGetCertificates(c *check.C) {
 	c.Assert(err, check.IsNil)
 	key, err := ioutil.ReadFile("testdata/private.key")
 	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake-tls", CName: []string{cname}}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake-tls"}}, CName: []string{cname}}
 	err = CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	err = a.SetCertificate(cname, string(cert), string(key))
 	c.Assert(err, check.IsNil)
 	expectedCerts := map[string]string{
-		"app.io":                     string(cert),
-		"my-test-app.fakerouter.com": "",
+		"app.io":                        string(cert),
+		"my-test-app.faketlsrouter.com": "",
 	}
 	certs, err := a.GetCertificates()
 	c.Assert(err, check.IsNil)
-	c.Assert(certs, check.DeepEquals, expectedCerts)
+	c.Assert(certs, check.DeepEquals, map[string]map[string]string{
+		"fake-tls": expectedCerts,
+	})
 }
 
 func (s *S) TestGetCertificatesNonTLSRouter(c *check.C) {
@@ -4078,7 +4288,7 @@ func (s *S) TestGetCertificatesNonTLSRouter(c *check.C) {
 	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	certs, err := a.GetCertificates()
-	c.Assert(err, check.ErrorMatches, "router does not support tls")
+	c.Assert(err, check.ErrorMatches, "no router with tls support")
 	c.Assert(certs, check.IsNil)
 }
 
@@ -4134,15 +4344,20 @@ func (s *S) TestUpdateTeamOwner(c *check.C) {
 	app := App{Name: "example", Platform: "python", TeamOwner: s.team.Name, Description: "blabla"}
 	err := CreateApp(&app, s.user)
 	c.Assert(err, check.IsNil)
-	team := authTypes.Team{Name: "newowner"}
-	err = auth.TeamService().Insert(team)
-	c.Assert(err, check.IsNil)
-	updateData := App{Name: "example", TeamOwner: "newowner"}
+	teamName := "newowner"
+	s.mockService.Team.OnList = func() ([]authTypes.Team, error) {
+		return []authTypes.Team{{Name: teamName}, {Name: s.team.Name}}, nil
+	}
+	s.mockService.Team.OnFindByName = func(name string) (*authTypes.Team, error) {
+		c.Assert(name, check.Equals, teamName)
+		return &authTypes.Team{Name: teamName}, nil
+	}
+	updateData := App{Name: "example", TeamOwner: teamName}
 	err = app.Update(updateData, new(bytes.Buffer))
 	c.Assert(err, check.IsNil)
 	dbApp, err := GetByName(app.Name)
 	c.Assert(err, check.IsNil)
-	c.Assert(dbApp.TeamOwner, check.Equals, "newowner")
+	c.Assert(dbApp.TeamOwner, check.Equals, teamName)
 }
 
 func (s *S) TestUpdateTeamOwnerNotExists(c *check.C) {
@@ -4180,6 +4395,50 @@ func (s *S) TestUpdatePool(c *check.C) {
 	c.Assert(dbApp.Pool, check.Equals, "test2")
 }
 
+func (s *S) TestUpdatePoolOtherProv(c *check.C) {
+	p1 := provisiontest.NewFakeProvisioner()
+	p2 := provisiontest.NewFakeProvisioner()
+	p1.Name = "fake1"
+	p2.Name = "fake2"
+	provision.Register("fake1", func() (provision.Provisioner, error) {
+		return p1, nil
+	})
+	provision.Register("fake2", func() (provision.Provisioner, error) {
+		return p2, nil
+	})
+	opts := pool.AddPoolOptions{Name: "test", Provisioner: "fake1", Public: true}
+	err := pool.AddPool(opts)
+	c.Assert(err, check.IsNil)
+	opts = pool.AddPoolOptions{Name: "test2", Provisioner: "fake2", Public: true}
+	err = pool.AddPool(opts)
+	c.Assert(err, check.IsNil)
+	app := App{Name: "test", TeamOwner: s.team.Name, Pool: "test"}
+	err = CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddUnits(1, "", nil)
+	c.Assert(err, check.IsNil)
+	prov, err := app.getProvisioner()
+	c.Assert(err, check.IsNil)
+	c.Assert(prov.GetName(), check.Equals, "fake1")
+	c.Assert(p1.GetUnits(&app), check.HasLen, 1)
+	c.Assert(p2.GetUnits(&app), check.HasLen, 0)
+	c.Assert(p1.Provisioned(&app), check.Equals, true)
+	c.Assert(p2.Provisioned(&app), check.Equals, false)
+	updateData := App{Name: "test", Pool: "test2"}
+	err = app.Update(updateData, new(bytes.Buffer))
+	c.Assert(err, check.IsNil)
+	dbApp, err := GetByName(app.Name)
+	c.Assert(err, check.IsNil)
+	c.Assert(dbApp.Pool, check.Equals, "test2")
+	prov, err = dbApp.getProvisioner()
+	c.Assert(err, check.IsNil)
+	c.Assert(prov.GetName(), check.Equals, "fake2")
+	c.Assert(p1.GetUnits(&app), check.HasLen, 0)
+	c.Assert(p2.GetUnits(&app), check.HasLen, 1)
+	c.Assert(p1.Provisioned(&app), check.Equals, false)
+	c.Assert(p2.Provisioned(&app), check.Equals, true)
+}
+
 func (s *S) TestUpdatePoolNotExists(c *check.C) {
 	opts := pool.AddPoolOptions{Name: "test"}
 	err := pool.AddPool(opts)
@@ -4199,10 +4458,12 @@ func (s *S) TestUpdatePoolNotExists(c *check.C) {
 
 func (s *S) TestUpdatePlan(c *check.C) {
 	plan := appTypes.Plan{Name: "something", CpuShare: 100, Memory: 268435456}
-	err := PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", Router: "fake", Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, TeamOwner: s.team.Name}
-	err = CreateApp(&a, s.user)
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		c.Assert(name, check.Equals, plan.Name)
+		return &plan, nil
+	}
+	a := App{Name: "my-test-app", Routers: []appTypes.AppRouter{{Name: "fake"}}, Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, TeamOwner: s.team.Name}
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 3, "web", nil)
 	c.Assert(routertest.FakeRouter.HasBackend(a.Name), check.Equals, true)
@@ -4218,10 +4479,12 @@ func (s *S) TestUpdatePlan(c *check.C) {
 
 func (s *S) TestUpdatePlanNoRouteChange(c *check.C) {
 	plan := appTypes.Plan{Name: "something", CpuShare: 100, Memory: 268435456}
-	err := PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", Router: "fake", Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, TeamOwner: s.team.Name}
-	err = CreateApp(&a, s.user)
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		c.Assert(name, check.Equals, plan.Name)
+		return &plan, nil
+	}
+	a := App{Name: "my-test-app", Routers: []appTypes.AppRouter{{Name: "fake"}}, Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, TeamOwner: s.team.Name}
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 3, "web", nil)
 	c.Assert(routertest.FakeRouter.HasBackend(a.Name), check.Equals, true)
@@ -4252,76 +4515,40 @@ func (s *S) TestUpdatePlanNoRouteChange(c *check.C) {
 
 func (s *S) TestUpdatePlanNotFound(c *check.C) {
 	var app App
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		return nil, appTypes.ErrPlanNotFound
+	}
 	updateData := App{Name: "my-test-app", Plan: appTypes.Plan{Name: "some-unknown-plan"}}
 	err := app.Update(updateData, new(bytes.Buffer))
 	c.Assert(err, check.Equals, appTypes.ErrPlanNotFound)
 }
 
-func (s *S) TestUpdateRouterBackendRemovalFailure(c *check.C) {
-	plan := appTypes.Plan{Name: "something", CpuShare: 100, Memory: 268435456}
-	err := PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	plan = appTypes.Plan{Name: "wrong", CpuShare: 50, Memory: 536870912}
-	err = PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", Router: "fake", Plan: appTypes.Plan{Name: "wrong"}, TeamOwner: s.team.Name}
-	err = CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	s.provisioner.AddUnits(&a, 3, "web", nil)
-	c.Assert(routertest.FakeRouter.HasBackend(a.Name), check.Equals, true)
-	c.Assert(routertest.HCRouter.HasBackend(a.Name), check.Equals, false)
-	routertest.FakeRouter.FailForIp("my-test-app")
-	updateData := App{Name: "my-test-app", Router: "fake-hc", Plan: appTypes.Plan{Name: "something"}}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.IsNil)
-	dbApp, err := GetByName(a.Name)
-	c.Assert(err, check.IsNil)
-	c.Assert(dbApp.Plan.Name, check.Equals, "something")
-	c.Assert(s.provisioner.Restarts(dbApp, ""), check.Equals, 1)
-	// Yeah, a test-ensured inconsistency.
-	c.Assert(routertest.FakeRouter.HasBackend(dbApp.Name), check.Equals, true)
-	c.Assert(routertest.HCRouter.HasBackend(dbApp.Name), check.Equals, true)
-	routes, err := routertest.FakeRouter.Routes(dbApp.Name)
-	c.Assert(err, check.IsNil)
-	routesStr := make([]string, len(routes))
-	for i, route := range routes {
-		routesStr[i] = route.String()
-	}
-	units, err := dbApp.Units()
-	c.Assert(err, check.IsNil)
-	expected := make([]string, len(units))
-	for i, unit := range units {
-		expected[i] = unit.Address.String()
-	}
-	sort.Strings(routesStr)
-	sort.Strings(expected)
-	c.Assert(routesStr, check.DeepEquals, expected)
-}
-
 func (s *S) TestUpdatePlanRestartFailure(c *check.C) {
 	plan := appTypes.Plan{Name: "something", CpuShare: 100, Memory: 268435456}
-	err := PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	plan = appTypes.Plan{Name: "old", CpuShare: 50, Memory: 536870912}
-	err = PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", Router: "fake", Plan: appTypes.Plan{Name: "old"}, TeamOwner: s.team.Name}
-	err = CreateApp(&a, s.user)
+	oldPlan := appTypes.Plan{Name: "old", CpuShare: 50, Memory: 536870912}
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		if name == plan.Name {
+			return &plan, nil
+		}
+		if name == oldPlan.Name {
+			return &oldPlan, nil
+		}
+		c.Errorf("plan name not expected, got: %s", name)
+		return nil, nil
+	}
+	a := App{Name: "my-test-app", Routers: []appTypes.AppRouter{{Name: "fake"}}, Plan: appTypes.Plan{Name: "old"}, TeamOwner: s.team.Name}
+	err := CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 3, "web", nil)
 	c.Assert(routertest.FakeRouter.HasBackend(a.Name), check.Equals, true)
 	c.Assert(routertest.HCRouter.HasBackend(a.Name), check.Equals, false)
-	a.IP = "old-address"
-	err = s.conn.Apps().Update(bson.M{"name": a.Name}, bson.M{"$set": bson.M{"ip": a.IP}})
-	c.Assert(err, check.IsNil)
 	s.provisioner.PrepareFailure("Restart", fmt.Errorf("cannot restart app, I'm sorry"))
-	updateData := App{Name: "my-test-app", Router: "fake-hc", Plan: appTypes.Plan{Name: "something"}}
+	updateData := App{Name: "my-test-app", Routers: []appTypes.AppRouter{{Name: "fake-hc"}}, Plan: appTypes.Plan{Name: "something"}}
 	err = a.Update(updateData, new(bytes.Buffer))
 	c.Assert(err, check.NotNil)
 	dbApp, err := GetByName(a.Name)
 	c.Assert(err, check.IsNil)
 	c.Assert(dbApp.Plan.Name, check.Equals, "old")
-	c.Assert(dbApp.IP, check.Equals, "old-address")
 	c.Assert(s.provisioner.Restarts(dbApp, ""), check.Equals, 0)
 	c.Assert(routertest.FakeRouter.HasBackend(dbApp.Name), check.Equals, true)
 	c.Assert(routertest.HCRouter.HasBackend(dbApp.Name), check.Equals, false)
@@ -4390,7 +4617,7 @@ func (s *S) TestUpdateWithoutTagsKeepsOriginalTags(c *check.C) {
 	c.Assert(dbApp.Tags, check.DeepEquals, []string{"tag1", "tag2"})
 }
 
-func (s *S) TestUpdateDescriptionPoolPlanAndRouter(c *check.C) {
+func (s *S) TestUpdateDescriptionPoolPlan(c *check.C) {
 	opts := pool.AddPoolOptions{Name: "test"}
 	err := pool.AddPool(opts)
 	c.Assert(err, check.IsNil)
@@ -4402,15 +4629,15 @@ func (s *S) TestUpdateDescriptionPoolPlanAndRouter(c *check.C) {
 	err = pool.AddTeamsToPool("test2", []string{s.team.Name})
 	c.Assert(err, check.IsNil)
 	plan := appTypes.Plan{Name: "something", CpuShare: 100, Memory: 268435456}
-	err = PlanService().Insert(plan)
-	c.Assert(err, check.IsNil)
-	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Router: "fake", Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, Description: "blablabla", Pool: "test"}
+	s.mockService.Plan.OnFindByName = func(name string) (*appTypes.Plan, error) {
+		c.Assert(name, check.Equals, plan.Name)
+		return &plan, nil
+	}
+	a := App{Name: "my-test-app", TeamOwner: s.team.Name, Routers: []appTypes.AppRouter{{Name: "fake"}}, Plan: appTypes.Plan{Memory: 536870912, CpuShare: 50}, Description: "blablabla", Pool: "test"}
 	err = CreateApp(&a, s.user)
 	c.Assert(err, check.IsNil)
 	s.provisioner.AddUnits(&a, 3, "web", nil)
-	c.Assert(routertest.FakeRouter.HasBackend(a.Name), check.Equals, true)
-	c.Assert(routertest.HCRouter.HasBackend(a.Name), check.Equals, false)
-	updateData := App{Name: "my-test-app", Router: "fake-hc", Plan: appTypes.Plan{Name: "something"}, Description: "bleble", Pool: "test2"}
+	updateData := App{Name: "my-test-app", Plan: appTypes.Plan{Name: "something"}, Description: "bleble", Pool: "test2"}
 	err = a.Update(updateData, new(bytes.Buffer))
 	c.Assert(err, check.IsNil)
 	dbApp, err := GetByName(a.Name)
@@ -4419,116 +4646,12 @@ func (s *S) TestUpdateDescriptionPoolPlanAndRouter(c *check.C) {
 	c.Assert(dbApp.Description, check.Equals, "bleble")
 	c.Assert(dbApp.Pool, check.Equals, "test2")
 	c.Assert(s.provisioner.Restarts(dbApp, ""), check.Equals, 1)
-	c.Assert(routertest.FakeRouter.HasBackend(dbApp.Name), check.Equals, false)
-	c.Assert(routertest.HCRouter.HasBackend(dbApp.Name), check.Equals, true)
-	routes, err := routertest.HCRouter.Routes(dbApp.Name)
-	c.Assert(err, check.IsNil)
-	routesStr := make([]string, len(routes))
-	for i, route := range routes {
-		routesStr[i] = route.String()
-	}
-	units, err := dbApp.Units()
-	c.Assert(err, check.IsNil)
-	expected := make([]string, len(units))
-	for i, unit := range units {
-		expected[i] = unit.Address.String()
-	}
-	sort.Strings(routesStr)
-	sort.Strings(expected)
-	c.Assert(routesStr, check.DeepEquals, expected)
-}
-
-func (s *S) TestUpdateRouter(c *check.C) {
-	a := App{Name: "my-test-app", Router: "fake", TeamOwner: s.team.Name}
-	err := CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	updateData := App{Name: "my-test-app", Router: "fake-hc"}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.IsNil)
-	dbApp, err := GetByName(a.Name)
-	c.Assert(err, check.IsNil)
-	c.Assert(dbApp.Router, check.Equals, "fake-hc")
-	c.Assert(s.provisioner.Restarts(dbApp, ""), check.Equals, 1)
-	c.Assert(routertest.FakeRouter.HasBackend(dbApp.Name), check.Equals, false)
-	c.Assert(routertest.HCRouter.HasBackend(dbApp.Name), check.Equals, true)
-	routes, err := routertest.HCRouter.Routes(dbApp.Name)
-	c.Assert(err, check.IsNil)
-	routesStr := make([]string, len(routes))
-	for i, route := range routes {
-		routesStr[i] = route.String()
-	}
-	units, err := dbApp.Units()
-	c.Assert(err, check.IsNil)
-	expected := make([]string, len(units))
-	for i, unit := range units {
-		expected[i] = unit.Address.String()
-	}
-	sort.Strings(routesStr)
-	sort.Strings(expected)
-	c.Assert(routesStr, check.DeepEquals, expected)
-}
-
-func (s *S) TestUpdateRouterOpts(c *check.C) {
-	config.Set("routers:fake-opts:type", "fake-opts")
-	a := App{Name: "my-test-app",
-		Router:     "fake-opts",
-		TeamOwner:  s.team.Name,
-		RouterOpts: map[string]string{"opt1": "val1"},
-	}
-	err := CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	c.Assert(routertest.OptsRouter.Opts["my-test-app"], check.DeepEquals, map[string]string{"opt1": "val1"})
-	updateData := App{Name: "my-test-app", RouterOpts: map[string]string{"opt1": "val2"}}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.IsNil)
-	c.Assert(routertest.OptsRouter.Opts["my-test-app"], check.DeepEquals, map[string]string{"opt1": "val2"})
-}
-
-func (s *S) TestUpdateRouterOptsNotSupported(c *check.C) {
-	a := App{Name: "my-test-app",
-		Router:    "fake",
-		TeamOwner: s.team.Name,
-	}
-	err := CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	updateData := App{Name: "my-test-app", RouterOpts: map[string]string{"opt1": "val2"}}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.ErrorMatches, "router \"fake\" does not support opts")
-}
-
-func (s *S) TestUpdateRouterNotFound(c *check.C) {
-	a := App{Name: "my-test-app", Router: "fake", TeamOwner: s.team.Name}
-	err := CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	updateData := App{Name: "my-test-app", Router: "invalid-router"}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.DeepEquals, &router.ErrRouterNotFound{Name: "invalid-router"})
-	dbApp, err := GetByName(a.Name)
-	c.Assert(err, check.IsNil)
-	c.Assert(dbApp.Router, check.Equals, "fake")
-}
-
-func (s *S) TestAppUpdateRouterNotAvailableForPool(c *check.C) {
-	pool.SetPoolConstraint(&pool.PoolConstraint{
-		PoolExpr:  "pool1",
-		Field:     "router",
-		Values:    []string{"fake-tls"},
-		Blacklist: true,
-	})
-	a := App{Name: "test", Router: "fake", TeamOwner: s.team.Name}
-	err := CreateApp(&a, s.user)
-	c.Assert(err, check.IsNil)
-	updateData := App{Name: "test", Router: "fake-tls"}
-	err = a.Update(updateData, new(bytes.Buffer))
-	c.Assert(err, check.DeepEquals, &errors.ValidationError{
-		Message: "router \"fake-tls\" is not available for pool \"pool1\". Available routers are: \"fake, fake-hc\"",
-	})
 }
 
 func (s *S) TestRenameTeam(c *check.C) {
 	apps := []App{
-		{Name: "test1", TeamOwner: "t1", Router: "fake", Teams: []string{"t2", "t3", "t1"}},
-		{Name: "test2", TeamOwner: "t2", Router: "fake", Teams: []string{"t3", "t1"}},
+		{Name: "test1", TeamOwner: "t1", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t2", "t3", "t1"}},
+		{Name: "test2", TeamOwner: "t2", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t3", "t1"}},
 	}
 	for _, a := range apps {
 		err := s.conn.Apps().Insert(a)
@@ -4548,8 +4671,8 @@ func (s *S) TestRenameTeam(c *check.C) {
 
 func (s *S) TestRenameTeamLockedApp(c *check.C) {
 	apps := []App{
-		{Name: "test1", TeamOwner: "t1", Router: "fake", Teams: []string{"t2", "t3", "t1"}},
-		{Name: "test2", TeamOwner: "t2", Router: "fake", Teams: []string{"t3", "t1"}},
+		{Name: "test1", TeamOwner: "t1", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t2", "t3", "t1"}},
+		{Name: "test2", TeamOwner: "t2", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t3", "t1"}},
 	}
 	for _, a := range apps {
 		err := s.conn.Apps().Insert(a)
@@ -4572,9 +4695,9 @@ func (s *S) TestRenameTeamLockedApp(c *check.C) {
 
 func (s *S) TestRenameTeamUnchanagedLockedApp(c *check.C) {
 	apps := []App{
-		{Name: "test1", TeamOwner: "t1", Router: "fake", Teams: []string{"t2", "t3", "t1"}},
-		{Name: "test2", TeamOwner: "t2", Router: "fake", Teams: []string{"t3", "t1"}},
-		{Name: "test3", TeamOwner: "t3", Router: "fake", Teams: []string{"t3", "t1"}},
+		{Name: "test1", TeamOwner: "t1", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t2", "t3", "t1"}},
+		{Name: "test2", TeamOwner: "t2", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t3", "t1"}},
+		{Name: "test3", TeamOwner: "t3", Routers: []appTypes.AppRouter{{Name: "fake"}}, Teams: []string{"t3", "t1"}},
 	}
 	for _, a := range apps {
 		err := s.conn.Apps().Insert(a)
@@ -4593,4 +4716,183 @@ func (s *S) TestRenameTeamUnchanagedLockedApp(c *check.C) {
 	c.Assert(dbApps[1].TeamOwner, check.Equals, "t9000")
 	c.Assert(dbApps[0].Teams, check.DeepEquals, []string{"t9000", "t3", "t1"})
 	c.Assert(dbApps[1].Teams, check.DeepEquals, []string{"t3", "t1"})
+}
+
+func (s *S) TestUpdateRouter(c *check.C) {
+	config.Set("routers:fake-opts:type", "fake-opts")
+	defer config.Unset("routers:fake-opts:type")
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-opts",
+		Opts: map[string]string{
+			"a": "b",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	err = app.UpdateRouter(appTypes.AppRouter{Name: "fake-opts", Opts: map[string]string{
+		"c": "d",
+	}})
+	c.Assert(err, check.IsNil)
+	routers := app.GetRouters()
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake"},
+		{Name: "fake-opts", Opts: map[string]string{"c": "d"}},
+	})
+	c.Assert(routertest.OptsRouter.Opts["myapp"], check.DeepEquals, map[string]string{
+		"c": "d",
+	})
+}
+
+func (s *S) TestUpdateRouterNotSupported(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+		Opts: map[string]string{
+			"a": "b",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	err = app.UpdateRouter(appTypes.AppRouter{Name: "fake-tls", Opts: map[string]string{
+		"c": "d",
+	}})
+	c.Assert(err, check.ErrorMatches, "updating is not supported by router \"fake-tls\"")
+}
+
+func (s *S) TestUpdateRouterNotFound(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+		Opts: map[string]string{
+			"a": "b",
+		},
+	})
+	c.Assert(err, check.IsNil)
+	err = app.UpdateRouter(appTypes.AppRouter{Name: "fake-opts", Opts: map[string]string{
+		"c": "d",
+	}})
+	c.Assert(err, check.DeepEquals, &router.ErrRouterNotFound{Name: "fake-opts"})
+}
+
+func (s *S) TestAppAddRouter(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+	})
+	c.Assert(err, check.IsNil)
+	routers, err := app.GetRoutersWithAddr()
+	c.Assert(err, check.IsNil)
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake", Address: "myapp.fakerouter.com", Type: "fake"},
+		{Name: "fake-tls", Address: "myapp.faketlsrouter.com", Type: "fake-tls"},
+	})
+	addrs, err := app.GetAddresses()
+	c.Assert(err, check.IsNil)
+	c.Assert(addrs, check.DeepEquals, []string{"myapp.fakerouter.com", "myapp.faketlsrouter.com"})
+}
+
+func (s *S) TestAppRemoveRouter(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+	})
+	c.Assert(err, check.IsNil)
+	err = app.RemoveRouter("fake")
+	c.Assert(err, check.IsNil)
+	routers, err := app.GetRoutersWithAddr()
+	c.Assert(err, check.IsNil)
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake-tls", Address: "myapp.faketlsrouter.com", Type: "fake-tls"},
+	})
+	addrs, err := app.GetAddresses()
+	c.Assert(err, check.IsNil)
+	c.Assert(addrs, check.DeepEquals, []string{"myapp.faketlsrouter.com"})
+}
+
+func (s *S) TestGetRoutersWithAddr(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+	})
+	c.Assert(err, check.IsNil)
+	_, err = cacheService().Get(appRouterAddrKey("myapp", "fake"))
+	c.Assert(err, check.Equals, cache.ErrEntryNotFound)
+	_, err = cacheService().Get(appRouterAddrKey("myapp", "fake-tls"))
+	c.Assert(err, check.Equals, cache.ErrEntryNotFound)
+	routers, err := app.GetRoutersWithAddr()
+	c.Assert(err, check.IsNil)
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake", Address: "myapp.fakerouter.com", Type: "fake"},
+		{Name: "fake-tls", Address: "myapp.faketlsrouter.com", Type: "fake-tls"},
+	})
+	entry, err := cacheService().Get(appRouterAddrKey("myapp", "fake"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, "myapp.fakerouter.com")
+	entry, err = cacheService().Get(appRouterAddrKey("myapp", "fake-tls"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, "myapp.faketlsrouter.com")
+}
+
+func (s *S) TestGetRoutersWithAddrError(c *check.C) {
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "fake-tls",
+	})
+	c.Assert(err, check.IsNil)
+	routertest.FakeRouter.FailForIp("fakemyapp")
+	routers, err := app.GetRoutersWithAddr()
+	c.Assert(err, check.ErrorMatches, `(?s)Forced failure.*`)
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake", Address: "", Type: ""},
+		{Name: "fake-tls", Address: "myapp.faketlsrouter.com", Type: "fake-tls"},
+	})
+	_, err = cacheService().Get(appRouterAddrKey("myapp", "fake"))
+	c.Assert(err, check.Equals, cache.ErrEntryNotFound)
+	entry, err := cacheService().Get(appRouterAddrKey("myapp", "fake-tls"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, "myapp.faketlsrouter.com")
+}
+
+func (s *S) TestGetRoutersWithAddrWithStatus(c *check.C) {
+	config.Set("routers:mystatus:type", "fake-status")
+	defer config.Unset("routers:mystatus")
+	routertest.StatusRouter.Status = router.BackendStatusNotReady
+	routertest.StatusRouter.StatusDetail = "burn"
+	defer routertest.StatusRouter.Reset()
+	app := App{Name: "myapp", Platform: "go", TeamOwner: s.team.Name}
+	err := CreateApp(&app, s.user)
+	c.Assert(err, check.IsNil)
+	err = app.AddRouter(appTypes.AppRouter{
+		Name: "mystatus",
+	})
+	c.Assert(err, check.IsNil)
+	_, err = cacheService().Get(appRouterAddrKey("myapp", "fake"))
+	c.Assert(err, check.Equals, cache.ErrEntryNotFound)
+	_, err = cacheService().Get(appRouterAddrKey("myapp", "fake-tls"))
+	c.Assert(err, check.Equals, cache.ErrEntryNotFound)
+	routers, err := app.GetRoutersWithAddr()
+	c.Assert(err, check.IsNil)
+	c.Assert(routers, check.DeepEquals, []appTypes.AppRouter{
+		{Name: "fake", Address: "myapp.fakerouter.com", Type: "fake"},
+		{Name: "mystatus", Address: "myapp.fakerouter.com", Type: "fake-status", Status: "not ready", StatusDetail: "burn"},
+	})
+	entry, err := cacheService().Get(appRouterAddrKey("myapp", "fake"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, "myapp.fakerouter.com")
+	entry, err = cacheService().Get(appRouterAddrKey("myapp", "mystatus"))
+	c.Assert(err, check.IsNil)
+	c.Assert(entry.Value, check.Equals, "myapp.fakerouter.com")
 }

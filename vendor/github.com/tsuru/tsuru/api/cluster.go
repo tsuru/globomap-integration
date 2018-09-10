@@ -16,6 +16,7 @@ import (
 	"github.com/tsuru/tsuru/iaas"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/provision/cluster"
+	"github.com/tsuru/tsuru/provision/pool"
 )
 
 func createClusterMachine(c *cluster.Cluster) error {
@@ -49,6 +50,7 @@ func createClusterMachine(c *cluster.Cluster) error {
 //   200: Ok
 //   400: Invalid data
 //   401: Unauthorized
+//   404: Pool does not exist
 //   409: Cluster already exists
 func createCluster(w http.ResponseWriter, r *http.Request, t auth.Token) (err error) {
 	allowed := permission.Check(t, permission.PermClusterCreate)
@@ -85,6 +87,18 @@ func createCluster(w http.ResponseWriter, r *http.Request, t auth.Token) (err er
 		return &tsuruErrors.HTTP{
 			Code:    http.StatusConflict,
 			Message: "cluster already exists",
+		}
+	}
+	for _, poolName := range provCluster.Pools {
+		_, err = pool.GetPoolByName(poolName)
+		if err != nil {
+			if err == pool.ErrPoolNotFound {
+				return &tsuruErrors.HTTP{
+					Code:    http.StatusNotFound,
+					Message: err.Error(),
+				}
+			}
+			return err
 		}
 	}
 	err = createClusterMachine(&provCluster)
@@ -149,6 +163,18 @@ func updateCluster(w http.ResponseWriter, r *http.Request, t auth.Token) (err er
 			}
 		}
 		return err
+	}
+	for _, poolName := range provCluster.Pools {
+		_, err = pool.GetPoolByName(poolName)
+		if err != nil {
+			if err == pool.ErrPoolNotFound {
+				return &tsuruErrors.HTTP{
+					Code:    http.StatusBadRequest,
+					Message: err.Error(),
+				}
+			}
+			return err
+		}
 	}
 	err = provCluster.Save()
 	if err != nil {

@@ -8,10 +8,11 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/globalsign/mgo"
 	"github.com/tsuru/tsuru/db"
 	"github.com/tsuru/tsuru/quota"
+	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2"
 )
 
 func (s *S) TestReserveApp(c *check.C) {
@@ -36,7 +37,7 @@ func (s *S) TestReserveApp(c *check.C) {
 func (s *S) TestReserveAppUserNotFound(c *check.C) {
 	user := User{Email: "hills@waaaat.com"}
 	err := ReserveApp(&user)
-	c.Assert(err, check.Equals, ErrUserNotFound)
+	c.Assert(err, check.Equals, authTypes.ErrUserNotFound)
 }
 
 func (s *S) TestReserveAppAlwaysRefreshFromDatabase(c *check.C) {
@@ -79,7 +80,8 @@ func (s *S) TestReserveAppQuotaExceeded(c *check.C) {
 }
 
 func (s *S) TestReserveAppIsSafe(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(runtime.NumCPU()))
+	originalMaxProcs := runtime.GOMAXPROCS(runtime.NumCPU())
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	email := "seven@corp.globo.com"
 	user := &User{
 		Email: email, Password: "123456",
@@ -133,7 +135,7 @@ func (s *S) TestReleaseAppUserNotFound(c *check.C) {
 		Quota: quota.Quota{Limit: 4, InUse: 0},
 	}
 	err := ReleaseApp(user)
-	c.Assert(err, check.Equals, ErrUserNotFound)
+	c.Assert(err, check.Equals, authTypes.ErrUserNotFound)
 }
 
 func (s *S) TestReleaseAppAlwaysRefreshFromDatabase(c *check.C) {
@@ -176,7 +178,8 @@ func (s *S) TestReleaseAppNonReserved(c *check.C) {
 }
 
 func (s *S) TestReleaseAppIsSafe(c *check.C) {
-	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(runtime.NumCPU()))
+	originalMaxProcs := runtime.GOMAXPROCS(runtime.NumCPU())
+	defer runtime.GOMAXPROCS(originalMaxProcs)
 	email := "seven@corp.globo.com"
 	user := &User{
 		Email: email, Password: "123456",

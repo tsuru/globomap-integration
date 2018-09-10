@@ -41,13 +41,22 @@ func pingDockerRegistry(scheme string) error {
 	registry = fmt.Sprintf("%s://%s", scheme, strings.TrimRight(registry, "/"))
 	v1URL := registry + "/v1/_ping"
 	v2URL := registry + "/v2/"
-	resp, err := tsuruNet.Dial5Full60ClientNoKeepAlive.Get(v2URL)
+	client := tsuruNet.Dial5Full60ClientNoKeepAlive
+	req, err := newRequestWithCredentials(http.MethodGet, v2URL)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		resp.Body.Close()
-		resp, err = tsuruNet.Dial5Full60ClientNoKeepAlive.Get(v1URL)
+		req, err = newRequestWithCredentials(http.MethodGet, v1URL)
+		if err != nil {
+			return err
+		}
+		resp, err = client.Do(req)
 		if err != nil {
 			return err
 		}
@@ -61,6 +70,19 @@ func pingDockerRegistry(scheme string) error {
 		return errors.Errorf("unexpected status - %s", body)
 	}
 	return nil
+}
+
+func newRequestWithCredentials(method, url string) (*http.Request, error) {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	username, _ := config.GetString("docker:registry-auth:username")
+	password, _ := config.GetString("docker:registry-auth:password")
+	if len(username) != 0 || len(password) != 0 {
+		req.SetBasicAuth(username, password)
+	}
+	return req, nil
 }
 
 func healthCheckDocker() error {

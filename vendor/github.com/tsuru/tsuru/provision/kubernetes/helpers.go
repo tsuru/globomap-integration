@@ -5,9 +5,9 @@
 package kubernetes
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,32 +16,50 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tsuru/tsuru/app/image"
 	tsuruErrors "github.com/tsuru/tsuru/errors"
-	"github.com/tsuru/tsuru/log"
+	tsuruNet "github.com/tsuru/tsuru/net"
 	"github.com/tsuru/tsuru/provision"
+	"github.com/tsuru/tsuru/provision/nodecontainer"
+	"k8s.io/api/apps/v1beta2"
+	apiv1 "k8s.io/api/core/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	remotecommandutil "k8s.io/apimachinery/pkg/util/remotecommand"
 	"k8s.io/client-go/kubernetes/scheme"
-	apiv1 "k8s.io/client-go/pkg/api/v1"
-	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 )
 
 const (
-	tsuruLabelPrefix   = "tsuru.io/"
-	replicaDepRevision = "deployment.kubernetes.io/revision"
-	kubeKindReplicaSet = "ReplicaSet"
+	tsuruLabelPrefix       = "tsuru.io/"
+	tsuruInProgressTaint   = tsuruLabelPrefix + "inprogress"
+	tsuruNodeDisabledTaint = tsuruLabelPrefix + "disabled"
+	replicaDepRevision     = "deployment.kubernetes.io/revision"
+	kubeKindReplicaSet     = "ReplicaSet"
 )
 
 var kubeNameRegex = regexp.MustCompile(`(?i)[^a-z0-9.-]`)
+
+func serviceAccountNameForApp(a provision.App) string {
+	name := strings.ToLower(kubeNameRegex.ReplaceAllString(a.GetName(), "-"))
+	return fmt.Sprintf("app-%s", name)
+}
+
+func serviceAccountNameForNodeContainer(nodeContainer nodecontainer.NodeContainerConfig) string {
+	name := strings.ToLower(kubeNameRegex.ReplaceAllString(nodeContainer.Name, "-"))
+	return fmt.Sprintf("node-container-%s", name)
+}
 
 func deploymentNameForApp(a provision.App, process string) string {
 	name := strings.ToLower(kubeNameRegex.ReplaceAllString(a.GetName(), "-"))
 	process = strings.ToLower(kubeNameRegex.ReplaceAllString(process, "-"))
 	return fmt.Sprintf("%s-%s", name, process)
+}
+
+func headlessServiceNameForApp(a provision.App, process string) string {
+	name := strings.ToLower(kubeNameRegex.ReplaceAllString(a.GetName(), "-"))
+	process = strings.ToLower(kubeNameRegex.ReplaceAllString(process, "-"))
+	return fmt.Sprintf("%s-%s-units", name, process)
 }
 
 func deployPodNameForApp(a provision.App) (string, error) {
@@ -51,6 +69,18 @@ func deployPodNameForApp(a provision.App) (string, error) {
 	}
 	name := strings.ToLower(kubeNameRegex.ReplaceAllString(a.GetName(), "-"))
 	return fmt.Sprintf("%s-%s-deploy", name, version), nil
+}
+
+func buildPodNameForApp(a provision.App, suffix string) (string, error) {
+	version, err := image.AppCurrentImageVersion(a.GetName())
+	if err != nil {
+		return "", errors.WithMessage(err, "failed to retrieve app current image version")
+	}
+	name := strings.ToLower(kubeNameRegex.ReplaceAllString(a.GetName(), "-"))
+	if suffix != "" {
+		return fmt.Sprintf("%s-%s-build-%s", name, version, suffix), nil
+	}
+	return fmt.Sprintf("%s-%s-build", name, version), nil
 }
 
 func execCommandPodNameForApp(a provision.App) string {
@@ -73,6 +103,11 @@ func volumeName(name string) string {
 
 func volumeClaimName(name string) string {
 	return fmt.Sprintf("%s-tsuru-claim", name)
+}
+
+func registrySecretName(registry string) string {
+	registry = strings.ToLower(kubeNameRegex.ReplaceAllString(registry, "-"))
+	return fmt.Sprintf("registry-%s", registry)
 }
 
 func waitFor(timeout time.Duration, fn func() (bool, error), onTimeout func() error) error {
@@ -98,7 +133,7 @@ func waitFor(timeout time.Duration, fn func() (bool, error), onTimeout func() er
 	}
 }
 
-func podsForAppProcess(client *clusterClient, a provision.App, process string) (*apiv1.PodList, error) {
+func podsForAppProcess(client *ClusterClient, a provision.App, process string) (*apiv1.PodList, error) {
 	labelOpts := provision.ServiceLabelsOpts{
 		App:     a,
 		Process: process,
@@ -117,7 +152,7 @@ func podsForAppProcess(client *clusterClient, a provision.App, process string) (
 	} else {
 		selector = l.ToSelector()
 	}
-	podList, err := client.Core().Pods(client.Namespace()).List(metav1.ListOptions{
+	podList, err := client.CoreV1().Pods(client.Namespace()).List(metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(selector)).String(),
 	})
 	if err != nil {
@@ -126,7 +161,7 @@ func podsForAppProcess(client *clusterClient, a provision.App, process string) (
 	return podList, nil
 }
 
-func allNewPodsRunning(client *clusterClient, a provision.App, process string, generation int64) (bool, error) {
+func allNewPodsRunning(client *ClusterClient, a provision.App, process string, generation int64) (bool, error) {
 	labelOpts := provision.ServiceLabelsOpts{
 		App:     a,
 		Process: process,
@@ -139,14 +174,14 @@ func allNewPodsRunning(client *clusterClient, a provision.App, process string, g
 	if err != nil {
 		return false, errors.WithStack(err)
 	}
-	replicaSets, err := client.Extensions().ReplicaSets(client.Namespace()).List(metav1.ListOptions{
+	replicaSets, err := client.AppsV1beta2().ReplicaSets(client.Namespace()).List(metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(ls.ToSelector())).String(),
 	})
 	if err != nil {
 		return false, errors.WithStack(err)
 	}
 	generationStr := strconv.Itoa(int(generation))
-	var replica *v1beta1.ReplicaSet
+	var replica *v1beta2.ReplicaSet
 	for i, rs := range replicaSets.Items {
 		if rs.Annotations != nil && rs.Annotations[replicaDepRevision] == generationStr {
 			replica = &replicaSets.Items[i]
@@ -180,7 +215,7 @@ func allNewPodsRunning(client *clusterClient, a provision.App, process string, g
 	return newCount > 0, nil
 }
 
-func notReadyPodEvents(client *clusterClient, a provision.App, process string) ([]string, error) {
+func notReadyPodEvents(client *ClusterClient, a provision.App, process string) ([]string, error) {
 	pods, err := podsForAppProcess(client, a, process)
 	if err != nil {
 		return nil, err
@@ -203,13 +238,13 @@ podsLoop:
 	return messages, nil
 }
 
-func waitForPodContainersRunning(client *clusterClient, podName string, timeout time.Duration) error {
+func waitForPodContainersRunning(client *ClusterClient, podName string, timeout time.Duration) error {
 	return waitFor(timeout, func() (bool, error) {
 		err := waitForPod(client, podName, true, timeout)
 		if err != nil {
 			return true, errors.WithStack(err)
 		}
-		pod, err := client.Core().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
 		if err != nil {
 			return true, errors.WithStack(err)
 		}
@@ -228,7 +263,7 @@ func waitForPodContainersRunning(client *clusterClient, podName string, timeout 
 		}
 		return false, nil
 	}, func() error {
-		pod, err := client.Core().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -236,13 +271,13 @@ func waitForPodContainersRunning(client *clusterClient, podName string, timeout 
 	})
 }
 
-func newInvalidPodPhaseError(client *clusterClient, pod *apiv1.Pod) error {
+func newInvalidPodPhaseError(client *ClusterClient, pod *apiv1.Pod) error {
 	phaseWithMsg := fmt.Sprintf("%q", pod.Status.Phase)
 	if pod.Status.Message != "" {
 		phaseWithMsg = fmt.Sprintf("%s(%q)", phaseWithMsg, pod.Status.Message)
 	}
 	retErr := errors.Errorf("invalid pod phase %s", phaseWithMsg)
-	eventsInterface := client.Core().Events(client.Namespace())
+	eventsInterface := client.CoreV1().Events(client.Namespace())
 	ns := client.Namespace()
 	selector := eventsInterface.GetFieldSelector(&pod.Name, &ns, nil, nil)
 	options := metav1.ListOptions{FieldSelector: selector.String()}
@@ -251,26 +286,12 @@ func newInvalidPodPhaseError(client *clusterClient, pod *apiv1.Pod) error {
 		lastEvt := events.Items[len(events.Items)-1]
 		retErr = errors.Errorf("%v - last event: %s", retErr, lastEvt.Message)
 	}
-	if len(pod.Spec.Containers) > 0 {
-		lastLog := int64(100)
-		req := client.Core().Pods(client.Namespace()).GetLogs(pod.Name, &apiv1.PodLogOptions{
-			Container: pod.Spec.Containers[0].Name,
-			TailLines: &lastLog,
-		})
-		reader, logErr := req.Stream()
-		if logErr == nil {
-			logContent, _ := ioutil.ReadAll(reader)
-			if len(logContent) > 0 {
-				retErr = errors.Errorf("%v - log: %s", retErr, string(logContent))
-			}
-		}
-	}
 	return retErr
 }
 
-func waitForPod(client *clusterClient, podName string, returnOnRunning bool, timeout time.Duration) error {
+func waitForPod(client *ClusterClient, podName string, returnOnRunning bool, timeout time.Duration) error {
 	return waitFor(timeout, func() (bool, error) {
-		pod, err := client.Core().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
 		if err != nil {
 			return true, errors.WithStack(err)
 		}
@@ -289,7 +310,7 @@ func waitForPod(client *clusterClient, podName string, returnOnRunning bool, tim
 		}
 		return true, nil
 	}, func() error {
-		pod, err := client.Core().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
+		pod, err := client.CoreV1().Pods(client.Namespace()).Get(podName, metav1.GetOptions{})
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -297,13 +318,13 @@ func waitForPod(client *clusterClient, podName string, returnOnRunning bool, tim
 	})
 }
 
-func cleanupPods(client *clusterClient, opts metav1.ListOptions) error {
-	pods, err := client.Core().Pods(client.Namespace()).List(opts)
+func cleanupPods(client *ClusterClient, opts metav1.ListOptions) error {
+	pods, err := client.CoreV1().Pods(client.Namespace()).List(opts)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	for _, pod := range pods.Items {
-		err = client.Core().Pods(client.Namespace()).Delete(pod.Name, &metav1.DeleteOptions{})
+		err = client.CoreV1().Pods(client.Namespace()).Delete(pod.Name, &metav1.DeleteOptions{})
 		if err != nil && !k8sErrors.IsNotFound(err) {
 			return errors.WithStack(err)
 		}
@@ -315,13 +336,13 @@ func propagationPtr(p metav1.DeletionPropagation) *metav1.DeletionPropagation {
 	return &p
 }
 
-func cleanupReplicas(client *clusterClient, opts metav1.ListOptions) error {
-	replicas, err := client.Extensions().ReplicaSets(client.Namespace()).List(opts)
+func cleanupReplicas(client *ClusterClient, opts metav1.ListOptions) error {
+	replicas, err := client.AppsV1beta2().ReplicaSets(client.Namespace()).List(opts)
 	if err != nil {
 		return errors.WithStack(err)
 	}
 	for _, replica := range replicas.Items {
-		err = client.Extensions().ReplicaSets(client.Namespace()).Delete(replica.Name, &metav1.DeleteOptions{
+		err = client.AppsV1beta2().ReplicaSets(client.Namespace()).Delete(replica.Name, &metav1.DeleteOptions{
 			PropagationPolicy: propagationPtr(metav1.DeletePropagationForeground),
 		})
 		if err != nil && !k8sErrors.IsNotFound(err) {
@@ -331,9 +352,9 @@ func cleanupReplicas(client *clusterClient, opts metav1.ListOptions) error {
 	return cleanupPods(client, opts)
 }
 
-func cleanupDeployment(client *clusterClient, a provision.App, process string) error {
+func cleanupDeployment(client *ClusterClient, a provision.App, process string) error {
 	depName := deploymentNameForApp(a, process)
-	err := client.Extensions().Deployments(client.Namespace()).Delete(depName, &metav1.DeleteOptions{
+	err := client.AppsV1beta2().Deployments(client.Namespace()).Delete(depName, &metav1.DeleteOptions{
 		PropagationPolicy: propagationPtr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !k8sErrors.IsNotFound(err) {
@@ -355,9 +376,9 @@ func cleanupDeployment(client *clusterClient, a provision.App, process string) e
 	})
 }
 
-func cleanupDaemonSet(client *clusterClient, name, pool string) error {
+func cleanupDaemonSet(client *ClusterClient, name, pool string) error {
 	dsName := daemonSetName(name, pool)
-	err := client.Extensions().DaemonSets(client.Namespace()).Delete(dsName, &metav1.DeleteOptions{
+	err := client.AppsV1beta2().DaemonSets(client.Namespace()).Delete(dsName, &metav1.DeleteOptions{
 		PropagationPolicy: propagationPtr(metav1.DeletePropagationForeground),
 	})
 	if err != nil && !k8sErrors.IsNotFound(err) {
@@ -374,9 +395,9 @@ func cleanupDaemonSet(client *clusterClient, name, pool string) error {
 	})
 }
 
-func cleanupPod(client *clusterClient, podName string) error {
+func cleanupPod(client *ClusterClient, podName string) error {
 	noWait := int64(0)
-	err := client.Core().Pods(client.Namespace()).Delete(podName, &metav1.DeleteOptions{
+	err := client.CoreV1().Pods(client.Namespace()).Delete(podName, &metav1.DeleteOptions{
 		GracePeriodSeconds: &noWait,
 	})
 	if err != nil && !k8sErrors.IsNotFound(err) {
@@ -385,8 +406,9 @@ func cleanupPod(client *clusterClient, podName string) error {
 	return nil
 }
 
-func podsFromNode(client *clusterClient, nodeName string) ([]apiv1.Pod, error) {
-	podList, err := client.Core().Pods(client.Namespace()).List(metav1.ListOptions{
+func podsFromNode(client *ClusterClient, nodeName string, labelFilter string) ([]apiv1.Pod, error) {
+	podList, err := client.CoreV1().Pods(client.Namespace()).List(metav1.ListOptions{
+		LabelSelector: labelFilter,
 		FieldSelector: fields.SelectorFromSet(fields.Set{
 			"spec.nodeName": nodeName,
 		}).String(),
@@ -397,8 +419,14 @@ func podsFromNode(client *clusterClient, nodeName string) ([]apiv1.Pod, error) {
 	return podList.Items, nil
 }
 
-func getServicePort(client *clusterClient, srvName string) (int32, error) {
-	srv, err := client.Core().Services(client.Namespace()).Get(srvName, metav1.GetOptions{})
+func appPodsFromNode(client *ClusterClient, nodeName string) ([]apiv1.Pod, error) {
+	l := provision.LabelSet{Prefix: tsuruLabelPrefix}
+	l.SetIsService()
+	return podsFromNode(client, nodeName, fields.SelectorFromSet(fields.Set(l.ToIsServiceSelector())).String())
+}
+
+func getServicePort(client *ClusterClient, srvName string) (int32, error) {
+	srv, err := client.CoreV1().Services(client.Namespace()).Get(srvName, metav1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) {
 			return 0, nil
@@ -451,7 +479,7 @@ func execCommand(opts execOpts) error {
 	}
 	var chosenPod *apiv1.Pod
 	if opts.unit != "" {
-		chosenPod, err = client.Core().Pods(client.Namespace()).Get(opts.unit, metav1.GetOptions{})
+		chosenPod, err = client.CoreV1().Pods(client.Namespace()).Get(opts.unit, metav1.GetOptions{})
 		if err != nil {
 			if k8sErrors.IsNotFound(errors.Cause(err)) {
 				return &provision.UnitNotFoundError{ID: opts.unit}
@@ -492,7 +520,7 @@ func execCommand(opts execOpts) error {
 		Stderr:    true,
 		TTY:       opts.tty,
 	}, scheme.ParameterCodec)
-	exec, err := remotecommand.NewExecutor(client.restConfig, "POST", req.URL())
+	exec, err := keepAliveSpdyExecutor(client.restConfig, "POST", req.URL())
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -503,12 +531,11 @@ func execCommand(opts execOpts) error {
 		}
 	}
 	err = exec.Stream(remotecommand.StreamOptions{
-		SupportedProtocols: remotecommandutil.SupportedStreamingProtocols,
-		Stdin:              opts.stdin,
-		Stdout:             opts.stdout,
-		Stderr:             opts.stderr,
-		Tty:                opts.tty,
-		TerminalSizeQueue:  sizeQueue,
+		Stdin:             opts.stdin,
+		Stdout:            opts.stdout,
+		Stderr:            opts.stderr,
+		Tty:               opts.tty,
+		TerminalSizeQueue: sizeQueue,
 	})
 	if err != nil {
 		return errors.WithStack(err)
@@ -517,37 +544,52 @@ func execCommand(opts execOpts) error {
 }
 
 type runSinglePodArgs struct {
-	client     *clusterClient
+	client     *ClusterClient
 	stdout     io.Writer
+	stderr     io.Writer
 	labels     *provision.LabelSet
-	cmds       []string
+	cmd        string
 	envs       []apiv1.EnvVar
 	name       string
 	image      string
-	pool       string
+	app        provision.App
 	dockerSock bool
 }
 
 func runPod(args runSinglePodArgs) error {
+	err := ensureServiceAccountForApp(args.client, args.app)
+	if err != nil {
+		return err
+	}
 	nodeSelector := provision.NodeLabels(provision.NodeLabelsOpts{
-		Pool:   args.pool,
+		Pool:   args.app.GetPool(),
 		Prefix: tsuruLabelPrefix,
 	}).ToNodeByPoolSelector()
+	pullSecrets, err := getImagePullSecrets(args.client, args.image)
+	if err != nil {
+		return err
+	}
+	labels, annotations := provision.SplitServiceLabelsAnnotations(args.labels)
 	pod := &apiv1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      args.name,
-			Namespace: args.client.Namespace(),
-			Labels:    args.labels.ToLabels(),
+			Name:        args.name,
+			Namespace:   args.client.Namespace(),
+			Labels:      labels.ToLabels(),
+			Annotations: annotations.ToLabels(),
 		},
 		Spec: apiv1.PodSpec{
-			NodeSelector:  nodeSelector,
-			RestartPolicy: apiv1.RestartPolicyNever,
+			ImagePullSecrets:   pullSecrets,
+			ServiceAccountName: serviceAccountNameForApp(args.app),
+			NodeSelector:       nodeSelector,
+			RestartPolicy:      apiv1.RestartPolicyNever,
 			Containers: []apiv1.Container{
 				{
-					Name:    args.name,
-					Image:   args.image,
-					Command: args.cmds,
-					Env:     args.envs,
+					Name:      args.name,
+					Image:     args.image,
+					Command:   []string{"sh", "-ec", "cat >/dev/null && " + args.cmd},
+					Env:       args.envs,
+					Stdin:     true,
+					StdinOnce: true,
 				},
 			},
 		},
@@ -567,7 +609,7 @@ func runPod(args runSinglePodArgs) error {
 			{Name: "dockersock", MountPath: dockerSockPath},
 		}
 	}
-	_, err := args.client.Core().Pods(args.client.Namespace()).Create(pod)
+	_, err = args.client.CoreV1().Pods(args.client.Namespace()).Create(pod)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -578,81 +620,41 @@ func runPod(args runSinglePodArgs) error {
 	if err != nil {
 		multiErr.Add(err)
 	}
-	err = args.client.SetTimeout(kubeConf.PodRunningTimeout)
+	err = doAttach(args.client, bytes.NewBufferString("."), args.stdout, args.stderr, pod.Name, args.name, false)
 	if err != nil {
 		multiErr.Add(errors.WithStack(err))
+	}
+	if multiErr.Len() > 0 {
 		return multiErr
 	}
-	req := args.client.Core().Pods(args.client.Namespace()).GetLogs(pod.Name, &apiv1.PodLogOptions{
-		Follow:    true,
-		Container: args.name,
-	})
-	reader, err := req.Stream()
-	if err != nil {
-		multiErr.Add(errors.WithStack(err))
-		return multiErr
-	}
-	defer reader.Close()
-	_, err = io.Copy(args.stdout, reader)
-	if err != nil && err != io.EOF {
-		multiErr.Add(errors.WithStack(err))
-		return multiErr
-	}
-	return multiErr.ToError()
+	return waitForPod(args.client, pod.Name, false, kubeConf.PodReadyTimeout)
 }
 
-func waitNodeReady(client *clusterClient, addr string, timeout time.Duration) (*apiv1.Node, error) {
-	var node *apiv1.Node
-	waitErr := waitFor(timeout, func() (bool, error) {
-		var err error
-		node, err = client.Core().Nodes().Get(addr, metav1.GetOptions{})
-		if err != nil {
-			return true, errors.WithStack(err)
-		}
-		for _, cond := range node.Status.Conditions {
-			if cond.Type == apiv1.NodeReady && cond.Status == apiv1.ConditionTrue {
-				return true, nil
+func getNodeByAddr(client *ClusterClient, address string) (*apiv1.Node, error) {
+	address = tsuruNet.URLToHost(address)
+	node, err := client.CoreV1().Nodes().Get(address, metav1.GetOptions{})
+	if err == nil {
+		return node, nil
+	}
+	if !k8sErrors.IsNotFound(err) {
+		return nil, err
+	}
+	node = nil
+	nodeList, err := client.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+nodesloop:
+	for i, n := range nodeList.Items {
+		for _, addr := range n.Status.Addresses {
+			if addr.Type == apiv1.NodeInternalIP && addr.Address == address {
+				node = &nodeList.Items[i]
+				break nodesloop
 			}
 		}
-		return false, nil
-	}, func() error {
-		var err error
-		node, err = client.Core().Nodes().Get(addr, metav1.GetOptions{})
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		return errors.Errorf("invalid node conditions for %q: %#v", addr, node.Status.Conditions)
-	})
-	return node, waitErr
-}
-
-// Hack until Kubernetes 1.7 is released to ensure daemonsets are scheduled.
-// See https://github.com/kubernetes/kubernetes/pull/45649
-func refreshNodeTaints(client *clusterClient, addr string) {
-	node, err := waitNodeReady(client, addr, 30*time.Minute)
-	if err != nil {
-		log.Errorf("error waiting for node ready: %v", err)
 	}
-	tsuruTaintKey := "tsuru-refresh-node-container"
-	tsuruTempTaint := apiv1.Taint{
-		Key:    tsuruTaintKey,
-		Value:  "true",
-		Effect: apiv1.TaintEffectNoSchedule,
+	if node != nil {
+		return node, nil
 	}
-	node.Spec.Taints = append(node.Spec.Taints, tsuruTempTaint)
-	node, err = client.Core().Nodes().Update(node)
-	if err != nil {
-		log.Errorf("unable to add node taint %q: %v", tsuruTaintKey, err)
-	}
-	for i := 0; i < len(node.Spec.Taints); i++ {
-		if node.Spec.Taints[i].Key == tsuruTaintKey {
-			node.Spec.Taints[i] = node.Spec.Taints[len(node.Spec.Taints)-1]
-			node.Spec.Taints = node.Spec.Taints[:len(node.Spec.Taints)-1]
-			i--
-		}
-	}
-	_, err = client.Core().Nodes().Update(node)
-	if err != nil {
-		log.Errorf("unable to remove node taint %q: %v", tsuruTaintKey, err)
-	}
+	return nil, provision.ErrNodeNotFound
 }

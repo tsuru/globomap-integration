@@ -14,6 +14,7 @@ import (
 	"github.com/tsuru/tsuru/event"
 	"github.com/tsuru/tsuru/permission"
 	"github.com/tsuru/tsuru/service"
+	"github.com/tsuru/tsuru/servicemanager"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 )
 
@@ -234,8 +235,9 @@ func serviceProxy(w http.ResponseWriter, r *http.Request, t auth.Token) (err err
 	if !allowed {
 		return permission.ErrUnauthorized
 	}
+	var evt *event.Event
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		evt, err := event.New(&event.Opts{
+		evt, err = event.New(&event.Opts{
 			Target: serviceTarget(s.Name),
 			Kind:   permission.PermServiceUpdateProxy,
 			Owner:  t,
@@ -251,7 +253,7 @@ func serviceProxy(w http.ResponseWriter, r *http.Request, t auth.Token) (err err
 		defer func() { evt.Done(err) }()
 	}
 	path := r.URL.Query().Get("callback")
-	return service.Proxy(&s, path, w, r)
+	return service.Proxy(&s, path, evt, requestIDHeader(r), w, r)
 }
 
 // title: grant access to a service
@@ -277,7 +279,7 @@ func grantServiceAccess(w http.ResponseWriter, r *http.Request, t auth.Token) (e
 		return permission.ErrUnauthorized
 	}
 	teamName := r.URL.Query().Get(":team")
-	team, err := auth.GetTeam(teamName)
+	team, err := servicemanager.Team.FindByName(teamName)
 	if err != nil {
 		if err == authTypes.ErrTeamNotFound {
 			return &errors.HTTP{Code: http.StatusBadRequest, Message: "Team not found"}
@@ -325,7 +327,7 @@ func revokeServiceAccess(w http.ResponseWriter, r *http.Request, t auth.Token) (
 		return permission.ErrUnauthorized
 	}
 	teamName := r.URL.Query().Get(":team")
-	team, err := auth.GetTeam(teamName)
+	team, err := servicemanager.Team.FindByName(teamName)
 	if err != nil {
 		if err == authTypes.ErrTeamNotFound {
 			return &errors.HTTP{Code: http.StatusBadRequest, Message: "Team not found"}

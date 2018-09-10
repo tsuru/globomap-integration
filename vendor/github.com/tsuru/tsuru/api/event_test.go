@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/ajg/form"
+	"github.com/globalsign/mgo/bson"
 	"github.com/tsuru/config"
 	"github.com/tsuru/tsuru/app"
 	"github.com/tsuru/tsuru/auth"
@@ -26,10 +27,8 @@ import (
 	"github.com/tsuru/tsuru/repository/repositorytest"
 	"github.com/tsuru/tsuru/router/routertest"
 	_ "github.com/tsuru/tsuru/storage/mongodb"
-	appTypes "github.com/tsuru/tsuru/types/app"
 	authTypes "github.com/tsuru/tsuru/types/auth"
 	"gopkg.in/check.v1"
-	"gopkg.in/mgo.v2/bson"
 )
 
 type EventSuite struct {
@@ -48,10 +47,6 @@ func (s *EventSuite) createUserAndTeam(c *check.C) {
 	_, err := nativeScheme.Create(s.user)
 	c.Assert(err, check.IsNil)
 	s.team = &authTypes.Team{Name: "tsuruteam"}
-	err = auth.TeamService().Insert(*s.team)
-	c.Assert(err, check.IsNil)
-	err = auth.TeamService().Insert(authTypes.Team{Name: "other-team"})
-	c.Assert(err, check.IsNil)
 	s.token = userWithPermission(c, permission.Permission{
 		Scheme:  permission.PermApp,
 		Context: permission.Context(permission.CtxTeam, s.team.Name),
@@ -63,7 +58,7 @@ func (s *EventSuite) SetUpSuite(c *check.C) {
 	c.Assert(err, check.IsNil)
 	config.Set("log:disable-syslog", true)
 	config.Set("database:driver", "mongodb")
-	config.Set("database:url", "127.0.0.1:27017")
+	config.Set("database:url", "127.0.0.1:27017?maxPoolSize=100")
 	config.Set("database:name", "tsuru_events_api_tests")
 	config.Set("auth:hash-cost", bcrypt.MinCost)
 	config.Set("repo-manager", "fake")
@@ -87,13 +82,15 @@ func (s *EventSuite) SetUpTest(c *check.C) {
 	err = dbtest.ClearAllCollections(s.conn.Apps().Database)
 	c.Assert(err, check.IsNil)
 	s.createUserAndTeam(c)
-	app.PlatformService().Insert(appTypes.Platform{Name: "python"})
 }
 
-func (s *EventSuite) insertEvents(target string, c *check.C) ([]*event.Event, error) {
+func (s *EventSuite) insertEvents(target string, kinds []*permission.PermissionScheme, c *check.C) ([]*event.Event, error) {
 	t, err := event.GetTargetType(target)
 	if err != nil {
 		return nil, err
+	}
+	if len(kinds) == 0 {
+		kinds = []*permission.PermissionScheme{permission.PermAppDeploy}
 	}
 	evts := make([]*event.Event, 10)
 	for i := 0; i < 10; i++ {
@@ -101,7 +98,7 @@ func (s *EventSuite) insertEvents(target string, c *check.C) ([]*event.Event, er
 		opts := &event.Opts{
 			Target:     event.Target{Type: t, Value: name},
 			Owner:      s.token,
-			Kind:       permission.PermAppDeploy,
+			Kind:       kinds[i%len(kinds)],
 			Cancelable: i == 0,
 		}
 		if t == event.TargetTypeApp {
@@ -133,7 +130,7 @@ func (s *EventSuite) TestEventListEmpty(c *check.C) {
 }
 
 func (s *EventSuite) TestEventList(c *check.C) {
-	_, err := s.insertEvents("app", c)
+	_, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	request, err := http.NewRequest("GET", "/events", nil)
 	c.Assert(err, check.IsNil)
@@ -150,9 +147,9 @@ func (s *EventSuite) TestEventList(c *check.C) {
 }
 
 func (s *EventSuite) TestEventListFilterByTarget(c *check.C) {
-	_, err := s.insertEvents("app", c)
+	_, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
-	s.insertEvents("node", c)
+	s.insertEvents("node", nil, c)
 	request, err := http.NewRequest("GET", "/events?target.type=app", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -175,7 +172,7 @@ func (s *EventSuite) TestEventListFilterByTarget(c *check.C) {
 }
 
 func (s *EventSuite) TestEventListFilterRunning(c *check.C) {
-	_, err := s.insertEvents("app", c)
+	_, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	err = s.conn.Events().Update(bson.M{}, bson.M{"$set": bson.M{"running": true}})
 	c.Assert(err, check.IsNil)
@@ -203,10 +200,12 @@ func (s *EventSuite) TestEventListFilterRunning(c *check.C) {
 	c.Assert(result, check.HasLen, 1)
 }
 
-func (s *EventSuite) TestEventListFilterByKind(c *check.C) {
-	_, err := s.insertEvents("app", c)
+func (s *EventSuite) TestEventListFilterByKinds(c *check.C) {
+	kinds := []*permission.PermissionScheme{permission.PermAppCreate, permission.PermAppDeploy}
+	_, err := s.insertEvents("app", kinds, c)
 	c.Assert(err, check.IsNil)
-	u := fmt.Sprintf("/events?kindName=%s", permission.PermAppDeploy)
+
+	u := fmt.Sprintf("/events?kindName=%s&kindname=%s", kinds[0].FullName(), kinds[1].FullName())
 	request, err := http.NewRequest("GET", u, nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
@@ -219,7 +218,20 @@ func (s *EventSuite) TestEventListFilterByKind(c *check.C) {
 	err = json.Unmarshal(recorder.Body.Bytes(), &result)
 	c.Assert(err, check.IsNil)
 	c.Assert(result, check.HasLen, 10)
-	request, err = http.NewRequest("GET", "/events?kindName=invalid", nil)
+
+	u = "/events?KindName=" + kinds[0].FullName()
+	request, err = http.NewRequest("GET", u, nil)
+	c.Assert(err, check.IsNil)
+	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	c.Assert(recorder.Code, check.Equals, http.StatusOK)
+	c.Assert(recorder.Header().Get("Content-Type"), check.Equals, "application/json")
+	err = json.Unmarshal(recorder.Body.Bytes(), &result)
+	c.Assert(err, check.IsNil)
+	c.Assert(result, check.HasLen, 5)
+
+	request, err = http.NewRequest("GET", "/events?KINDNAME=invalid", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+s.token.GetValue())
 	recorder = httptest.NewRecorder()
@@ -228,7 +240,7 @@ func (s *EventSuite) TestEventListFilterByKind(c *check.C) {
 }
 
 func (s *EventSuite) TestKindList(c *check.C) {
-	_, err := s.insertEvents("app", c)
+	_, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	request, err := http.NewRequest("GET", "/events/kinds", nil)
 	c.Assert(err, check.IsNil)
@@ -278,7 +290,7 @@ func (s *EventSuite) TestEventInfoNotFound(c *check.C) {
 }
 
 func (s *EventSuite) TestEventCancel(c *check.C) {
-	events, err := s.insertEvents("app", c)
+	events, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("reason=we ain't gonna take it")
 	u := fmt.Sprintf("/events/%s/cancel", events[0].UniqueID.Hex())
@@ -322,7 +334,7 @@ func (s *EventSuite) TestEventCancelNotFound(c *check.C) {
 }
 
 func (s *EventSuite) TestEventCancelNoReason(c *check.C) {
-	events, err := s.insertEvents("app", c)
+	events, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("reason=")
 	u := fmt.Sprintf("/events/%s/cancel", events[0].UniqueID.Hex())
@@ -338,7 +350,7 @@ func (s *EventSuite) TestEventCancelNoReason(c *check.C) {
 }
 
 func (s *EventSuite) TestEventCancelNotCancelable(c *check.C) {
-	events, err := s.insertEvents("app", c)
+	events, err := s.insertEvents("app", nil, c)
 	c.Assert(err, check.IsNil)
 	body := strings.NewReader("reason=pretty please")
 	u := fmt.Sprintf("/events/%s/cancel", events[1].UniqueID.Hex())
@@ -620,7 +632,7 @@ func (s *EventSuite) TestEventBlockRemoveInvalidUUID(c *check.C) {
 		Scheme:  permission.PermEventBlockRemove,
 		Context: permission.PermissionContext{CtxType: permission.CtxGlobal},
 	})
-	request, err := http.NewRequest("DELETE", fmt.Sprintf("/events/blocks/abc"), nil)
+	request, err := http.NewRequest("DELETE", "/events/blocks/abc", nil)
 	c.Assert(err, check.IsNil)
 	request.Header.Set("Authorization", "bearer "+token.GetValue())
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")

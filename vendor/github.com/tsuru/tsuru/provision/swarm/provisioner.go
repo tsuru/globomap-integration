@@ -30,6 +30,8 @@ import (
 
 const (
 	provisionerName = "swarm"
+
+	waitContainerIDTimeout = 10 * time.Second
 )
 
 var swarmConfig swarmProvisionerConfig
@@ -37,19 +39,19 @@ var swarmConfig swarmProvisionerConfig
 type swarmProvisioner struct{}
 
 var (
-	_ provision.Provisioner              = &swarmProvisioner{}
-	_ provision.ShellProvisioner         = &swarmProvisioner{}
-	_ provision.ExecutableProvisioner    = &swarmProvisioner{}
-	_ provision.MessageProvisioner       = &swarmProvisioner{}
-	_ provision.InitializableProvisioner = &swarmProvisioner{}
-	_ provision.NodeProvisioner          = &swarmProvisioner{}
-	_ provision.NodeContainerProvisioner = &swarmProvisioner{}
-	_ provision.SleepableProvisioner     = &swarmProvisioner{}
-	_ provision.BuilderDeploy            = &swarmProvisioner{}
-	_ provision.VolumeProvisioner        = &swarmProvisioner{}
-	_ cluster.InitClusterProvisioner     = &swarmProvisioner{}
+	_ provision.Provisioner               = &swarmProvisioner{}
+	_ provision.ShellProvisioner          = &swarmProvisioner{}
+	_ provision.ExecutableProvisioner     = &swarmProvisioner{}
+	_ provision.MessageProvisioner        = &swarmProvisioner{}
+	_ provision.InitializableProvisioner  = &swarmProvisioner{}
+	_ provision.NodeProvisioner           = &swarmProvisioner{}
+	_ provision.NodeContainerProvisioner  = &swarmProvisioner{}
+	_ provision.SleepableProvisioner      = &swarmProvisioner{}
+	_ provision.BuilderDeploy             = &swarmProvisioner{}
+	_ provision.BuilderDeployDockerClient = &swarmProvisioner{}
+	_ provision.VolumeProvisioner         = &swarmProvisioner{}
+	_ cluster.InitClusterProvisioner      = &swarmProvisioner{}
 	// _ provision.RollbackableDeployer     = &swarmProvisioner{}
-	// _ provision.RebuildableDeployer      = &swarmProvisioner{}
 	// _ provision.OptionalLogsProvisioner  = &swarmProvisioner{}
 	// _ provision.UnitStatusProvisioner    = &swarmProvisioner{}
 	// _ provision.NodeRebalanceProvisioner = &swarmProvisioner{}
@@ -90,7 +92,7 @@ func (p *swarmProvisioner) Provision(a provision.App) error {
 		Name:           networkNameForApp(a),
 		Driver:         "overlay",
 		CheckDuplicate: true,
-		IPAM: docker.IPAMOptions{
+		IPAM: &docker.IPAMOptions{
 			Driver: "default",
 		},
 	})
@@ -255,7 +257,19 @@ func tasksToUnits(client *clusterClient, tasks []swarm.Task) ([]provision.Unit, 
 	return units, nil
 }
 
-func (p *swarmProvisioner) Units(a provision.App) ([]provision.Unit, error) {
+func (p *swarmProvisioner) Units(apps ...provision.App) ([]provision.Unit, error) {
+	var units []provision.Unit
+	for _, a := range apps {
+		appUnits, err := p.units(a)
+		if err != nil {
+			return nil, err
+		}
+		units = append(units, appUnits...)
+	}
+	return units, nil
+}
+
+func (p *swarmProvisioner) units(a provision.App) ([]provision.Unit, error) {
 	client, err := clusterForPool(a.GetPool())
 	if err != nil {
 		if errors.Cause(err) == cluster.ErrNoCluster {
@@ -342,13 +356,42 @@ func (p *swarmProvisioner) RoutableAddresses(a provision.App) ([]url.URL, error)
 	return addrs, nil
 }
 
-func findTaskByContainerId(tasks []swarm.Task, unitId string) (*swarm.Task, error) {
+func findTaskByContainerIdNoWait(tasks []swarm.Task, unitId string) (*swarm.Task, error) {
 	for i, t := range tasks {
-		if strings.HasPrefix(t.Status.ContainerStatus.ContainerID, unitId) {
+		contID := t.Status.ContainerStatus.ContainerID
+		if strings.HasPrefix(contID, unitId) {
 			return &tasks[i], nil
 		}
 	}
 	return nil, &provision.UnitNotFoundError{ID: unitId}
+}
+
+func findTaskByContainerId(client *clusterClient, taskListOpts docker.ListTasksOptions, unitId string, timeout time.Duration) (*swarm.Task, []swarm.Task, error) {
+	timeoutCh := time.After(timeout)
+	for {
+		tasks, err := client.ListTasks(taskListOpts)
+		if err != nil {
+			return nil, nil, errors.WithStack(err)
+		}
+		hasEmpty := false
+		for i, t := range tasks {
+			contID := t.Status.ContainerStatus.ContainerID
+			if contID == "" {
+				hasEmpty = true
+			}
+			if strings.HasPrefix(contID, unitId) {
+				return &tasks[i], tasks, nil
+			}
+		}
+		if !hasEmpty {
+			return nil, tasks, &provision.UnitNotFoundError{ID: unitId}
+		}
+		select {
+		case <-timeoutCh:
+			return nil, tasks, &provision.UnitNotFoundError{ID: unitId}
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func (p *swarmProvisioner) RegisterUnit(a provision.App, unitId string, customData map[string]interface{}) error {
@@ -360,17 +403,14 @@ func (p *swarmProvisioner) RegisterUnit(a provision.App, unitId string, customDa
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	tasks, err := client.ListTasks(docker.ListTasksOptions{
+	taskOpts := docker.ListTasksOptions{
 		Filters: map[string][]string{
 			"label": toLabelSelectors(l.ToAppSelector()),
 		},
-	})
-	if err != nil {
-		return err
 	}
-	task, err := findTaskByContainerId(tasks, unitId)
+	task, tasks, err := findTaskByContainerId(client, taskOpts, unitId, waitContainerIDTimeout)
 	if err != nil {
-		return err
+		return errors.Wrapf(err, "task not found for container %q, existing tasks: %#v", unitId, tasks)
 	}
 	if customData == nil {
 		return nil
@@ -446,7 +486,7 @@ func (p *swarmProvisioner) NodeForNodeData(nodeData provision.NodeStatusData) (p
 		}
 		var task *swarm.Task
 		for _, unitData := range nodeData.Units {
-			task, err = findTaskByContainerId(tasks, unitData.ID)
+			task, err = findTaskByContainerIdNoWait(tasks, unitData.ID)
 			if err == nil {
 				break
 			}
@@ -498,6 +538,7 @@ func (p *swarmProvisioner) AddNode(opts provision.AddNodeOptions) error {
 		return errors.WithStack(err)
 	}
 	nodeData.Spec.Annotations.Labels = provision.NodeLabels(provision.NodeLabelsOpts{
+		IaaSID:       opts.IaaSID,
 		Addr:         opts.Address,
 		Pool:         opts.Pool,
 		CustomLabels: opts.Metadata,
@@ -507,6 +548,9 @@ func (p *swarmProvisioner) AddNode(opts provision.AddNodeOptions) error {
 		Version:  nodeData.Version.Index,
 		NodeSpec: nodeData.Spec,
 	})
+	if err == nil {
+		servicecommon.RebuildRoutesPoolApps(opts.Pool)
+	}
 	return errors.WithStack(err)
 }
 
@@ -541,6 +585,9 @@ func (p *swarmProvisioner) RemoveNode(opts provision.RemoveNodeOptions) error {
 		ID:    swarmNode.ID,
 		Force: true,
 	})
+	if err == nil {
+		servicecommon.RebuildRoutesPoolApps(node.Pool())
+	}
 	return errors.WithStack(err)
 }
 
@@ -589,7 +636,7 @@ func (p *swarmProvisioner) UpdateNode(opts provision.UpdateNodeOptions) error {
 	return nil
 }
 
-func (p *swarmProvisioner) GetDockerClient(a provision.App) (provision.BuilderDockerClient, error) {
+func (p *swarmProvisioner) GetClient(a provision.App) (provision.BuilderDockerClient, error) {
 	if a == nil {
 		clusters, err := allClusters()
 		if err != nil {
@@ -598,17 +645,17 @@ func (p *swarmProvisioner) GetDockerClient(a provision.App) (provision.BuilderDo
 			}
 			return nil, err
 		}
-		return clusters[0].Client, nil
+		return &dockercommon.PullAndCreateClient{Client: clusters[0].Client}, nil
 	}
 	client, err := clusterForPool(a.GetPool())
 	if err != nil {
 		return nil, err
 	}
-	return &dockercommon.ClientWithTimeout{Client: client.Client}, nil
+	return &dockercommon.PullAndCreateClient{Client: client.Client}, nil
 }
 
-func (p *swarmProvisioner) CleanImage(appName, imgName string) {
-	p.cleanImageInNodes(imgName)
+func (p *swarmProvisioner) CleanImage(appName, imgName string) error {
+	return p.cleanImageInNodes(imgName)
 }
 
 func (p *swarmProvisioner) Deploy(a provision.App, buildImageID string, evt *event.Event) (string, error) {
@@ -635,7 +682,11 @@ func (p *swarmProvisioner) Deploy(a provision.App, buildImageID string, evt *eve
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
-	_, err = commitPushBuildImage(client, deployImage, task.Status.ContainerStatus.ContainerID, a)
+	nodeClient, err := clientForNode(client, task.NodeID)
+	if err != nil {
+		return "", err
+	}
+	_, err = commitPushBuildImage(nodeClient, deployImage, task.Status.ContainerStatus.ContainerID, a)
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
@@ -775,7 +826,7 @@ func (m *nodeContainerManager) DeployNodeContainer(config *nodecontainer.NodeCon
 		return err
 	}
 	err = forEachCluster(func(client *clusterClient) error {
-		_, upsertErr := upsertService(serviceSpec, client, placementOnly)
+		_, upsertErr := upsertService(*serviceSpec, client, placementOnly)
 		return upsertErr
 	})
 	if err == cluster.ErrNoCluster {
@@ -891,21 +942,17 @@ func (m *serviceManager) DeployService(a provision.App, process string, labels *
 			return errors.WithStack(err)
 		}
 	}
-	var baseSpec *swarm.ServiceSpec
-	if srv != nil {
-		baseSpec = &srv.Spec
-	}
 	spec, err := serviceSpecForApp(tsuruServiceOpts{
 		app:      a,
 		process:  process,
 		image:    imgID,
-		baseSpec: baseSpec,
 		labels:   labels,
 		replicas: replicas,
 	})
 	if err != nil {
 		return err
 	}
+	existingTasks := make(map[string]struct{})
 	if srv == nil {
 		_, err = m.client.CreateService(docker.CreateServiceOptions{
 			ServiceSpec: *spec,
@@ -914,7 +961,18 @@ func (m *serviceManager) DeployService(a provision.App, process string, labels *
 			return errors.WithStack(err)
 		}
 	} else {
+		var tasks []swarm.Task
+		tasks, err = m.client.ListTasks(docker.ListTasksOptions{
+			Filters: map[string][]string{"service": {srvName}},
+		})
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		for _, t := range tasks {
+			existingTasks[t.ID] = struct{}{}
+		}
 		srv.Spec = *spec
+		srv.Spec.TaskTemplate.ForceUpdate++
 		err = m.client.UpdateService(srv.ID, docker.UpdateServiceOptions{
 			Version:     srv.Version.Index,
 			ServiceSpec: srv.Spec,
@@ -923,7 +981,49 @@ func (m *serviceManager) DeployService(a provision.App, process string, labels *
 			return errors.WithStack(err)
 		}
 	}
+	err = m.waitForService(srvName, existingTasks)
+	if err != nil {
+		return provision.ErrUnitStartup{Err: err}
+	}
 	return nil
+}
+
+func (m *serviceManager) waitForService(srvName string, existingTasks map[string]struct{}) error {
+	timeoutc := time.After(waitForTaskTimeout)
+loop:
+	for {
+		select {
+		case <-timeoutc:
+			return errors.Errorf("timeout waiting for service update")
+		case <-time.After(time.Second):
+		}
+		tasks, err := m.client.ListTasks(docker.ListTasksOptions{
+			Filters: map[string][]string{"service": {srvName}},
+		})
+		if err != nil {
+			return errors.WithStack(err)
+		}
+		for _, t := range tasks {
+			if _, ok := existingTasks[t.ID]; ok {
+				if taskInTermState(t) {
+					continue
+				}
+				log.Debugf("Waiting old task %s [%s] to reach terminal state.", t.ID, taskStatusMsg(t.Status))
+				continue loop
+			}
+			if t.DesiredState == t.Status.State {
+				continue
+			}
+			log.Debugf("Waiting new task %s [%s] to reach desired state %q", t.ID, taskStatusMsg(t.Status), t.DesiredState)
+			continue loop
+		}
+		return nil
+	}
+}
+
+func taskInTermState(t swarm.Task) bool {
+	return t.Status.State == swarm.TaskStateComplete || t.Status.State == swarm.TaskStateFailed ||
+		t.Status.State == swarm.TaskStateRejected || t.Status.State == swarm.TaskStateShutdown
 }
 
 func runOnceBuildCmds(client *clusterClient, a provision.App, cmds []string, imgID, buildingImage string, w io.Writer) (string, *swarm.Task, error) {
@@ -950,7 +1050,7 @@ func runOnceCmds(client *clusterClient, opts tsuruServiceOpts, cmds []string, st
 		return "", nil, errors.WithStack(err)
 	}
 	createdID := srv.ID
-	tasks, err := waitForTasks(client, createdID, swarm.TaskStateShutdown)
+	tasks, err := waitForTasks(client, createdID, swarm.TaskStateShutdown, swarm.TaskStateComplete)
 	if err != nil {
 		return createdID, nil, err
 	}
