@@ -2,16 +2,60 @@
 
 
 [[projects]]
+  name = "github.com/golang/protobuf"
+  packages = ["proto"]
+  revision = "aa810b61a9c79d51363740d207bb46cf8e620ed5"
+  version = "v1.2.0"
+
+[[projects]]
   branch = "master"
   name = "github.com/tsuru/gnuflag"
   packages = ["."]
   revision = "86b8c1b864aadcf9c94d67bc607ce3f19cbb9aa2"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/tsuru/go-tsuruclient"
+  packages = ["pkg/tsuru"]
+  revision = "cc97793b2890aa9f3be385150e8dce7e5d93c98b"
+
+[[projects]]
   name = "github.com/tsuru/tsuru"
   packages = ["errors"]
   revision = "c91725578089a31e3b485ea3af94705334bb89ff"
   version = "1.4.0"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/net"
+  packages = [
+    "context",
+    "context/ctxhttp"
+  ]
+  revision = "161cd47e91fd58ac17490ef4d742dc98bb4cf60e"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/oauth2"
+  packages = [
+    ".",
+    "internal"
+  ]
+  revision = "d2e6202438beef2727060aa7cabdd924d92ebfd9"
+
+[[projects]]
+  name = "google.golang.org/appengine"
+  packages = [
+    "internal",
+    "internal/base",
+    "internal/datastore",
+    "internal/log",
+    "internal/remote_api",
+    "internal/urlfetch",
+    "urlfetch"
+  ]
+  revision = "b1f26356af11148e710935ed1ac8a7f5702c7612"
+  version = "v1.1.0"
 
 [[projects]]
   branch = "v1"
@@ -22,12 +66,15 @@
 [[projects]]
   branch = "v2"
   name = "gopkg.in/mgo.v2"
-  packages = ["bson","internal/json"]
+  packages = [
+    "bson",
+    "internal/json"
+  ]
   revision = "3f83fa5005286a7fe593b055f0d7771a7dce4655"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a2e168ae3653bc17f4b06167ac16b407cbd39d90d4eafbe99da6f91aebba9bc0"
+  inputs-digest = "17fe26a5f9993aaf59cc0cabd47687053a1bf678ef1771c03dfb051d152c1b8a"
   solver-name = "gps-cdcl"
   solver-version = 1

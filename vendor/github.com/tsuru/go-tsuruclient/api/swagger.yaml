@@ -1,0 +1,3687 @@
+---
+swagger: "2.0"
+info:
+  description: "Open source, extensible and Docker-based Platform as a Service (PaaS)"
+  version: "1.6"
+  title: "Tsuru"
+schemes:
+- "http"
+paths:
+  /1.0/services:
+    get:
+      tags:
+      - "service"
+      description: "List services"
+      operationId: "ServicesList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Services"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Service"
+        204:
+          description: "No content"
+      security:
+      - Bearer: []
+  /1.0/services/instances:
+    get:
+      tags:
+      - "service"
+      description: "List service instances"
+      operationId: "InstancesList"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "app"
+        in: "query"
+        description: "Filter instances by app name"
+        required: false
+        type: "string"
+        x-exportParamName: "App"
+      responses:
+        200:
+          description: "Service instances"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Service"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/services/{service}/instances/{instance}:
+    get:
+      tags:
+      - "service"
+      description: "Get service instance information"
+      operationId: "InstanceGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Service"
+      - name: "instance"
+        in: "path"
+        description: "Instance name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Instance"
+      responses:
+        200:
+          description: "Service instance"
+          schema:
+            $ref: "#/definitions/ServiceInstanceInfo"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Service instance not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    put:
+      tags:
+      - "service"
+      description: "Update a service instance"
+      operationId: "InstanceUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Service"
+      - name: "instance"
+        in: "path"
+        description: "Instance name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Instance"
+      - in: "body"
+        name: "updateData"
+        required: false
+        schema:
+          $ref: "#/definitions/ServiceInstanceUpdateData"
+        x-exportParamName: "UpdateData"
+      responses:
+        200:
+          description: "Service instance updated"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Service instance not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "service"
+      description: "Remove service instance"
+      operationId: "InstanceDelete"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "service"
+        in: "path"
+        description: "Service name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Service"
+      - name: "instance"
+        in: "path"
+        description: "Instance name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Instance"
+      - name: "unbindall"
+        in: "query"
+        description: "Remove current binds to this instance"
+        required: true
+        type: "boolean"
+        x-exportParamName: "Unbindall"
+      responses:
+        200:
+          description: "Service removed"
+        400:
+          description: "Bad request"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Service instance not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.7/brokers:
+    get:
+      tags:
+      - "service"
+      description: "List service brokers"
+      operationId: "ServiceBrokerList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "List service brokers"
+          schema:
+            $ref: "#/definitions/ServiceBrokerList"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "service"
+      description: "Create service broker"
+      operationId: "ServiceBrokerCreate"
+      consumes:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "broker"
+        required: true
+        schema:
+          $ref: "#/definitions/ServiceBroker"
+        x-exportParamName: "Broker"
+      responses:
+        200:
+          description: "Service Broker created."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Service Broker already exists."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.7/brokers/{name}:
+    put:
+      tags:
+      - "service"
+      description: "Update service broker"
+      operationId: "ServiceBrokerUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "name"
+        in: "path"
+        description: "Service Broker name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Name"
+      - in: "body"
+        name: "broker"
+        required: true
+        schema:
+          $ref: "#/definitions/ServiceBroker"
+        x-exportParamName: "Broker"
+      responses:
+        200:
+          description: "Service Broker updated."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Service Broker not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "service"
+      operationId: "ServiceBrokerDelete"
+      parameters:
+      - name: "name"
+        in: "path"
+        description: "Service Broker name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Name"
+      responses:
+        200:
+          description: "Service Broker deleted."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Service Broker not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/apps:
+    get:
+      tags:
+      - "app"
+      description: "List apps."
+      operationId: "AppList"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "locked"
+        in: "query"
+        description: "Filter applications by lock status."
+        required: false
+        type: "boolean"
+        x-exportParamName: "Locked"
+      - name: "name"
+        in: "query"
+        description: "Filter applications by name."
+        required: false
+        type: "string"
+        x-exportParamName: "Name"
+      - name: "owner"
+        in: "query"
+        description: "Filter applications by owner."
+        required: false
+        type: "string"
+        x-exportParamName: "Owner"
+      - name: "platform"
+        in: "query"
+        description: "Filter applications by platform."
+        required: false
+        type: "string"
+        x-exportParamName: "Platform"
+      - name: "pool"
+        in: "query"
+        description: "Filter applications by pool."
+        required: false
+        type: "string"
+        x-exportParamName: "Pool"
+      - name: "status"
+        in: "query"
+        description: "Filter applications by unit status."
+        required: false
+        type: "string"
+        x-exportParamName: "Status"
+      - name: "tag"
+        in: "query"
+        description: "Filter applications by tag."
+        required: false
+        type: "array"
+        items:
+          type: "string"
+        x-exportParamName: "Tag"
+      - name: "teamOwner"
+        in: "query"
+        description: "Filter applications by team owner."
+        required: false
+        type: "string"
+        x-exportParamName: "TeamOwner"
+      responses:
+        200:
+          description: "List apps"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/MiniApp"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "app"
+      description: "Create a new app."
+      operationId: "AppCreate"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "app"
+        required: true
+        schema:
+          $ref: "#/definitions/App"
+        x-exportParamName: "App"
+      responses:
+        201:
+          description: "App created"
+          schema:
+            $ref: "#/definitions/AppCreateResponse"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Quota exceeded"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "App already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/apps/{app}:
+    get:
+      tags:
+      - "app"
+      description: "Get info about a tsuru app."
+      operationId: "AppGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "app"
+        in: "path"
+        description: "Appname."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "App"
+      responses:
+        200:
+          description: "App info"
+          schema:
+            $ref: "#/definitions/App"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "App not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "app"
+      description: "Delete a tsuru app."
+      operationId: "AppDelete"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "app"
+        in: "path"
+        description: "App name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "App"
+      responses:
+        200:
+          description: "App removed."
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "App not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/apps/{app}/env:
+    get:
+      tags:
+      - "app"
+      description: "Get app environment variables."
+      operationId: "EnvGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "app"
+        in: "path"
+        description: "App name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "App"
+      - name: "env"
+        in: "query"
+        description: "Environment variable name."
+        required: false
+        type: "string"
+        x-exportParamName: "Env"
+      responses:
+        200:
+          description: "Environment variables"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Env"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "App not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "app"
+      description: "Set new environment variable."
+      operationId: "EnvSet"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "app"
+        in: "path"
+        description: "App name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "App"
+      - in: "body"
+        name: "envs"
+        description: "Environment variables."
+        required: true
+        schema:
+          $ref: "#/definitions/EnvSetData"
+        x-exportParamName: "Envs"
+      responses:
+        200:
+          description: "Envs updated"
+          schema:
+            $ref: "#/definitions/EnvSetResponse"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "App not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "app"
+      description: "Unset app environment variables."
+      operationId: "EnvUnset"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "app"
+        in: "path"
+        description: "App name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "App"
+      - name: "env"
+        in: "query"
+        required: true
+        type: "array"
+        items:
+          type: "string"
+        collectionFormat: "multi"
+        minItems: 1
+        x-exportParamName: "Env"
+      - name: "norestart"
+        in: "query"
+        required: true
+        type: "boolean"
+        x-exportParamName: "Norestart"
+      responses:
+        200:
+          description: "Envs deleted"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "App not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/platforms/{platform}:
+    put:
+      tags:
+      - "platform"
+      description: "Update platform."
+      operationId: "PlatformUpdate"
+      consumes:
+      - "multipart/form-data"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "platform"
+        in: "path"
+        description: "Platform name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Platform"
+      - name: "dockerfile_content"
+        in: "formData"
+        required: true
+        type: "file"
+        x-exportParamName: "DockerfileContent"
+      responses:
+        200:
+          description: "Platform updated"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "platform"
+      description: "Delete platform."
+      operationId: "PlatformDelete"
+      parameters:
+      - name: "platform"
+        in: "path"
+        description: "Platform name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Platform"
+      responses:
+        200:
+          description: "Platform removed"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/platforms:
+    get:
+      tags:
+      - "platform"
+      description: "List platforms."
+      operationId: "PlatformList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Platform list"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Platform"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "platform"
+      description: "Add new platform."
+      operationId: "PlatformAdd"
+      consumes:
+      - "multipart/form-data"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - name: "name"
+        in: "formData"
+        required: true
+        type: "string"
+        x-exportParamName: "Name"
+      - name: "dockerfile_content"
+        in: "formData"
+        required: true
+        type: "file"
+        x-exportParamName: "DockerfileContent"
+      responses:
+        200:
+          description: "Platform created"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/platforms/{platform}:
+    get:
+      tags:
+      - "platform"
+      description: "Platform info."
+      operationId: "PlatformInfo"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "platform"
+        in: "path"
+        description: "Platform info."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Platform"
+      responses:
+        200:
+          description: "Platform info"
+          schema:
+            $ref: "#/definitions/PlatformInfo"
+        204:
+          description: "No content."
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/teams:
+    get:
+      tags:
+      - "team"
+      description: "List teams."
+      operationId: "TeamsList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Team list."
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Team"
+        204:
+          description: "No content."
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "team"
+      description: "Create a team."
+      operationId: "TeamCreate"
+      consumes:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "teamData"
+        description: "Team name."
+        required: true
+        schema:
+          $ref: "#/definitions/teamData"
+        x-exportParamName: "TeamData"
+      responses:
+        201:
+          description: "Team created."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Team already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/teams/{team}:
+    delete:
+      tags:
+      - "team"
+      description: "Delete a team."
+      operationId: "TeamDelete"
+      parameters:
+      - name: "team"
+        in: "path"
+        description: "Team name."
+        required: true
+        type: "string"
+        x-exportParamName: "Team"
+      responses:
+        200:
+          description: "Team removed."
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Team not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.4/teams/{team}:
+    get:
+      tags:
+      - "team"
+      description: "Get a team."
+      operationId: "TeamGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "team"
+        in: "path"
+        description: "Team name."
+        required: true
+        type: "string"
+        x-exportParamName: "Team"
+      responses:
+        200:
+          description: "Team data"
+          schema:
+            $ref: "#/definitions/TeamInfo"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Team not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/teams/{team}:
+    put:
+      tags:
+      - "team"
+      description: "Update a team."
+      operationId: "TeamUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "team"
+        in: "path"
+        description: "Team name."
+        required: true
+        type: "string"
+        x-exportParamName: "Team"
+      - in: "body"
+        name: "updateData"
+        description: "Team update data."
+        required: true
+        schema:
+          $ref: "#/definitions/updateData"
+        x-exportParamName: "UpdateData"
+      responses:
+        200:
+          description: "Team updated"
+        400:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Team not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users:
+    get:
+      tags:
+      - "user"
+      description: "List users."
+      operationId: "UsersList"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "query"
+        required: true
+        type: "string"
+        x-exportParamName: "Email"
+      - name: "role"
+        in: "query"
+        required: false
+        type: "string"
+        x-exportParamName: "Role"
+      - name: "context"
+        in: "query"
+        required: false
+        type: "string"
+        x-exportParamName: "Context"
+      responses:
+        200:
+          description: "List users."
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/User"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "user"
+      description: "Create a new user."
+      operationId: "UserCreate"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - in: "body"
+        name: "UserData"
+        required: true
+        schema:
+          $ref: "#/definitions/UserData"
+        x-exportParamName: "UserData"
+      responses:
+        201:
+          description: "User created."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "User already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "user"
+      description: "Delete an user."
+      operationId: "UserDelete"
+      parameters:
+      - name: "email"
+        in: "query"
+        description: "User e-mail."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Email"
+      responses:
+        200:
+          description: "User removed"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/api-key:
+    get:
+      tags:
+      - "user"
+      description: "Show the API token of an user."
+      operationId: "APITokenGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "query"
+        required: true
+        type: "string"
+        x-exportParamName: "Email"
+      responses:
+        200:
+          description: "API TOKEN"
+          schema:
+            type: "string"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "User not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "user"
+      description: "Regenerate the API Token of an user."
+      operationId: "APITokenRegenerate"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "query"
+        required: true
+        type: "string"
+        x-exportParamName: "Email"
+      responses:
+        200:
+          description: "API TOKEN"
+          schema:
+            type: "string"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "User not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/keys:
+    get:
+      tags:
+      - "user"
+      description: "Show the list of the ssh keys of logged user."
+      operationId: "SSHKeyList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "OK"
+          schema:
+            $ref: "#/definitions/SSHKeyListResponse"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "user"
+      description: "Add SSH key to logged user."
+      operationId: "SSHKeyAdd"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "SSHKeyAddData"
+        required: true
+        schema:
+          $ref: "#/definitions/SSHKeyAddData"
+        x-exportParamName: "SSHKeyAddData"
+      responses:
+        200:
+          description: "Ok"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Key already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/keys/{key}:
+    delete:
+      tags:
+      - "user"
+      description: "Delete one ssh key of logged user."
+      operationId: "SSHKeyRemove"
+      parameters:
+      - name: "key"
+        in: "path"
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Key"
+      responses:
+        200:
+          description: "Ok"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/info:
+    get:
+      tags:
+      - "user"
+      description: "Get information on logged user."
+      operationId: "UserGet"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "OK"
+          schema:
+            $ref: "#/definitions/User"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/{email}/quota:
+    get:
+      tags:
+      - "user"
+      description: "Get quota of an user."
+      operationId: "UserQuotaGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "path"
+        description: "User e-mail."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Email"
+      responses:
+        200:
+          description: "OK"
+          schema:
+            $ref: "#/definitions/UserQuotaViewResponse"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "User not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    put:
+      tags:
+      - "user"
+      description: "Change quota of an user."
+      operationId: "UserQuotaChange"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "path"
+        description: "User e-mail."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Email"
+      - name: "limit"
+        in: "query"
+        description: "User new quota."
+        required: true
+        type: "integer"
+        x-exportParamName: "Limit"
+      responses:
+        200:
+          description: "Quota successfully updated"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "User not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/password:
+    put:
+      tags:
+      - "user"
+      description: "Change password of logged user."
+      operationId: "ChangePassword"
+      consumes:
+      - "application/x-www-form-urlencoded"
+      parameters:
+      - in: "body"
+        name: "ChangePasswordData"
+        required: true
+        schema:
+          $ref: "#/definitions/ChangePasswordData"
+        x-exportParamName: "ChangePasswordData"
+      responses:
+        200:
+          description: "Ok"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/{email}/password:
+    post:
+      tags:
+      - "user"
+      description: "Reset password of an user."
+      operationId: "ResetPassword"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "email"
+        in: "path"
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Email"
+      - in: "body"
+        name: "token"
+        required: true
+        schema:
+          type: "string"
+        x-exportParamName: "Token"
+      responses:
+        200:
+          description: "Ok"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Forbidden"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/users/tokens:
+    delete:
+      tags:
+      - "user"
+      description: "Logout."
+      operationId: "UserTokenDelete"
+      parameters: []
+      responses:
+        200:
+          description: "Ok"
+      security:
+      - Bearer: []
+  /1.2/node:
+    get:
+      tags:
+      - "node"
+      description: "List nodes."
+      operationId: "NodeList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Nodes List."
+          schema:
+            $ref: "#/definitions/NodeListResponse"
+        204:
+          description: "No content."
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "node"
+      description: "Add a node."
+      operationId: "NodeAdd"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/x-json-stream"
+      parameters:
+      - in: "body"
+        name: "nodeAddData"
+        required: true
+        schema:
+          $ref: "#/definitions/NodeAddData"
+        x-exportParamName: "NodeAddData"
+      responses:
+        201:
+          description: "Ok"
+        400:
+          description: "Invalid parameters"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    put:
+      tags:
+      - "node"
+      description: "Update node."
+      operationId: "NodeUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "nodeUpdateData"
+        required: true
+        schema:
+          $ref: "#/definitions/NodeUpdateData"
+        x-exportParamName: "NodeUpdateData"
+      responses:
+        200:
+          description: "Ok"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.2/node/{address}:
+    get:
+      tags:
+      - "node"
+      description: "Get node information."
+      operationId: "NodeGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "address"
+        in: "path"
+        description: "Node address."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Address"
+      responses:
+        200:
+          description: "Ok"
+          schema:
+            $ref: "#/definitions/NodeGetResponse"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "node"
+      description: "Remove node."
+      operationId: "NodeDelete"
+      parameters:
+      - name: "address"
+        in: "path"
+        description: "Node address."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Address"
+      - name: "no-rebalance"
+        in: "query"
+        description: "Trigger node rebalance."
+        required: true
+        type: "boolean"
+        x-exportParamName: "NoRebalance"
+      - name: "remove-iaas"
+        in: "query"
+        description: "Remove machine from IaaS."
+        required: true
+        type: "boolean"
+        x-exportParamName: "RemoveIaas"
+      responses:
+        200:
+          description: "Ok"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.4/volumes:
+    get:
+      tags:
+      - "volume"
+      description: "List volumes."
+      operationId: "VolumeList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "List volumes"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Volume"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "volume"
+      description: "Create volume."
+      operationId: "VolumeCreate"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "volumeData"
+        required: true
+        schema:
+          $ref: "#/definitions/Volume"
+        x-exportParamName: "VolumeData"
+      responses:
+        201:
+          description: "Volume created"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Volume already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.0/pools:
+    get:
+      tags:
+      - "pool"
+      description: "List pools."
+      operationId: "PoolList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Pools list"
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Pool"
+        204:
+          description: "No content"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "pool"
+      description: "Creates a pool."
+      operationId: "PoolCreate"
+      consumes:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "PoolCreateData"
+        required: true
+        schema:
+          $ref: "#/definitions/PoolCreateData"
+        x-exportParamName: "PoolCreateData"
+      responses:
+        201:
+          description: "Pool created"
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Pool already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /pools/{pool}:
+    put:
+      tags:
+      - "pool"
+      description: "Updates a pool."
+      operationId: "PoolUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "pool"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "Pool"
+      - in: "body"
+        name: "PoolUpdateData"
+        required: true
+        schema:
+          $ref: "#/definitions/PoolUpdateData"
+        x-exportParamName: "PoolUpdateData"
+      responses:
+        200:
+          description: "Pool updated"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Pool not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Default pool already defined"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "pool"
+      description: "Deletes a pool."
+      operationId: "PoolDelete"
+      parameters:
+      - name: "pool"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "Pool"
+      responses:
+        200:
+          description: "Pool deleted"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        403:
+          description: "Pool still has apps"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Pool not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.4/volumes/{volume}:
+    get:
+      tags:
+      - "volume"
+      description: "Get a volume."
+      operationId: "VolumeGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "volume"
+        in: "path"
+        description: "Volume name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Volume"
+      responses:
+        200:
+          description: "Volume"
+          schema:
+            $ref: "#/definitions/Volume"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Volume already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "volume"
+      description: "Delete volume."
+      operationId: "VolumeDelete"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "volume"
+        in: "path"
+        description: "Volume name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Volume"
+      responses:
+        200:
+          description: "Volume deleted"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Volume not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.4/volumes/{volume}/bind:
+    post:
+      tags:
+      - "volume"
+      description: "Bind volume."
+      operationId: "VolumeBind"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "volume"
+        in: "path"
+        description: "Volume name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Volume"
+      - in: "body"
+        name: "BindData"
+        required: false
+        schema:
+          $ref: "#/definitions/VolumeBindData"
+        x-exportParamName: "BindData"
+      responses:
+        200:
+          description: "Volume bind"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Volume not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Volume bind already exists"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "volume"
+      description: "Unbind volume."
+      operationId: "VolumeUnbind"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "volume"
+        in: "path"
+        description: "Volume name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Volume"
+      - in: "body"
+        name: "BindData"
+        required: false
+        schema:
+          $ref: "#/definitions/VolumeBindData"
+        x-exportParamName: "BindData"
+      responses:
+        200:
+          description: "Volume unbinded"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Volume not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.4/volumeplans:
+    get:
+      tags:
+      - "volume"
+      description: "List volume plans."
+      operationId: "VolumePlansList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Volume plans list"
+          schema:
+            $ref: "#/definitions/VolumePlansListResponse"
+        401:
+          description: "Unauthorized"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/roles/{role_name}/token:
+    post:
+      tags:
+      - "auth"
+      description: "Assigns a role to a team token."
+      operationId: "AssignRoleToToken"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "role_name"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "RoleName"
+      - in: "body"
+        name: "token"
+        required: true
+        schema:
+          $ref: "#/definitions/AssignTokenArgs"
+        x-exportParamName: "Token"
+      responses:
+        200:
+          description: "Role assigned."
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Role or token not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/roles/{role_name}/token/{token_id}:
+    delete:
+      tags:
+      - "auth"
+      description: "Dissociates a role from a team token."
+      operationId: "DissociateRoleFromToken"
+      parameters:
+      - name: "role_name"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "RoleName"
+      - name: "token_id"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "TokenId"
+      - name: "context"
+        in: "query"
+        required: true
+        type: "string"
+        x-exportParamName: "Context"
+      responses:
+        200:
+          description: "Role dissociated."
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Role or token not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/tokens:
+    get:
+      tags:
+      - "auth"
+      description: "List team tokens."
+      operationId: "TeamTokensList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Team tokens list."
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/TeamToken"
+        204:
+          description: "No content."
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "auth"
+      description: "Creates a team token."
+      operationId: "TeamTokenCreate"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "token"
+        required: true
+        schema:
+          $ref: "#/definitions/TeamTokenCreateArgs"
+        x-exportParamName: "Token"
+      responses:
+        201:
+          description: "Team token created."
+          schema:
+            $ref: "#/definitions/TeamToken"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Token with the same ID already exists."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/tokens/{token_id}:
+    put:
+      tags:
+      - "auth"
+      description: "Updates a team token."
+      operationId: "TeamTokenUpdate"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "token_id"
+        in: "path"
+        description: "Token ID."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "TokenId"
+      - in: "body"
+        name: "token"
+        required: true
+        schema:
+          $ref: "#/definitions/TeamTokenUpdateArgs"
+        x-exportParamName: "Token"
+      responses:
+        200:
+          description: "Team token updated."
+          schema:
+            $ref: "#/definitions/TeamToken"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Team token not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "auth"
+      description: "Deletes a team token."
+      operationId: "TeamTokenDelete"
+      parameters:
+      - name: "token_id"
+        in: "path"
+        description: "Token ID."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "TokenId"
+      responses:
+        200:
+          description: "Team token deleted."
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Team token not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.1/events/{eventid}/cancel:
+    post:
+      tags:
+      - "event"
+      operationId: "EventCancel"
+      consumes:
+      - "application/json"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "eventid"
+        in: "path"
+        required: true
+        type: "string"
+        x-exportParamName: "Eventid"
+      - in: "body"
+        name: "cancel"
+        required: true
+        schema:
+          $ref: "#/definitions/EventCancelArgs"
+        x-exportParamName: "Cancel"
+      responses:
+        204:
+          description: "Event cancelation requested."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Event not found"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/events/webhooks:
+    get:
+      tags:
+      - "event"
+      operationId: "WebhookList"
+      produces:
+      - "application/json"
+      parameters: []
+      responses:
+        200:
+          description: "Webhooks list."
+          schema:
+            type: "array"
+            items:
+              $ref: "#/definitions/Webhook"
+        204:
+          description: "No content."
+      security:
+      - Bearer: []
+    post:
+      tags:
+      - "event"
+      operationId: "WebhookCreate"
+      consumes:
+      - "application/json"
+      parameters:
+      - in: "body"
+        name: "webhook"
+        required: true
+        schema:
+          $ref: "#/definitions/Webhook"
+        x-exportParamName: "Webhook"
+      responses:
+        200:
+          description: "Webhook created."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        409:
+          description: "Webhook already exists."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+  /1.6/events/webhooks/{name}:
+    get:
+      tags:
+      - "event"
+      operationId: "WebhookGet"
+      produces:
+      - "application/json"
+      parameters:
+      - name: "name"
+        in: "path"
+        description: "Webhook name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Name"
+      responses:
+        200:
+          description: "Webhook."
+          schema:
+            $ref: "#/definitions/Webhook"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Not founds."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    put:
+      tags:
+      - "event"
+      operationId: "WebhookUpdate"
+      consumes:
+      - "application/json"
+      parameters:
+      - name: "name"
+        in: "path"
+        description: "Webhook name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Name"
+      - in: "body"
+        name: "webhook"
+        required: true
+        schema:
+          $ref: "#/definitions/Webhook"
+        x-exportParamName: "Webhook"
+      responses:
+        200:
+          description: "Webhook updated."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Webhook not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+    delete:
+      tags:
+      - "event"
+      operationId: "WebhookDelete"
+      parameters:
+      - name: "name"
+        in: "path"
+        description: "Webhook name."
+        required: true
+        type: "string"
+        minLength: 1
+        x-exportParamName: "Name"
+      responses:
+        200:
+          description: "Webhook created."
+        400:
+          description: "Invalid data"
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        401:
+          description: "Unauthorized."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+        404:
+          description: "Webhook not found."
+          schema:
+            $ref: "#/definitions/ErrorMessage"
+      security:
+      - Bearer: []
+securityDefinitions:
+  Bearer:
+    type: "apiKey"
+    name: "Authorization"
+    in: "header"
+definitions:
+  ErrorMessage:
+    type: "string"
+    description: "Error message."
+  Service:
+    type: "object"
+    properties:
+      service:
+        type: "string"
+      instances:
+        type: "array"
+        description: "[deprecated]"
+        items:
+          type: "string"
+      plans:
+        type: "array"
+        items:
+          type: "string"
+      service_instances:
+        type: "array"
+        items:
+          $ref: "#/definitions/ServiceInstance"
+    example:
+      instances:
+      - "instances"
+      - "instances"
+      service: "service"
+      plans:
+      - "plans"
+      - "plans"
+      service_instances:
+      - team_owner: "team_owner"
+        bound_units:
+        - app_name: "app_name"
+          ip: "ip"
+          id: "id"
+        - app_name: "app_name"
+          ip: "ip"
+          id: "id"
+        teams:
+        - "teams"
+        - "teams"
+        service_name: "service_name"
+        name: "name"
+        description: "description"
+        id: 0
+        plan_name: "plan_name"
+        tags:
+        - "tags"
+        - "tags"
+        apps:
+        - "apps"
+        - "apps"
+      - team_owner: "team_owner"
+        bound_units:
+        - app_name: "app_name"
+          ip: "ip"
+          id: "id"
+        - app_name: "app_name"
+          ip: "ip"
+          id: "id"
+        teams:
+        - "teams"
+        - "teams"
+        service_name: "service_name"
+        name: "name"
+        description: "description"
+        id: 0
+        plan_name: "plan_name"
+        tags:
+        - "tags"
+        - "tags"
+        apps:
+        - "apps"
+        - "apps"
+  ServiceInstance:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      id:
+        type: "integer"
+      service_name:
+        type: "string"
+      plan_name:
+        type: "string"
+      apps:
+        type: "array"
+        items:
+          type: "string"
+      bound_units:
+        type: "array"
+        items:
+          $ref: "#/definitions/ServiceInstanceBoundUnit"
+      teams:
+        type: "array"
+        items:
+          type: "string"
+      team_owner:
+        type: "string"
+      description:
+        type: "string"
+    example:
+      team_owner: "team_owner"
+      bound_units:
+      - app_name: "app_name"
+        ip: "ip"
+        id: "id"
+      - app_name: "app_name"
+        ip: "ip"
+        id: "id"
+      teams:
+      - "teams"
+      - "teams"
+      service_name: "service_name"
+      name: "name"
+      description: "description"
+      id: 0
+      plan_name: "plan_name"
+      tags:
+      - "tags"
+      - "tags"
+      apps:
+      - "apps"
+      - "apps"
+  ServiceInstanceBoundUnit:
+    type: "object"
+    properties:
+      app_name:
+        type: "string"
+      id:
+        type: "string"
+      ip:
+        type: "string"
+    example:
+      app_name: "app_name"
+      ip: "ip"
+      id: "id"
+  ServiceInstanceInfo:
+    type: "object"
+    properties:
+      apps:
+        type: "array"
+        items:
+          type: "string"
+      teams:
+        type: "array"
+        items:
+          type: "string"
+      teamowner:
+        type: "string"
+      description:
+        type: "string"
+      planname:
+        type: "string"
+      plandescription:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      custominfo:
+        type: "object"
+        additionalProperties:
+          type: "string"
+    example:
+      teams:
+      - "teams"
+      - "teams"
+      planname: "planname"
+      description: "description"
+      plandescription: "plandescription"
+      custominfo:
+        key: "custominfo"
+      apps:
+      - "apps"
+      - "apps"
+      teamowner: "teamowner"
+      tags:
+      - "tags"
+      - "tags"
+  ServiceInstanceUpdateData:
+    type: "object"
+    properties:
+      description:
+        type: "string"
+      teamowner:
+        type: "string"
+      plan:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+    example:
+      description: "description"
+      plan: "plan"
+      teamowner: "teamowner"
+      tags:
+      - "tags"
+      - "tags"
+  Pool:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      default:
+        type: "boolean"
+      provisioner:
+        type: "string"
+    example:
+      default: true
+      provisioner: "provisioner"
+      name: "name"
+  PoolCreateData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      public:
+        type: "boolean"
+      default:
+        type: "boolean"
+      force:
+        type: "boolean"
+      provisioner:
+        type: "string"
+    example:
+      default: true
+      provisioner: "provisioner"
+      public: true
+      name: "name"
+      force: true
+  PoolUpdateData:
+    type: "object"
+    properties:
+      default:
+        type: "boolean"
+      public:
+        type: "boolean"
+      force:
+        type: "boolean"
+    example:
+      default: true
+      public: true
+      force: true
+  NodeUpdateData:
+    type: "object"
+    properties:
+      address:
+        type: "string"
+      pool:
+        type: "string"
+      metadata:
+        type: "object"
+        additionalProperties:
+          type: "string"
+      enable:
+        type: "boolean"
+      disable:
+        type: "boolean"
+    example:
+      metadata:
+        key: "metadata"
+      address: "address"
+      enable: true
+      disable: true
+      pool: "pool"
+  NodeAddData:
+    type: "object"
+    properties:
+      address:
+        type: "string"
+      cacert:
+        type: "string"
+        description: "Docker API CA certificate."
+      clientcert:
+        type: "string"
+        description: "Docker API client certificate."
+      clientkey:
+        type: "string"
+        description: "Docker API client key."
+      register:
+        type: "boolean"
+        description: "Register an existing node."
+      waitto:
+        type: "integer"
+        format: "int64"
+        description: "Timeout in nanoseconds."
+      metadata:
+        type: "object"
+        additionalProperties:
+          type: "string"
+    example:
+      metadata:
+        key: "metadata"
+      address: "address"
+      clientcert: "clientcert"
+      clientkey: "clientkey"
+      cacert: "cacert"
+      waitto: 0
+      register: true
+  NodeGetResponse:
+    type: "object"
+    properties:
+      node:
+        $ref: "#/definitions/Node"
+      status:
+        $ref: "#/definitions/NodeStatus"
+      units:
+        $ref: "#/definitions/Unit"
+    example:
+      node:
+        provisioner: "provisioner"
+        metadata:
+          key: "metadata"
+        address: "address"
+        iaasid: "iaasid"
+        pool: "pool"
+        status: "status"
+      units:
+        address:
+          scheme: "scheme"
+          host: "host"
+        appname: "appname"
+        processname: "processname"
+        ip: "ip"
+        name: "name"
+        id: "id"
+        type: "type"
+        status: "status"
+      status:
+        address: "address"
+        checks:
+        - checks:
+          - err: "err"
+            name: "name"
+            successful: true
+          - err: "err"
+            name: "name"
+            successful: true
+          time: "2000-01-23T04:56:07.000+00:00"
+        - checks:
+          - err: "err"
+            name: "name"
+            successful: true
+          - err: "err"
+            name: "name"
+            successful: true
+          time: "2000-01-23T04:56:07.000+00:00"
+        lastsuccess: "2000-01-23T04:56:07.000+00:00"
+        lastupdate: "2000-01-23T04:56:07.000+00:00"
+  NodeListResponse:
+    type: "object"
+    properties:
+      nodes:
+        type: "array"
+        items:
+          $ref: "#/definitions/Node"
+      machines:
+        type: "array"
+        items:
+          $ref: "#/definitions/Machine"
+    example:
+      nodes:
+      - provisioner: "provisioner"
+        metadata:
+          key: "metadata"
+        address: "address"
+        iaasid: "iaasid"
+        pool: "pool"
+        status: "status"
+      - provisioner: "provisioner"
+        metadata:
+          key: "metadata"
+        address: "address"
+        iaasid: "iaasid"
+        pool: "pool"
+        status: "status"
+      machines:
+      - protocol: "protocol"
+        address: "address"
+        port: 0
+        creationparams:
+          key: "creationparams"
+        id: "id"
+        iaas: "iaas"
+      - protocol: "protocol"
+        address: "address"
+        port: 0
+        creationparams:
+          key: "creationparams"
+        id: "id"
+        iaas: "iaas"
+  Node:
+    type: "object"
+    properties:
+      address:
+        type: "string"
+      iaasid:
+        type: "string"
+      status:
+        type: "string"
+      pool:
+        type: "string"
+      provisioner:
+        type: "string"
+      metadata:
+        type: "object"
+        additionalProperties:
+          type: "string"
+    example:
+      provisioner: "provisioner"
+      metadata:
+        key: "metadata"
+      address: "address"
+      iaasid: "iaasid"
+      pool: "pool"
+      status: "status"
+  NodeStatus:
+    type: "object"
+    properties:
+      address:
+        type: "string"
+      checks:
+        type: "array"
+        items:
+          $ref: "#/definitions/NodeCheck"
+      lastsuccess:
+        type: "string"
+        format: "date-time"
+      lastupdate:
+        type: "string"
+        format: "date-time"
+    example:
+      address: "address"
+      checks:
+      - checks:
+        - err: "err"
+          name: "name"
+          successful: true
+        - err: "err"
+          name: "name"
+          successful: true
+        time: "2000-01-23T04:56:07.000+00:00"
+      - checks:
+        - err: "err"
+          name: "name"
+          successful: true
+        - err: "err"
+          name: "name"
+          successful: true
+        time: "2000-01-23T04:56:07.000+00:00"
+      lastsuccess: "2000-01-23T04:56:07.000+00:00"
+      lastupdate: "2000-01-23T04:56:07.000+00:00"
+  NodeCheck:
+    type: "object"
+    properties:
+      time:
+        type: "string"
+        format: "date-time"
+      checks:
+        type: "array"
+        items:
+          $ref: "#/definitions/NodeCheckResult"
+    example:
+      checks:
+      - err: "err"
+        name: "name"
+        successful: true
+      - err: "err"
+        name: "name"
+        successful: true
+      time: "2000-01-23T04:56:07.000+00:00"
+  NodeCheckResult:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      err:
+        type: "string"
+      successful:
+        type: "boolean"
+    example:
+      err: "err"
+      name: "name"
+      successful: true
+  Machine:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      iaas:
+        type: "string"
+      address:
+        type: "string"
+      port:
+        type: "integer"
+      protocol:
+        type: "string"
+      creationparams:
+        type: "object"
+        additionalProperties:
+          type: "string"
+    example:
+      protocol: "protocol"
+      address: "address"
+      port: 0
+      creationparams:
+        key: "creationparams"
+      id: "id"
+      iaas: "iaas"
+  RoleUser:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      contexttype:
+        type: "string"
+      contextvalue:
+        type: "string"
+    description: "Role of an user."
+    example:
+      contexttype: "contexttype"
+      name: "name"
+      contextvalue: "contextvalue"
+  PermissionUser:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      contexttype:
+        type: "string"
+      contextvalue:
+        type: "string"
+    description: "Permission of an user."
+    example:
+      contexttype: "contexttype"
+      name: "name"
+      contextvalue: "contextvalue"
+  User:
+    type: "object"
+    properties:
+      email:
+        type: "string"
+      roles:
+        type: "array"
+        items:
+          $ref: "#/definitions/RoleUser"
+      permissions:
+        type: "array"
+        items:
+          $ref: "#/definitions/PermissionUser"
+    description: "User object."
+    example:
+      permissions:
+      - contexttype: "contexttype"
+        name: "name"
+        contextvalue: "contextvalue"
+      - contexttype: "contexttype"
+        name: "name"
+        contextvalue: "contextvalue"
+      roles:
+      - contexttype: "contexttype"
+        name: "name"
+        contextvalue: "contextvalue"
+      - contexttype: "contexttype"
+        name: "name"
+        contextvalue: "contextvalue"
+      email: "email"
+  SSHKeyListResponse:
+    type: "object"
+    properties:
+      keyname:
+        type: "string"
+        description: "keyvalue"
+    description: "Response returned by User SSH Key List."
+    example:
+      keyname: "keyname"
+  UserData:
+    type: "object"
+    properties:
+      email:
+        type: "string"
+      password:
+        type: "string"
+    example:
+      password: "password"
+      email: "email"
+  ChangePasswordData:
+    type: "object"
+    properties:
+      confirm:
+        type: "string"
+      new:
+        type: "string"
+      old:
+        type: "string"
+  SSHKeyAddData:
+    type: "object"
+    properties:
+      force:
+        type: "boolean"
+      key:
+        type: "string"
+      keyname:
+        type: "string"
+  UserQuotaViewResponse:
+    type: "object"
+    properties:
+      inuse:
+        type: "integer"
+      limit:
+        type: "integer"
+    description: "Response returned by User Quota View."
+    example:
+      limit: 6
+      inuse: 0
+  VolumePlansListResponse:
+    type: "object"
+    description: "Response returned by Volume Plans list."
+    additionalProperties:
+      $ref: "#/definitions/VolumePlan"
+  Volume:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+        description: "Volume name."
+      pool:
+        type: "string"
+        description: "Volume pool."
+      teamOwner:
+        type: "string"
+        description: "Team that owns the volume."
+      status:
+        type: "string"
+        description: "Volume status."
+      plan:
+        description: "Volume plan."
+        $ref: "#/definitions/VolumePlan"
+      binds:
+        type: "array"
+        description: "Volume binds."
+        items:
+          $ref: "#/definitions/VolumeBind"
+      opts:
+        type: "object"
+        description: "Custom volume options."
+        additionalProperties:
+          type: "string"
+    description: "Volume"
+    example:
+      teamOwner: "teamOwner"
+      binds:
+      - readonly: true
+        id:
+          app: "app"
+          volume: "volume"
+          mountpoint: "mountpoint"
+      - readonly: true
+        id:
+          app: "app"
+          volume: "volume"
+          mountpoint: "mountpoint"
+      opts:
+        key: "opts"
+      name: "name"
+      pool: "pool"
+      plan:
+        opts:
+          key: "opts"
+        name: "name"
+      status: "status"
+  VolumePlan:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+        description: "Volume plan name."
+      opts:
+        type: "object"
+        description: "Volume plan opts."
+        additionalProperties:
+          type: "string"
+    description: "Volume plan."
+    example:
+      opts:
+        key: "opts"
+      name: "name"
+  VolumeBind:
+    type: "object"
+    properties:
+      id:
+        description: "Volume bind ID."
+        $ref: "#/definitions/VolumeBindID"
+      readonly:
+        type: "boolean"
+        description: "Volume is read-only."
+    example:
+      readonly: true
+      id:
+        app: "app"
+        volume: "volume"
+        mountpoint: "mountpoint"
+  VolumeBindID:
+    type: "object"
+    properties:
+      app:
+        type: "string"
+        description: "App the volume is bound to."
+      mountpoint:
+        type: "string"
+        description: "Volume mountpoint."
+      volume:
+        type: "string"
+        description: "Volume name."
+    example:
+      app: "app"
+      volume: "volume"
+      mountpoint: "mountpoint"
+  VolumeBindData:
+    type: "object"
+    properties:
+      mountpoint:
+        type: "string"
+      norestart:
+        type: "boolean"
+      readonly:
+        type: "boolean"
+    example:
+      readonly: true
+      norestart: true
+      mountpoint: "mountpoint"
+  App:
+    type: "object"
+    required:
+    - "name"
+    properties:
+      name:
+        type: "string"
+        description: "App name."
+      tag:
+        type: "array"
+        description: "App tags."
+        items:
+          type: "string"
+      router:
+        type: "string"
+        description: "App router."
+      routeropts:
+        type: "object"
+        description: "Custom router options."
+        additionalProperties:
+          type: "string"
+      plan:
+        type: "string"
+        description: "App plan."
+      pool:
+        type: "string"
+        description: "App pool."
+      platform:
+        type: "string"
+        description: "App platform."
+      description:
+        type: "string"
+        description: "App description."
+      teamOwner:
+        type: "string"
+        description: "Team that owns the app."
+    description: "Tsuru app."
+    example:
+      teamOwner: "teamOwner"
+      router: "router"
+      name: "name"
+      pool: "pool"
+      routeropts:
+        key: "routeropts"
+      description: "description"
+      tag:
+      - "tag"
+      - "tag"
+      plan: "plan"
+      platform: "platform"
+  AppCreateResponse:
+    type: "object"
+    properties:
+      status:
+        type: "string"
+      repository_url:
+        type: "string"
+      ip:
+        type: "string"
+    description: "Newly created app information."
+    example:
+      ip: "ip"
+      repository_url: "repository_url"
+      status: "status"
+  MiniApp:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      pool:
+        type: "string"
+      teamOwner:
+        type: "string"
+      plan:
+        $ref: "#/definitions/Plan"
+      units:
+        type: "array"
+        items:
+          $ref: "#/definitions/Unit"
+      cname:
+        type: "array"
+        items:
+          type: "string"
+      ip:
+        type: "string"
+      routers:
+        type: "array"
+        items:
+          $ref: "#/definitions/Router"
+      lock:
+        $ref: "#/definitions/Lock"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      error:
+        type: "string"
+    description: "List containing minimal information about apps."
+    example:
+      teamOwner: "teamOwner"
+      ip: "ip"
+      name: "name"
+      pool: "pool"
+      cname:
+      - "cname"
+      - "cname"
+      lock:
+        owner: "owner"
+        reason: "reason"
+        acquireDate: "acquireDate"
+        locked: true
+      units:
+      - address:
+          scheme: "scheme"
+          host: "host"
+        appname: "appname"
+        processname: "processname"
+        ip: "ip"
+        name: "name"
+        id: "id"
+        type: "type"
+        status: "status"
+      - address:
+          scheme: "scheme"
+          host: "host"
+        appname: "appname"
+        processname: "processname"
+        ip: "ip"
+        name: "name"
+        id: "id"
+        type: "type"
+        status: "status"
+      error: "error"
+      plan:
+        default: true
+        memory: 0
+        swap: 0
+        name: "name"
+        cpushare: 0
+      routers:
+      - opts:
+          key: "opts"
+        status-detail: "status-detail"
+        name: "name"
+        addres: "addres"
+        type: "type"
+        status: "status"
+      - opts:
+          key: "opts"
+        status-detail: "status-detail"
+        name: "name"
+        addres: "addres"
+        type: "type"
+        status: "status"
+      tags:
+      - "tags"
+      - "tags"
+  Plan:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      memory:
+        type: "integer"
+        format: "int64"
+        minimum: 0
+      swap:
+        type: "integer"
+        format: "int64"
+        minimum: 0
+      cpushare:
+        type: "integer"
+        minimum: 0
+      default:
+        type: "boolean"
+    description: "App plan."
+    example:
+      default: true
+      memory: 0
+      swap: 0
+      name: "name"
+      cpushare: 0
+  Env:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      value:
+        type: "string"
+    description: "Environment variable."
+    example:
+      name: "name"
+      value: "value"
+  EnvSetData:
+    type: "object"
+    properties:
+      envs:
+        type: "array"
+        items:
+          $ref: "#/definitions/Env"
+        minItems: 1
+      norestart:
+        type: "boolean"
+      private:
+        type: "boolean"
+    description: "Data sent to the environment set endpoint."
+    example:
+      private: true
+      envs:
+      - name: "name"
+        value: "value"
+      - name: "name"
+        value: "value"
+      norestart: true
+  EnvSetResponse:
+    type: "array"
+    description: "Environment variables response information."
+    items:
+      $ref: "#/definitions/EnvSetResponse_inner"
+  Unit:
+    type: "object"
+    properties:
+      id:
+        type: "string"
+      name:
+        type: "string"
+      appname:
+        type: "string"
+      processname:
+        type: "string"
+      type:
+        type: "string"
+      ip:
+        type: "string"
+      status:
+        type: "string"
+      address:
+        $ref: "#/definitions/URL"
+    example:
+      address:
+        scheme: "scheme"
+        host: "host"
+      appname: "appname"
+      processname: "processname"
+      ip: "ip"
+      name: "name"
+      id: "id"
+      type: "type"
+      status: "status"
+  Router:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      opts:
+        type: "object"
+        additionalProperties:
+          type: "string"
+      addres:
+        type: "string"
+      type:
+        type: "string"
+      status:
+        type: "string"
+      status-detail:
+        type: "string"
+    example:
+      opts:
+        key: "opts"
+      status-detail: "status-detail"
+      name: "name"
+      addres: "addres"
+      type: "type"
+      status: "status"
+  Lock:
+    type: "object"
+    properties:
+      locked:
+        type: "boolean"
+      reason:
+        type: "string"
+      owner:
+        type: "string"
+      acquireDate:
+        type: "string"
+    example:
+      owner: "owner"
+      reason: "reason"
+      acquireDate: "acquireDate"
+      locked: true
+  URL:
+    type: "object"
+    properties:
+      scheme:
+        type: "string"
+      host:
+        type: "string"
+    example:
+      scheme: "scheme"
+      host: "host"
+  Team:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      permissions:
+        type: "array"
+        items:
+          type: "string"
+    example:
+      permissions:
+      - "permissions"
+      - "permissions"
+      name: "name"
+      tags:
+      - "tags"
+      - "tags"
+  TeamInfo:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+      users:
+        type: "array"
+        items:
+          $ref: "#/definitions/User"
+      pools:
+        type: "array"
+        items:
+          $ref: "#/definitions/Pool"
+      apps:
+        type: "array"
+        items:
+          $ref: "#/definitions/App"
+    example:
+      name: "name"
+      pools:
+      - default: true
+        provisioner: "provisioner"
+        name: "name"
+      - default: true
+        provisioner: "provisioner"
+        name: "name"
+      users:
+      - permissions:
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        roles:
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        email: "email"
+      - permissions:
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        roles:
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        - contexttype: "contexttype"
+          name: "name"
+          contextvalue: "contextvalue"
+        email: "email"
+      tags:
+      - "tags"
+      - "tags"
+      apps:
+      - teamOwner: "teamOwner"
+        router: "router"
+        name: "name"
+        pool: "pool"
+        routeropts:
+          key: "routeropts"
+        description: "description"
+        tag:
+        - "tag"
+        - "tag"
+        plan: "plan"
+        platform: "platform"
+      - teamOwner: "teamOwner"
+        router: "router"
+        name: "name"
+        pool: "pool"
+        routeropts:
+          key: "routeropts"
+        description: "description"
+        tag:
+        - "tag"
+        - "tag"
+        plan: "plan"
+        platform: "platform"
+  TeamTokenUpdateArgs:
+    properties:
+      regenerate:
+        type: "boolean"
+      description:
+        type: "string"
+      expires_in:
+        type: "integer"
+        format: "int64"
+        description: "Expire time in seconds, using a negative value removes the expiration."
+    description: "Arguments for updating an existing team token."
+    example:
+      regenerate: true
+      description: "description"
+      expires_in: 0
+  TeamTokenCreateArgs:
+    type: "object"
+    properties:
+      token_id:
+        type: "string"
+      description:
+        type: "string"
+      expires_in:
+        type: "integer"
+        format: "int64"
+        description: "Expire time in seconds."
+      team:
+        type: "string"
+    description: "Arguments for creating a new team token."
+    example:
+      token_id: "token_id"
+      description: "description"
+      team: "team"
+      expires_in: 0
+  TeamToken:
+    type: "object"
+    properties:
+      token:
+        type: "string"
+      token_id:
+        type: "string"
+      description:
+        type: "string"
+      created_at:
+        type: "string"
+        format: "date-time"
+      expires_at:
+        type: "string"
+        format: "date-time"
+      last_access:
+        type: "string"
+        format: "date-time"
+      creator_email:
+        type: "string"
+      team:
+        type: "string"
+      roles:
+        type: "array"
+        items:
+          $ref: "#/definitions/RoleInstance"
+    description: "An authorization token associated to a team."
+    example:
+      last_access: "2000-01-23T04:56:07.000+00:00"
+      expires_at: "2000-01-23T04:56:07.000+00:00"
+      token_id: "token_id"
+      creator_email: "creator_email"
+      roles:
+      - name: "name"
+        contextvalue: "contextvalue"
+      - name: "name"
+        contextvalue: "contextvalue"
+      description: "description"
+      created_at: "2000-01-23T04:56:07.000+00:00"
+      team: "team"
+      token: "token"
+  RoleInstance:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      contextvalue:
+        type: "string"
+    description: "Association between a role and a context value."
+    example:
+      name: "name"
+      contextvalue: "contextvalue"
+  AssignTokenArgs:
+    type: "object"
+    properties:
+      token_id:
+        type: "string"
+      context:
+        type: "string"
+    description: "Assign role to token arguments."
+    example:
+      token_id: "token_id"
+      context: "context"
+  Platform:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      disabled:
+        type: "boolean"
+    example:
+      name: "name"
+      disabled: true
+  PlatformInfo:
+    type: "object"
+    properties:
+      platform:
+        $ref: "#/definitions/Platform"
+      images:
+        type: "array"
+        items:
+          type: "string"
+    example:
+      images:
+      - "images"
+      - "images"
+      platform:
+        name: "name"
+        disabled: true
+  EventCancelArgs:
+    type: "object"
+    properties:
+      reason:
+        type: "string"
+    example:
+      reason: "reason"
+  Webhook:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      description:
+        type: "string"
+      team_owner:
+        type: "string"
+      event_filter:
+        $ref: "#/definitions/WebhookEventFilter"
+      url:
+        type: "string"
+      proxy_url:
+        type: "string"
+      headers:
+        type: "object"
+        additionalProperties:
+          type: "array"
+          items:
+            type: "string"
+      method:
+        type: "string"
+      body:
+        type: "string"
+      insecure:
+        type: "boolean"
+    example:
+      team_owner: "team_owner"
+      headers:
+        key:
+        - "headers"
+        - "headers"
+      method: "method"
+      name: "name"
+      insecure: true
+      description: "description"
+      proxy_url: "proxy_url"
+      body: "body"
+      event_filter:
+        target_values:
+        - "target_values"
+        - "target_values"
+        kind_names:
+        - "kind_names"
+        - "kind_names"
+        kind_types:
+        - "kind_types"
+        - "kind_types"
+        error_only: true
+        success_only: true
+        target_types:
+        - "target_types"
+        - "target_types"
+      url: "url"
+  WebhookEventFilter:
+    type: "object"
+    properties:
+      target_types:
+        type: "array"
+        items:
+          type: "string"
+      target_values:
+        type: "array"
+        items:
+          type: "string"
+      kind_types:
+        type: "array"
+        items:
+          type: "string"
+      kind_names:
+        type: "array"
+        items:
+          type: "string"
+      error_only:
+        type: "boolean"
+      success_only:
+        type: "boolean"
+    example:
+      target_values:
+      - "target_values"
+      - "target_values"
+      kind_names:
+      - "kind_names"
+      - "kind_names"
+      kind_types:
+      - "kind_types"
+      - "kind_types"
+      error_only: true
+      success_only: true
+      target_types:
+      - "target_types"
+      - "target_types"
+  ServiceBrokerList:
+    type: "object"
+    properties:
+      brokers:
+        type: "array"
+        items:
+          $ref: "#/definitions/ServiceBroker"
+    example:
+      brokers:
+      - Config:
+          Context:
+            key: "Context"
+          Insecure: true
+          CacheExpirationSeconds: 0
+          AuthConfig:
+            BearerConfig:
+              token: "token"
+            BasicAuthConfig:
+              password: "password"
+              username: "username"
+        URL: "URL"
+        Name: "Name"
+      - Config:
+          Context:
+            key: "Context"
+          Insecure: true
+          CacheExpirationSeconds: 0
+          AuthConfig:
+            BearerConfig:
+              token: "token"
+            BasicAuthConfig:
+              password: "password"
+              username: "username"
+        URL: "URL"
+        Name: "Name"
+  ServiceBroker:
+    type: "object"
+    properties:
+      Name:
+        type: "string"
+      URL:
+        type: "string"
+      Config:
+        $ref: "#/definitions/ServiceBroker_Config"
+    example:
+      Config:
+        Context:
+          key: "Context"
+        Insecure: true
+        CacheExpirationSeconds: 0
+        AuthConfig:
+          BearerConfig:
+            token: "token"
+          BasicAuthConfig:
+            password: "password"
+            username: "username"
+      URL: "URL"
+      Name: "Name"
+  teamData:
+    type: "object"
+    properties:
+      name:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+  updateData:
+    type: "object"
+    properties:
+      newname:
+        type: "string"
+      tags:
+        type: "array"
+        items:
+          type: "string"
+  EnvSetResponse_inner:
+    properties:
+      name:
+        type: "string"
+      value:
+        type: "string"
+      public:
+        type: "boolean"
+  ServiceBroker_Config_AuthConfig_BasicAuthConfig:
+    properties:
+      username:
+        type: "string"
+      password:
+        type: "string"
+    example:
+      password: "password"
+      username: "username"
+  ServiceBroker_Config_AuthConfig_BearerConfig:
+    properties:
+      token:
+        type: "string"
+    example:
+      token: "token"
+  ServiceBroker_Config_AuthConfig:
+    properties:
+      BasicAuthConfig:
+        $ref: "#/definitions/ServiceBroker_Config_AuthConfig_BasicAuthConfig"
+      BearerConfig:
+        $ref: "#/definitions/ServiceBroker_Config_AuthConfig_BearerConfig"
+    example:
+      BearerConfig:
+        token: "token"
+      BasicAuthConfig:
+        password: "password"
+        username: "username"
+  ServiceBroker_Config:
+    properties:
+      Insecure:
+        type: "boolean"
+      Context:
+        type: "object"
+        additionalProperties:
+          type: "string"
+      AuthConfig:
+        $ref: "#/definitions/ServiceBroker_Config_AuthConfig"
+      CacheExpirationSeconds:
+        type: "integer"
+    example:
+      Context:
+        key: "Context"
+      Insecure: true
+      CacheExpirationSeconds: 0
+      AuthConfig:
+        BearerConfig:
+          token: "token"
+        BasicAuthConfig:
+          password: "password"
+          username: "username"
