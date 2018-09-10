@@ -188,7 +188,7 @@ func (op *poolOperation) properties() map[string]interface{} {
 
 	return map[string]interface{}{
 		"provisioner": pool.Provisioner,
-		"default":     strconv.FormatBool(pool.Default),
+		"default":     strconv.FormatBool(pool.Default_),
 		"public":      strconv.FormatBool(pool.Public),
 		"teams":       pool.Teams,
 	}

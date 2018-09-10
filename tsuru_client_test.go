@@ -164,8 +164,8 @@ func (s *S) TestAppInfoNotFound(c *check.C) {
 func (s *S) TestPoolList(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/pools")
-		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+		c.Assert(r.URL.Path, check.Equals, "/1.0/pools")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
 
 		p1 := pool{Name: "pool1"}
 		p2 := pool{Name: "pool2"}
@@ -186,6 +186,7 @@ func (s *S) TestPoolList(c *check.C) {
 
 func (s *S) TestPoolListError(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.URL.Path, check.Equals, "/1.0/pools")
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer server.Close()

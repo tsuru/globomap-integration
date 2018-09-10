@@ -45,7 +45,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 			}
 		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
-		case "/pools":
+		case "/1.0/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -150,7 +150,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		case "/1.0/apps/myapp2":
 			atomic.AddInt32(&requestAppInfo2, 1)
 			json.NewEncoder(w).Encode(app{Name: "myapp2", Pool: "pool1"})
-		case "/pools":
+		case "/1.0/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -369,11 +369,11 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/pools":
+		case "/1.0/pools":
 			p := pool{
 				Name:        "pool1",
 				Provisioner: "docker",
-				Default:     false,
+				Default_:    false,
 				Public:      true,
 				Teams:       []string{"team1", "team2", "team3"},
 			}
@@ -448,18 +448,18 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 				json.NewEncoder(w).Encode([]event{e4})
 			}
-		case "/pools":
+		case "/1.0/pools":
 			p1 := pool{
 				Name:        "pool1",
 				Provisioner: "docker",
-				Default:     false,
+				Default_:    false,
 				Public:      true,
 				Teams:       []string{"team1", "team2", "team3"},
 			}
 			p2 := pool{
 				Name:        "pool2",
 				Provisioner: "swarm",
-				Default:     false,
+				Default_:    false,
 				Public:      false,
 				Teams:       []string{"team1"},
 			}
@@ -589,11 +589,11 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/pools":
+		case "/1.0/pools":
 			p1 := pool{
 				Name:        "pool1",
 				Provisioner: "docker",
-				Default:     false,
+				Default_:    false,
 				Public:      true,
 				Teams:       []string{"team1", "team2", "team3"},
 			}

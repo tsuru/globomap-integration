@@ -33,7 +33,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			atomic.AddInt32(&requestAppInfo2, 1)
 			a2.Description = "my second app"
 			json.NewEncoder(w).Encode(a2)
-		case "/pools":
+		case "/1.0/pools":
 			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
 		case "/1.2/node":
 			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}

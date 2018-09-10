@@ -29,7 +29,7 @@
   branch = "master"
   name = "github.com/tsuru/go-tsuruclient"
   packages = ["pkg/tsuru"]
-  revision = "48b7362ac10fd33402292c9c5fb4666aa7f33650"
+  revision = "ebfa459262a2f7cb828d6c7543a452f02d60a828"
 
 [[projects]]
   name = "github.com/tsuru/tsuru"

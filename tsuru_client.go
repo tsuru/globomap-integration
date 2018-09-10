@@ -26,13 +26,7 @@ type tsuruClient struct {
 
 type app tsuru.App
 
-type pool struct {
-	Name        string
-	Provisioner string
-	Default     bool
-	Public      bool
-	Teams       []string
-}
+type pool tsuru.Pool
 
 type node tsuru.Node
 
@@ -125,23 +119,14 @@ func (t *tsuruClient) AppInfo(name string) (*app, error) {
 }
 
 func (t *tsuruClient) PoolList() ([]pool, error) {
-	path := "/pools"
-	resp, err := t.doRequest(path)
+	poolList, _, err := t.apiClient().PoolApi.PoolList(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New(resp.Status)
+	pools := make([]pool, len(poolList))
+	for i := range poolList {
+		pools[i] = pool(poolList[i])
 	}
-
-	var pools []pool
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&pools)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	return pools, nil
 }
 
