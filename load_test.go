@@ -22,7 +22,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		a1 := app{Name: "myapp1", Pool: "pool1"}
 		a2 := app{Name: "myapp2", Pool: "pool1"}
 		switch req.URL.Path {
-		case "/apps":
+		case "/1.0/apps":
 			json.NewEncoder(w).Encode([]app{a1, a2})
 		case "/apps/myapp1":
 			atomic.AddInt32(&requestAppInfo1, 1)
@@ -227,7 +227,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 			Plan:        appPlan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
 		}
 		switch req.URL.Path {
-		case "/apps":
+		case "/1.0/apps":
 			json.NewEncoder(w).Encode([]app{{Name: a.Name}})
 		case "/apps/myapp1":
 			json.NewEncoder(w).Encode(a)

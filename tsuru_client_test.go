@@ -86,8 +86,8 @@ func (s *S) TestEventListNoContent(c *check.C) {
 func (s *S) TestAppList(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/apps")
-		c.Assert(r.Header.Get("Authorization"), check.Equals, "b "+s.token)
+		c.Assert(r.URL.Path, check.Equals, "/1.0/apps")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
 
 		a1 := app{Name: "app1"}
 		a2 := app{Name: "app2"}

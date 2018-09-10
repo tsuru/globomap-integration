@@ -5,12 +5,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -141,24 +144,11 @@ func (t *tsuruClient) EventList(f eventFilter) ([]event, error) {
 	return events, nil
 }
 
-func (t *tsuruClient) AppList() ([]app, error) {
-	path := "/apps"
-	resp, err := t.doRequest(path)
+func (t *tsuruClient) AppList() ([]tsuru.MiniApp, error) {
+	apps, _, err := t.apiClient().AppApi.AppList(context.Background(), make(map[string]interface{}))
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.New(resp.Status)
-	}
-
-	var apps []app
-	decoder := json.NewDecoder(resp.Body)
-	err = decoder.Decode(&apps)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	return apps, nil
 }
 
@@ -168,7 +158,6 @@ func (t *tsuruClient) AppInfo(name string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	var a app
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&a)
@@ -232,6 +221,16 @@ func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 	}
 	req.Header.Add("Authorization", "b "+t.Token)
 	return client.Do(req)
+}
+
+func (t *tsuruClient) apiClient() *tsuru.APIClient {
+	cfg := tsuru.Configuration{
+		BasePath: t.Hostname,
+		DefaultHeader: map[string]string{
+			"Authorization": "bearer " + t.Token,
+		},
+	}
+	return tsuru.NewAPIClient(&cfg)
 }
 
 func (f *eventFilter) format() string {
