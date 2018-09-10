@@ -48,21 +48,21 @@ func main() {
 
 	if env.config.repeat == nil {
 		env.cmd.Run()
-	} else {
-		for {
-			start := time.Now()
-			env.cmd.Run()
-			diff := *env.config.repeat - time.Since(start)
-			if diff > 0 {
-				if env.config.verbose {
-					fmt.Printf("waiting %s...\n", diff)
-				}
-				time.Sleep(diff)
+		return
+	}
+	for {
+		start := time.Now()
+		env.cmd.Run()
+		diff := *env.config.repeat - time.Since(start)
+		if diff > 0 {
+			if env.config.verbose {
+				fmt.Printf("waiting %s...\n", diff)
 			}
-
-			env.pools = nil
-			env.nodes = nil
+			time.Sleep(diff)
 		}
+
+		env.pools = nil
+		env.nodes = nil
 	}
 }
 
@@ -70,18 +70,20 @@ func postUpdates(operations []operation) {
 	data := []globomapPayload{}
 	for _, op := range operations {
 		payload := op.toPayload()
-		if payload != nil {
-			data = append(data, *payload)
+		if payload == nil {
+			continue
+		}
 
-			if env.config.verbose {
-				switch v := op.(type) {
-				case *appOperation:
-					fmt.Printf("%s app %s\n", v.action, v.appName)
-				case *poolOperation:
-					fmt.Printf("%s pool %s\n", v.action, v.poolName)
-				case *nodeOperation:
-					fmt.Printf("%s node %s\n", v.action, v.nodeAddr)
-				}
+		data = append(data, *payload)
+
+		if env.config.verbose {
+			switch v := op.(type) {
+			case *appOperation:
+				fmt.Printf("%s app %s\n", v.action, v.appName)
+			case *poolOperation:
+				fmt.Printf("%s pool %s\n", v.action, v.poolName)
+			case *nodeOperation:
+				fmt.Printf("%s node %s\n", v.action, v.nodeAddr)
 			}
 		}
 	}
