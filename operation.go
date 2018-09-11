@@ -60,10 +60,10 @@ func eventStatus(e event) string {
 
 func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomapPayload {
 	doc := globomapPayload{
-		"action":     action,
-		"collection": collection,
-		"key":        "tsuru_" + name,
-		"type":       "collections",
+		Action:     action,
+		Collection: collection,
+		Key:        "tsuru_" + name,
+		Type:       "collections",
 	}
 
 	if action == "DELETE" {
@@ -79,7 +79,7 @@ func baseDocument(name, action, collection string, time time.Time, props map[str
 		}
 	}
 
-	doc["element"] = map[string]interface{}{
+	doc.Element = map[string]interface{}{
 		"id":                  name,
 		"name":                name,
 		"provider":            "tsuru",
@@ -142,13 +142,13 @@ func (op *appPoolOperation) app() (*app, error) {
 func (op *appPoolOperation) toPayload() *globomapPayload {
 	id := fmt.Sprintf("%s-pool", op.appName)
 	props := globomapPayload{
-		"action":     op.action,
-		"collection": "tsuru_pool_app",
-		"type":       "edges",
-		"key":        "tsuru_" + id,
+		Action:     op.action,
+		Collection: "tsuru_pool_app",
+		Type:       "edges",
+		Key:        "tsuru_" + id,
 	}
 
-	if props["action"] == "DELETE" {
+	if props.Action == "DELETE" {
 		return &props
 	}
 
@@ -156,7 +156,7 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 	if err != nil {
 		return nil
 	}
-	props["element"] = map[string]interface{}{
+	props.Element = map[string]interface{}{
 		"id":        id,
 		"name":      id,
 		"provider":  "tsuru",
@@ -201,13 +201,13 @@ func (op *nodeOperation) toPayload() *globomapPayload {
 func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globomapPayload {
 	ip := op.nodeIP()
 	edge := globomapPayload{
-		"action":     op.action,
-		"collection": "tsuru_pool_comp_unit",
-		"type":       "edges",
-		"key":        "tsuru_" + strings.Replace(ip, ".", "_", -1),
+		Action:     op.action,
+		Collection: "tsuru_pool_comp_unit",
+		Type:       "edges",
+		Key:        "tsuru_" + strings.Replace(ip, ".", "_", -1),
 	}
 
-	if edge["action"] == "DELETE" {
+	if edge.Action == "DELETE" {
 		return &edge
 	}
 
@@ -233,7 +233,7 @@ func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globoma
 		}
 	}
 
-	edge["element"] = map[string]interface{}{
+	edge.Element = map[string]interface{}{
 		"id":        ip,
 		"name":      node.Name(),
 		"provider":  "tsuru",

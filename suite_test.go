@@ -40,13 +40,9 @@ func (s *S) TearDownSuite(c *check.C) {
 
 func sortPayload(data []globomapPayload) {
 	sort.Slice(data, func(i, j int) bool {
-		collection1, _ := data[i]["collection"].(string)
-		collection2, _ := data[j]["collection"].(string)
-		if collection1 != collection2 {
-			return collection1 < collection2
+		if data[i].Collection != data[j].Collection {
+			return data[i].Collection < data[j].Collection
 		}
-		key1, _ := data[i]["key"].(string)
-		key2, _ := data[j]["key"].(string)
-		return key1 < key2
+		return data[i].Key < data[j].Key
 	})
 }

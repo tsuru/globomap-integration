@@ -24,7 +24,13 @@ type globomapClient struct {
 	ApiHostname    string
 }
 
-type globomapPayload map[string]interface{}
+type globomapPayload struct {
+	Collection string                 `json:"collection"`
+	Action     string                 `json:"action"`
+	Type       string                 `json:"type"`
+	Key        string                 `json:"key"`
+	Element    map[string]interface{} `json:"element"`
+}
 
 type globomapQueryFields struct {
 	collection string

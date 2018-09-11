@@ -85,70 +85,66 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		defer r.Body.Close()
 
 		sortPayload(data)
-		switch data[0]["collection"] {
+		switch data[0].Collection {
 		case "tsuru_app":
 			c.Assert(data, check.HasLen, 4)
 
-			el, ok := data[0]["element"].(map[string]interface{})
-			c.Assert(ok, check.Equals, true)
-			c.Assert(data[0]["action"], check.Equals, "UPDATE")
-			c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
-			c.Assert(data[0]["type"], check.Equals, "collections")
-			c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_app")
+			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 			c.Assert(el["name"], check.Equals, "myapp1")
 			props, ok := el["properties"].(map[string]interface{})
 			c.Assert(ok, check.Equals, true)
 			c.Assert(props["description"], check.Equals, "my first app")
 
-			el, ok = data[1]["element"].(map[string]interface{})
-			c.Assert(ok, check.Equals, true)
-			c.Assert(data[1]["action"], check.Equals, "UPDATE")
-			c.Assert(data[1]["collection"], check.Equals, "tsuru_app")
-			c.Assert(data[1]["type"], check.Equals, "collections")
-			c.Assert(data[1]["key"], check.Equals, "tsuru_myapp2")
+			el = data[1].Element
+			c.Assert(data[1].Action, check.Equals, "UPDATE")
+			c.Assert(data[1].Collection, check.Equals, "tsuru_app")
+			c.Assert(data[1].Type, check.Equals, "collections")
+			c.Assert(data[1].Key, check.Equals, "tsuru_myapp2")
 			c.Assert(el["name"], check.Equals, "myapp2")
 			props, ok = el["properties"].(map[string]interface{})
 			c.Assert(ok, check.Equals, true)
 			c.Assert(props["description"], check.Equals, "my second app")
 
-			el, ok = data[2]["element"].(map[string]interface{})
+			el = data[2].Element
 			c.Assert(ok, check.Equals, true)
-			c.Assert(data[2]["action"], check.Equals, "UPDATE")
-			c.Assert(data[2]["collection"], check.Equals, "tsuru_pool_app")
-			c.Assert(data[2]["type"], check.Equals, "edges")
-			c.Assert(data[2]["key"], check.Equals, "tsuru_myapp1-pool")
+			c.Assert(data[2].Action, check.Equals, "UPDATE")
+			c.Assert(data[2].Collection, check.Equals, "tsuru_pool_app")
+			c.Assert(data[2].Type, check.Equals, "edges")
+			c.Assert(data[2].Key, check.Equals, "tsuru_myapp1-pool")
 			c.Assert(el["name"], check.Equals, "myapp1-pool")
 			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
 			c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 
-			el, ok = data[3]["element"].(map[string]interface{})
+			el = data[3].Element
 			c.Assert(ok, check.Equals, true)
-			c.Assert(data[3]["action"], check.Equals, "UPDATE")
-			c.Assert(data[3]["collection"], check.Equals, "tsuru_pool_app")
-			c.Assert(data[3]["type"], check.Equals, "edges")
-			c.Assert(data[3]["key"], check.Equals, "tsuru_myapp2-pool")
+			c.Assert(data[3].Action, check.Equals, "UPDATE")
+			c.Assert(data[3].Collection, check.Equals, "tsuru_pool_app")
+			c.Assert(data[3].Type, check.Equals, "edges")
+			c.Assert(data[3].Key, check.Equals, "tsuru_myapp2-pool")
 			c.Assert(el["name"], check.Equals, "myapp2-pool")
 			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
 			c.Assert(el["to"], check.Equals, "tsuru_pool/tsuru_pool1")
 
 		case "tsuru_pool":
 			c.Assert(data, check.HasLen, 1)
-			el, ok := data[0]["element"].(map[string]interface{})
-			c.Assert(ok, check.Equals, true)
-			c.Assert(data[0]["action"], check.Equals, "UPDATE")
-			c.Assert(data[0]["collection"], check.Equals, "tsuru_pool")
-			c.Assert(data[0]["type"], check.Equals, "collections")
-			c.Assert(data[0]["key"], check.Equals, "tsuru_pool1")
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_pool")
+			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Key, check.Equals, "tsuru_pool1")
 			c.Assert(el["name"], check.Equals, "pool1")
 
 		case "tsuru_pool_comp_unit":
 			c.Assert(data, check.HasLen, 2)
-			el, ok := data[0]["element"].(map[string]interface{})
-			c.Assert(ok, check.Equals, true)
-			c.Assert(data[0]["action"], check.Equals, "UPDATE")
-			c.Assert(data[0]["collection"], check.Equals, "tsuru_pool_comp_unit")
-			c.Assert(data[0]["type"], check.Equals, "edges")
-			c.Assert(data[0]["key"], check.Equals, "tsuru_1_1_1_1")
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_pool_comp_unit")
+			c.Assert(data[0].Type, check.Equals, "edges")
+			c.Assert(data[0].Key, check.Equals, "tsuru_1_1_1_1")
 			c.Assert(el["id"], check.Equals, "1.1.1.1")
 			c.Assert(el["name"], check.Equals, "node1")
 			c.Assert(el["from"], check.Equals, "tsuru_pool/tsuru_pool1")
@@ -255,12 +251,11 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		c.Assert(data, check.HasLen, 2)
 
 		sortPayload(data)
-		el, ok := data[0]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[0]["action"], check.Equals, "UPDATE")
-		c.Assert(data[0]["collection"], check.Equals, "tsuru_app")
-		c.Assert(data[0]["type"], check.Equals, "collections")
-		c.Assert(data[0]["key"], check.Equals, "tsuru_myapp1")
+		el := data[0].Element
+		c.Assert(data[0].Action, check.Equals, "UPDATE")
+		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
+		c.Assert(data[0].Type, check.Equals, "collections")
+		c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 		props, ok := el["properties"].(map[string]interface{})
 		c.Assert(ok, check.Equals, true)
@@ -280,12 +275,11 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		_, ok = el["properties_metadata"]
 		c.Assert(ok, check.Equals, true)
 
-		el, ok = data[1]["element"].(map[string]interface{})
-		c.Assert(ok, check.Equals, true)
-		c.Assert(data[1]["action"], check.Equals, "UPDATE")
-		c.Assert(data[1]["collection"], check.Equals, "tsuru_pool_app")
-		c.Assert(data[1]["type"], check.Equals, "edges")
-		c.Assert(data[1]["key"], check.Equals, "tsuru_myapp1-pool")
+		el = data[1].Element
+		c.Assert(data[1].Action, check.Equals, "UPDATE")
+		c.Assert(data[1].Collection, check.Equals, "tsuru_pool_app")
+		c.Assert(data[1].Type, check.Equals, "edges")
+		c.Assert(data[1].Key, check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		_, ok = el["properties"]
 		c.Assert(ok, check.Equals, false)

@@ -29,12 +29,7 @@ func (s *S) TestPost(c *check.C) {
 		LoaderHostname: server.URL,
 	}
 
-	payload := []globomapPayload{
-		map[string]interface{}{
-			"k1": "v1",
-			"k2": "v2",
-		},
-	}
+	payload := []globomapPayload{{}}
 	err := client.Post(payload)
 	c.Assert(err, check.IsNil)
 }
@@ -68,9 +63,7 @@ func (s *S) TestPostInChunks(c *check.C) {
 
 	payload := make([]globomapPayload, 101)
 	for i := 0; i <= 100; i++ {
-		payload[i] = map[string]interface{}{
-			fmt.Sprintf("k%d", i): fmt.Sprintf("v%d", i),
-		}
+		payload[i] = globomapPayload{Key: fmt.Sprintf("k%d", i)}
 	}
 	env.config.sleepTimeBetweenChunks = 0
 	err := client.Post(payload)
@@ -110,9 +103,7 @@ func (s *S) TestPostInChunksWithErrors(c *check.C) {
 
 	payload := make([]globomapPayload, 201)
 	for i := 0; i <= 200; i++ {
-		payload[i] = map[string]interface{}{
-			fmt.Sprintf("k%d", i): fmt.Sprintf("v%d", i),
-		}
+		payload[i] = globomapPayload{Key: fmt.Sprintf("k%d", i)}
 	}
 
 	env.config.sleepTimeBetweenChunks = 0
