@@ -143,7 +143,7 @@ func (t *tsuruClient) NodeList() ([]node, error) {
 }
 
 func (t *tsuruClient) ServiceList() ([]tsuru.Service, error) {
-	services, _, err := t.apiClient().ServiceApi.ServicesList(context.Background())
+	services, _, err := t.apiClient().ServiceApi.InstancesList(context.Background(), map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}

@@ -283,7 +283,7 @@ func (s *S) TestNodeAddr(c *check.C) {
 func (s *S) TestServiceList(c *check.C) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.Assert(r.Method, check.Equals, http.MethodGet)
-		c.Assert(r.URL.Path, check.Equals, "/1.0/services")
+		c.Assert(r.URL.Path, check.Equals, "/1.0/services/instances")
 		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
 
 		s1 := tsuru.Service{Service: "service1"}

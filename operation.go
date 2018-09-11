@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 )
 
 type operation interface {
@@ -42,11 +44,25 @@ type poolOperation struct {
 	poolName string
 }
 
+type serviceOperation struct {
+	action  string
+	time    time.Time
+	service tsuru.Service
+}
+
+type serviceInstanceOperation struct {
+	action   string
+	time     time.Time
+	instance tsuru.ServiceInstance
+}
+
 var (
 	_ operation = &nodeOperation{}
 	_ operation = &appPoolOperation{}
 	_ operation = &appOperation{}
 	_ operation = &poolOperation{}
+	_ operation = &serviceOperation{}
+	_ operation = &serviceInstanceOperation{}
 )
 
 func eventStatus(e event) string {
@@ -314,6 +330,22 @@ func (op *nodeOperation) retry() {
 	}
 
 	fmt.Printf("max retries reached for fetching node %s (IP %s) from globomap API, giving up\n", node.Name(), node.IP())
+}
+
+func (op *serviceOperation) toPayload() *globomapPayload {
+	return baseDocument(op.service.Service, op.action, "tsuru_service", op.time, map[string]interface{}{
+		"plans": op.service.Plans,
+	})
+}
+
+func (op *serviceInstanceOperation) toPayload() *globomapPayload {
+	return baseDocument(op.instance.ServiceName+"_"+op.instance.Name, op.action, "tsuru_service_instance", time.Now(), map[string]interface{}{
+		"plan":        op.instance.PlanName,
+		"description": op.instance.Description,
+		"tags":        op.instance.Tags,
+		"team_owner":  op.instance.TeamOwner,
+		"teams":       op.instance.Teams,
+	})
 }
 
 func extractIPFromAddr(addr string) string {

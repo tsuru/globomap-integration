@@ -45,7 +45,6 @@ func setup(args []string) {
 
 func main() {
 	setup(os.Args[1:])
-
 	if env.config.repeat == nil {
 		env.cmd.Run()
 		return

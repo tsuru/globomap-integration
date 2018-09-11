@@ -15,11 +15,12 @@ type loadCmd struct {
 }
 
 func (c *loadCmd) Run() {
-	c.wg.Add(3)
+	c.wg.Add(4)
 
 	go c.loadApps()
 	go c.loadPools()
 	go c.loadNodes()
+	go c.loadServices()
 
 	c.wg.Wait()
 }
@@ -144,4 +145,46 @@ func (c *loadCmd) loadNodes() {
 		i++
 	}
 	postUpdates(nodeOps)
+}
+
+func (c *loadCmd) loadServices() {
+	defer c.wg.Done()
+	services, err := env.tsuru.ServiceList()
+	if err != nil {
+		if env.config.verbose {
+			fmt.Printf("Error fetching services: %s\n", err)
+		}
+		return
+	}
+
+	if len(services) == 0 {
+		if env.config.verbose {
+			fmt.Println("No services to process")
+		}
+		return
+	}
+
+	if env.config.verbose {
+		fmt.Printf("Processing %d services\n", len(services))
+	}
+
+	serviceOps := make([]operation, len(services))
+	var instanceOps []operation
+	for i := range services {
+		serviceOps[i] = &serviceOperation{
+			action:  "UPDATE",
+			time:    time.Now(),
+			service: services[i],
+		}
+
+		for j := range services[i].ServiceInstances {
+			instanceOps = append(instanceOps, &serviceInstanceOperation{
+				action:   "UPDATE",
+				time:     time.Now(),
+				instance: services[i].ServiceInstances[j],
+			})
+		}
+	}
+	postUpdates(instanceOps)
+	postUpdates(serviceOps)
 }
