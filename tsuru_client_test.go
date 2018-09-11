@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 	"gopkg.in/check.v1"
 	"gopkg.in/mgo.v2/bson"
 )
@@ -277,4 +278,27 @@ func (s *S) TestNodeName(c *check.C) {
 func (s *S) TestNodeAddr(c *check.C) {
 	n1 := node{Address: "10.2.1.153"}
 	c.Assert(n1.Addr(), check.Equals, "10.2.1.153")
+}
+
+func (s *S) TestServiceList(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodGet)
+		c.Assert(r.URL.Path, check.Equals, "/1.0/services")
+		c.Assert(r.Header.Get("Authorization"), check.Equals, "bearer "+s.token)
+
+		s1 := tsuru.Service{Service: "service1"}
+		s2 := tsuru.Service{Service: "service2"}
+		json.NewEncoder(w).Encode([]tsuru.Service{s1, s2})
+	}))
+	defer server.Close()
+	client := tsuruClient{
+		Hostname: server.URL,
+		Token:    s.token,
+	}
+
+	services, err := client.ServiceList()
+	c.Assert(err, check.IsNil)
+	c.Assert(services, check.HasLen, 2)
+	c.Assert(services[0].Service, check.DeepEquals, "service1")
+	c.Assert(services[1].Service, check.DeepEquals, "service2")
 }

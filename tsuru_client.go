@@ -142,6 +142,14 @@ func (t *tsuruClient) NodeList() ([]node, error) {
 	return nodes, nil
 }
 
+func (t *tsuruClient) ServiceList() ([]tsuru.Service, error) {
+	services, _, err := t.apiClient().ServiceApi.ServicesList(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return services, nil
+}
+
 func (t *tsuruClient) doRequest(path string) (*http.Response, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest(http.MethodGet, t.Hostname+path, nil)
