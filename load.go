@@ -170,6 +170,7 @@ func (c *loadCmd) loadServices() {
 
 	serviceOps := make([]operation, len(services))
 	var instanceOps []operation
+	var serviceInstanceOps []operation
 	for i := range services {
 		serviceOps[i] = &serviceOperation{
 			action:  "UPDATE",
@@ -183,8 +184,15 @@ func (c *loadCmd) loadServices() {
 				time:     time.Now(),
 				instance: services[i].ServiceInstances[j],
 			})
+
+			serviceInstanceOps = append(serviceInstanceOps, &serviceServiceInstanceOperation{
+				action:   "UPDATE",
+				time:     time.Now(),
+				instance: services[i].ServiceInstances[j],
+			})
 		}
 	}
 	postUpdates(instanceOps)
 	postUpdates(serviceOps)
+	postUpdates(serviceInstanceOps)
 }

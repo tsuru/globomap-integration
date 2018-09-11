@@ -76,7 +76,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 	defer globomapApi.Close()
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
-	requests := make(chan bool, 5)
+	requests := make(chan bool, 6)
 	globomapLoader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			requests <- true
@@ -180,6 +180,17 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			c.Assert(data[1].Collection, check.Equals, "tsuru_service_instance")
 			c.Assert(data[1].Type, check.Equals, "collections")
 			c.Assert(data[1].Key, check.Equals, "tsuru_myservice2_myinstance")
+		case "tsuru_service_service_instance":
+			c.Assert(data, check.HasLen, 2)
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_service_service_instance")
+			c.Assert(data[0].Type, check.Equals, "edges")
+			c.Assert(data[0].Key, check.Equals, "tsuru_myservice1_myinstance")
+			c.Assert(el["id"], check.Equals, "myservice1_myinstance")
+			c.Assert(el["name"], check.Equals, "myservice1_myinstance")
+			c.Assert(el["from"], check.Equals, "tsuru_service/tsuru_myservice1")
+			c.Assert(el["to"], check.Equals, "tsuru_service_instance/tsuru_myservice1_myinstance")
 		}
 	}))
 	defer globomapLoader.Close()

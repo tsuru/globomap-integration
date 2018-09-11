@@ -56,6 +56,12 @@ type serviceInstanceOperation struct {
 	instance tsuru.ServiceInstance
 }
 
+type serviceServiceInstanceOperation struct {
+	action   string
+	time     time.Time
+	instance tsuru.ServiceInstance
+}
+
 var (
 	_ operation = &nodeOperation{}
 	_ operation = &appPoolOperation{}
@@ -63,6 +69,7 @@ var (
 	_ operation = &poolOperation{}
 	_ operation = &serviceOperation{}
 	_ operation = &serviceInstanceOperation{}
+	_ operation = &serviceServiceInstanceOperation{}
 )
 
 func eventStatus(e event) string {
@@ -346,6 +353,24 @@ func (op *serviceInstanceOperation) toPayload() *globomapPayload {
 		"team_owner":  op.instance.TeamOwner,
 		"teams":       op.instance.Teams,
 	})
+}
+
+func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
+	id := op.instance.ServiceName + "_" + op.instance.Name
+	return &globomapPayload{
+		Action:     op.action,
+		Collection: "tsuru_service_service_instance",
+		Type:       "edges",
+		Key:        "tsuru_" + id,
+		Element: map[string]interface{}{
+			"id":        id,
+			"name":      id,
+			"provider":  "tsuru",
+			"timestamp": op.time.Unix(),
+			"from":      "tsuru_service/tsuru_" + op.instance.ServiceName,
+			"to":        "tsuru_service_instance/tsuru_" + id,
+		},
+	}
 }
 
 func extractIPFromAddr(addr string) string {
