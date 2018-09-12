@@ -23,7 +23,9 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		a1 := app{Name: "myapp1", Pool: "pool1"}
 		a2 := app{Name: "myapp2", Pool: "pool1"}
 		services := []tsuru.Service{
-			{Service: "myservice1", ServiceInstances: []tsuru.ServiceInstance{{ServiceName: "myservice1", Name: "myinstance"}}},
+			{Service: "myservice1", ServiceInstances: []tsuru.ServiceInstance{
+				{ServiceName: "myservice1", Name: "myinstance", Apps: []string{"myapp1", "myapp2"}},
+			}},
 			{Service: "myservice2", ServiceInstances: []tsuru.ServiceInstance{{ServiceName: "myservice2", Name: "myinstance"}}},
 		}
 		switch req.URL.Path {
@@ -76,7 +78,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 	defer globomapApi.Close()
 	os.Setenv("GLOBOMAP_API_HOSTNAME", globomapApi.URL)
 
-	requests := make(chan bool, 6)
+	requests := make(chan bool, 7)
 	globomapLoader := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			requests <- true
@@ -190,6 +192,17 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			c.Assert(el["id"], check.Equals, "myservice1_myinstance")
 			c.Assert(el["name"], check.Equals, "myservice1_myinstance")
 			c.Assert(el["from"], check.Equals, "tsuru_service/tsuru_myservice1")
+			c.Assert(el["to"], check.Equals, "tsuru_service_instance/tsuru_myservice1_myinstance")
+		case "tsuru_app_service_instance":
+			c.Assert(data, check.HasLen, 2)
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_app_service_instance")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeEdge)
+			c.Assert(data[0].Key, check.Equals, "tsuru_myapp1_myinstance")
+			c.Assert(el["id"], check.Equals, "myapp1_myinstance")
+			c.Assert(el["name"], check.Equals, "myapp1_myinstance")
+			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
 			c.Assert(el["to"], check.Equals, "tsuru_service_instance/tsuru_myservice1_myinstance")
 		}
 	}))

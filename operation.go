@@ -62,6 +62,13 @@ type serviceServiceInstanceOperation struct {
 	instance tsuru.ServiceInstance
 }
 
+type appServiceInstanceOperation struct {
+	action   string
+	time     time.Time
+	appName  string
+	instance tsuru.ServiceInstance
+}
+
 var (
 	_ operation = &nodeOperation{}
 	_ operation = &appPoolOperation{}
@@ -70,6 +77,7 @@ var (
 	_ operation = &serviceOperation{}
 	_ operation = &serviceInstanceOperation{}
 	_ operation = &serviceServiceInstanceOperation{}
+	_ operation = &appServiceInstanceOperation{}
 )
 
 func eventStatus(e event) string {
@@ -369,6 +377,24 @@ func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
 			"timestamp": op.time.Unix(),
 			"from":      "tsuru_service/tsuru_" + op.instance.ServiceName,
 			"to":        "tsuru_service_instance/tsuru_" + id,
+		},
+	}
+}
+
+func (op *appServiceInstanceOperation) toPayload() *globomapPayload {
+	id := op.appName + "_" + op.instance.Name
+	return &globomapPayload{
+		Action:     op.action,
+		Collection: "tsuru_app_service_instance",
+		Type:       PayloadTypeEdge,
+		Key:        "tsuru_" + id,
+		Element: map[string]interface{}{
+			"id":        id,
+			"name":      id,
+			"provider":  "tsuru",
+			"timestamp": op.time.Unix(),
+			"from":      "tsuru_app/tsuru_" + op.appName,
+			"to":        "tsuru_service_instance/tsuru_" + op.instance.ServiceName + "_" + op.instance.Name,
 		},
 	}
 }
