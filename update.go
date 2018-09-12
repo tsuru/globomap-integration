@@ -69,10 +69,32 @@ func fetchEvents() []event {
 }
 
 func processEvents(events []event) {
+	processors := map[string]func(map[string][]event) ([]operation, error){
+		"pool": processPoolEvents,
+		"node": processNodeEvents,
+		"app":  processAppEvents,
+	}
+
 	group := groupByTarget(events)
 	operations := []operation{}
+	for g, p := range processors {
+		ops, err := p(group[g])
+		if err != nil {
+			if env.config.verbose {
+				fmt.Printf("Error processing %s events: %v", g, err)
+			}
+			continue
+		}
+		operations = append(operations, ops...)
+	}
 
-	for name, evs := range group["pool"] {
+	postUpdates(operations)
+}
+
+func processPoolEvents(events map[string][]event) ([]operation, error) {
+	var operations []operation
+
+	for name, evs := range events {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
@@ -87,22 +109,36 @@ func processEvents(events []event) {
 		}
 		operations = append(operations, op)
 	}
-
 	if len(operations) > 0 {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
 		if err != nil {
-			if env.config.verbose {
-				fmt.Printf("Error fetching pools: %s\n", err)
-			}
-			return
+			return nil, err
 		}
 	}
 
-	var nodeOps int
-	for addr, evs := range group["node"] {
-		endTime := evs[len(evs)-1].EndTime
-		lastStatus := eventStatus(evs[len(evs)-1])
+	return operations, nil
+}
+
+func processNodeEvents(events map[string][]event) ([]operation, error) {
+	var operations []operation
+	for addr, evs := range events {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		lastEvent := evs[0]
+		endTime := lastEvent.EndTime
+
+		if lastEvent.Kind.Name == "healer" {
+			if ops, err := processHealerEvent(lastEvent, addr); err == nil {
+				operations = append(operations, ops...)
+			} else {
+				fmt.Printf("Error processing healing event for addr %v: %v", addr, err)
+			}
+			continue
+		}
+
+		lastStatus := eventStatus(lastEvent)
 		op := &nodeOperation{
 			baseOperation: baseOperation{
 				action: lastStatus,
@@ -111,48 +147,49 @@ func processEvents(events []event) {
 			nodeAddr: addr,
 		}
 		operations = append(operations, op)
-		nodeOps++
 	}
 
-	for addr, evs := range group["healer"] {
-		endTime := evs[len(evs)-1].EndTime
-		removedNodeOp := &nodeOperation{
-			baseOperation: baseOperation{
-				action: "DELETE",
-				time:   endTime,
-			},
-			nodeAddr: addr,
-		}
-		operations = append(operations, removedNodeOp)
-
-		var data map[string]string
-		err := evs[0].EndData(&data)
-		if err != nil {
-			continue
-		}
-		addedNodeOp := &nodeOperation{
-			baseOperation: baseOperation{
-				action: "UPDATE",
-				time:   endTime,
-			},
-			nodeAddr: data["_id"],
-		}
-		operations = append(operations, addedNodeOp)
-		nodeOps++
-	}
-
-	if nodeOps > 0 {
+	if len(operations) > 0 {
 		var err error
 		env.nodes, err = env.tsuru.NodeList()
 		if err != nil {
-			if env.config.verbose {
-				fmt.Printf("Error fetching nodes: %s\n", err)
-			}
-			return
+			return nil, err
 		}
 	}
 
-	for name, evs := range group["app"] {
+	return operations, nil
+}
+
+func processHealerEvent(e event, addr string) ([]operation, error) {
+	endTime := e.EndTime
+
+	removedNodeOp := &nodeOperation{
+		baseOperation: baseOperation{
+			action: "DELETE",
+			time:   endTime,
+		},
+		nodeAddr: addr,
+	}
+
+	var data map[string]string
+	err := e.EndData(&data)
+	if err != nil {
+		return nil, err
+	}
+	addedNodeOp := &nodeOperation{
+		baseOperation: baseOperation{
+			action: "UPDATE",
+			time:   endTime,
+		},
+		nodeAddr: data["_id"],
+	}
+
+	return append([]operation{}, addedNodeOp, removedNodeOp), nil
+}
+
+func processAppEvents(events map[string][]event) ([]operation, error) {
+	var operations []operation
+	for name, evs := range events {
 		sort.Slice(evs, func(i, j int) bool {
 			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
 		})
@@ -164,6 +201,9 @@ func processEvents(events []event) {
 			var err error
 			cachedApp, err = env.tsuru.AppInfo(name)
 			if err != nil {
+				if env.config.verbose {
+					fmt.Printf("Failed to retrieve app %s info: %v. Skipping.", name, err)
+				}
 				continue
 			}
 		}
@@ -176,8 +216,6 @@ func processEvents(events []event) {
 			appName:   name,
 			cachedApp: cachedApp,
 		}
-		operations = append(operations, op)
-
 		appPoolOp := &appPoolOperation{
 			baseOperation: baseOperation{
 				action: lastStatus,
@@ -186,10 +224,10 @@ func processEvents(events []event) {
 			appName:   name,
 			cachedApp: cachedApp,
 		}
-		operations = append(operations, appPoolOp)
+		operations = append(operations, op, appPoolOp)
 	}
 
-	postUpdates(operations)
+	return operations, nil
 }
 
 func groupByTarget(events []event) map[string]groupedEvents {
