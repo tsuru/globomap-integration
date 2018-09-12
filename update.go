@@ -79,8 +79,10 @@ func processEvents(events []event) {
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
 		op := &poolOperation{
-			action:   lastStatus,
-			time:     endTime,
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
 			poolName: name,
 		}
 		operations = append(operations, op)
@@ -102,8 +104,10 @@ func processEvents(events []event) {
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
 		op := &nodeOperation{
-			action:   lastStatus,
-			time:     endTime,
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
 			nodeAddr: addr,
 		}
 		operations = append(operations, op)
@@ -113,8 +117,10 @@ func processEvents(events []event) {
 	for addr, evs := range group["healer"] {
 		endTime := evs[len(evs)-1].EndTime
 		removedNodeOp := &nodeOperation{
-			action:   "DELETE",
-			time:     endTime,
+			baseOperation: baseOperation{
+				action: "DELETE",
+				time:   endTime,
+			},
 			nodeAddr: addr,
 		}
 		operations = append(operations, removedNodeOp)
@@ -125,8 +131,10 @@ func processEvents(events []event) {
 			continue
 		}
 		addedNodeOp := &nodeOperation{
-			action:   "UPDATE",
-			time:     endTime,
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   endTime,
+			},
 			nodeAddr: data["_id"],
 		}
 		operations = append(operations, addedNodeOp)
@@ -161,16 +169,20 @@ func processEvents(events []event) {
 		}
 
 		op := &appOperation{
-			action:    lastStatus,
-			time:      endTime,
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
 			appName:   name,
 			cachedApp: cachedApp,
 		}
 		operations = append(operations, op)
 
 		appPoolOp := &appPoolOperation{
-			action:    lastStatus,
-			time:      endTime,
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
 			appName:   name,
 			cachedApp: cachedApp,
 		}

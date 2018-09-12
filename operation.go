@@ -19,54 +19,55 @@ type operation interface {
 }
 
 type nodeOperation struct {
-	action   string
-	time     time.Time
+	baseOperation
 	nodeAddr string
 }
 
 type appOperation struct {
-	action    string
-	time      time.Time
+	baseOperation
 	appName   string
 	cachedApp *app
 }
 
 type appPoolOperation struct {
-	action    string
-	time      time.Time
+	baseOperation
 	appName   string
 	cachedApp *app
 }
 
 type poolOperation struct {
-	action   string
-	time     time.Time
+	baseOperation
 	poolName string
 }
 
 type serviceOperation struct {
-	action  string
-	time    time.Time
+	baseOperation
 	service tsuru.Service
 }
 
 type serviceInstanceOperation struct {
-	action   string
-	time     time.Time
+	baseOperation
 	instance tsuru.ServiceInstance
 }
 
 type serviceServiceInstanceOperation struct {
-	action   string
-	time     time.Time
+	baseOperation
 	instance tsuru.ServiceInstance
 }
 
 type appServiceInstanceOperation struct {
-	action   string
-	time     time.Time
+	baseOperation
 	appName  string
 	instance tsuru.ServiceInstance
+}
+
+type baseOperation struct {
+	action string
+	time   time.Time
+}
+
+func (op *baseOperation) String() string {
+	return fmt.Sprintf("[%s] %s", op.time.Format("2006-01-02 15:04:05"), op.action)
 }
 
 var (
@@ -124,6 +125,10 @@ func baseDocument(name, action, collection string, time time.Time, props map[str
 
 func (op *appOperation) toPayload() *globomapPayload {
 	return baseDocument(op.appName, op.action, "tsuru_app", op.time, op.properties())
+}
+
+func (op *appOperation) String() string {
+	return fmt.Sprintf("%s: app %s", op.baseOperation.String(), op.appName)
 }
 
 func (op *appOperation) app() (*app, error) {
@@ -200,6 +205,10 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 
 func (op *poolOperation) toPayload() *globomapPayload {
 	return baseDocument(op.poolName, op.action, "tsuru_pool", op.time, op.properties())
+}
+
+func (op *poolOperation) String() string {
+	return fmt.Sprintf("%s: pool %s", op.baseOperation.String(), op.poolName)
 }
 
 func (op *poolOperation) pool() *pool {
@@ -282,6 +291,10 @@ func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globoma
 	return &edge
 }
 
+func (op *nodeOperation) String() string {
+	return fmt.Sprintf("%s: node %s", op.baseOperation.String(), op.nodeAddr)
+}
+
 func (op *nodeOperation) node() (*node, error) {
 	if len(env.nodes) == 0 {
 		nodes, err := env.tsuru.NodeList()
@@ -353,6 +366,10 @@ func (op *serviceOperation) toPayload() *globomapPayload {
 	})
 }
 
+func (op *serviceOperation) String() string {
+	return fmt.Sprintf("%s: service %s", op.baseOperation.String(), op.service.Service)
+}
+
 func (op *serviceInstanceOperation) toPayload() *globomapPayload {
 	return baseDocument(op.instance.ServiceName+"_"+op.instance.Name, op.action, "tsuru_service_instance", time.Now(), map[string]interface{}{
 		"plan":        op.instance.PlanName,
@@ -361,6 +378,10 @@ func (op *serviceInstanceOperation) toPayload() *globomapPayload {
 		"team_owner":  op.instance.TeamOwner,
 		"teams":       op.instance.Teams,
 	})
+}
+
+func (op *serviceInstanceOperation) String() string {
+	return fmt.Sprintf("%s: service instance %v service %v", op.baseOperation.String(), op.instance.Name, op.instance.ServiceName)
 }
 
 func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {

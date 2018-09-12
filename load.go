@@ -57,8 +57,10 @@ func (c *loadCmd) loadApps() {
 		}
 
 		op := &appOperation{
-			action:    "UPDATE",
-			time:      time.Now(),
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   time.Now(),
+			},
 			appName:   cachedApp.Name,
 			cachedApp: cachedApp,
 		}
@@ -66,8 +68,10 @@ func (c *loadCmd) loadApps() {
 		i++
 
 		appPoolOp := &appPoolOperation{
-			action:    "UPDATE",
-			time:      time.Now(),
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   time.Now(),
+			},
 			appName:   cachedApp.Name,
 			cachedApp: cachedApp,
 		}
@@ -102,8 +106,10 @@ func (c *loadCmd) loadPools() {
 	var i int
 	for _, pool := range env.pools {
 		op := &poolOperation{
-			action:   "UPDATE",
-			time:     time.Now(),
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   time.Now(),
+			},
 			poolName: pool.Name,
 		}
 		poolOps[i] = op
@@ -137,8 +143,10 @@ func (c *loadCmd) loadNodes() {
 	var i int
 	for _, node := range env.nodes {
 		op := &nodeOperation{
-			action:   "UPDATE",
-			time:     time.Now(),
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   time.Now(),
+			},
 			nodeAddr: node.Addr(),
 		}
 		nodeOps[i] = op
@@ -174,28 +182,36 @@ func (c *loadCmd) loadServices() {
 	var appInstanceOps []operation
 	for i := range services {
 		serviceOps[i] = &serviceOperation{
-			action:  "UPDATE",
-			time:    time.Now(),
+			baseOperation: baseOperation{
+				action: "UPDATE",
+				time:   time.Now(),
+			},
 			service: services[i],
 		}
 
 		for _, instance := range services[i].ServiceInstances {
 			instanceOps = append(instanceOps, &serviceInstanceOperation{
-				action:   "UPDATE",
-				time:     time.Now(),
+				baseOperation: baseOperation{
+					action: "UPDATE",
+					time:   time.Now(),
+				},
 				instance: instance,
 			})
 
 			serviceInstanceOps = append(serviceInstanceOps, &serviceServiceInstanceOperation{
-				action:   "UPDATE",
-				time:     time.Now(),
+				baseOperation: baseOperation{
+					action: "UPDATE",
+					time:   time.Now(),
+				},
 				instance: instance,
 			})
 
 			for _, app := range instance.Apps {
 				appInstanceOps = append(appInstanceOps, &appServiceInstanceOperation{
-					action:   "UPDATE",
-					time:     time.Now(),
+					baseOperation: baseOperation{
+						action: "UPDATE",
+						time:   time.Now(),
+					},
 					appName:  app,
 					instance: instance,
 				})
