@@ -193,12 +193,7 @@ func processEvents(events []event) {
 }
 
 func groupByTarget(events []event) map[string]groupedEvents {
-	results := map[string]groupedEvents{
-		"app":    groupedEvents{},
-		"pool":   groupedEvents{},
-		"node":   groupedEvents{},
-		"healer": groupedEvents{},
-	}
+	results := make(map[string]groupedEvents)
 
 	for _, ev := range events {
 		if ev.Failed() {
@@ -207,11 +202,11 @@ func groupByTarget(events []event) map[string]groupedEvents {
 
 		name := ev.Target.Value
 		evType := ev.Target.Type
-		if _, ok := results[evType][name]; !ok {
-			results[evType][name] = []event{ev}
-		} else {
-			results[evType][name] = append(results[evType][name], ev)
+
+		if results[evType] == nil {
+			results[evType] = groupedEvents{}
 		}
+		results[evType][name] = append(results[evType][name], ev)
 	}
 
 	return results
