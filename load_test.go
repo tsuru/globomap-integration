@@ -98,7 +98,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			el := data[0].Element
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_app")
-			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 			c.Assert(el["name"], check.Equals, "myapp1")
 			props, ok := el["properties"].(map[string]interface{})
@@ -108,7 +108,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			el = data[1].Element
 			c.Assert(data[1].Action, check.Equals, "UPDATE")
 			c.Assert(data[1].Collection, check.Equals, "tsuru_app")
-			c.Assert(data[1].Type, check.Equals, "collections")
+			c.Assert(data[1].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[1].Key, check.Equals, "tsuru_myapp2")
 			c.Assert(el["name"], check.Equals, "myapp2")
 			props, ok = el["properties"].(map[string]interface{})
@@ -119,7 +119,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			c.Assert(ok, check.Equals, true)
 			c.Assert(data[2].Action, check.Equals, "UPDATE")
 			c.Assert(data[2].Collection, check.Equals, "tsuru_pool_app")
-			c.Assert(data[2].Type, check.Equals, "edges")
+			c.Assert(data[2].Type, check.Equals, PayloadTypeEdge)
 			c.Assert(data[2].Key, check.Equals, "tsuru_myapp1-pool")
 			c.Assert(el["name"], check.Equals, "myapp1-pool")
 			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
@@ -129,7 +129,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			c.Assert(ok, check.Equals, true)
 			c.Assert(data[3].Action, check.Equals, "UPDATE")
 			c.Assert(data[3].Collection, check.Equals, "tsuru_pool_app")
-			c.Assert(data[3].Type, check.Equals, "edges")
+			c.Assert(data[3].Type, check.Equals, PayloadTypeEdge)
 			c.Assert(data[3].Key, check.Equals, "tsuru_myapp2-pool")
 			c.Assert(el["name"], check.Equals, "myapp2-pool")
 			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
@@ -140,7 +140,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			el := data[0].Element
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_pool")
-			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[0].Key, check.Equals, "tsuru_pool1")
 			c.Assert(el["name"], check.Equals, "pool1")
 
@@ -149,7 +149,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			el := data[0].Element
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_pool_comp_unit")
-			c.Assert(data[0].Type, check.Equals, "edges")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeEdge)
 			c.Assert(data[0].Key, check.Equals, "tsuru_1_1_1_1")
 			c.Assert(el["id"], check.Equals, "1.1.1.1")
 			c.Assert(el["name"], check.Equals, "node1")
@@ -162,30 +162,30 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 			c.Assert(data, check.HasLen, 2)
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_service")
-			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[0].Key, check.Equals, "tsuru_myservice1")
 
 			c.Assert(data[1].Action, check.Equals, "UPDATE")
 			c.Assert(data[1].Collection, check.Equals, "tsuru_service")
-			c.Assert(data[1].Type, check.Equals, "collections")
+			c.Assert(data[1].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[1].Key, check.Equals, "tsuru_myservice2")
 		case "tsuru_service_instance":
 			c.Assert(data, check.HasLen, 2)
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_service_instance")
-			c.Assert(data[0].Type, check.Equals, "collections")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[0].Key, check.Equals, "tsuru_myservice1_myinstance")
 
 			c.Assert(data[1].Action, check.Equals, "UPDATE")
 			c.Assert(data[1].Collection, check.Equals, "tsuru_service_instance")
-			c.Assert(data[1].Type, check.Equals, "collections")
+			c.Assert(data[1].Type, check.Equals, PayloadTypeCollection)
 			c.Assert(data[1].Key, check.Equals, "tsuru_myservice2_myinstance")
 		case "tsuru_service_service_instance":
 			c.Assert(data, check.HasLen, 2)
 			el := data[0].Element
 			c.Assert(data[0].Action, check.Equals, "UPDATE")
 			c.Assert(data[0].Collection, check.Equals, "tsuru_service_service_instance")
-			c.Assert(data[0].Type, check.Equals, "edges")
+			c.Assert(data[0].Type, check.Equals, PayloadTypeEdge)
 			c.Assert(data[0].Key, check.Equals, "tsuru_myservice1_myinstance")
 			c.Assert(el["id"], check.Equals, "myservice1_myinstance")
 			c.Assert(el["name"], check.Equals, "myservice1_myinstance")
@@ -293,7 +293,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[0].Type, check.Equals, "collections")
+		c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
 		c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 		props, ok := el["properties"].(map[string]interface{})
@@ -317,7 +317,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		el = data[1].Element
 		c.Assert(data[1].Action, check.Equals, "UPDATE")
 		c.Assert(data[1].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[1].Type, check.Equals, "edges")
+		c.Assert(data[1].Type, check.Equals, PayloadTypeEdge)
 		c.Assert(data[1].Key, check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		_, ok = el["properties"]

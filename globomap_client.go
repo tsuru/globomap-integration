@@ -19,6 +19,13 @@ import (
 	tsuruErrors "github.com/tsuru/tsuru/errors"
 )
 
+type PayloadType string
+
+const (
+	PayloadTypeCollection = PayloadType("collections")
+	PayloadTypeEdge       = PayloadType("edges")
+)
+
 type globomapClient struct {
 	LoaderHostname string
 	ApiHostname    string
@@ -27,7 +34,7 @@ type globomapClient struct {
 type globomapPayload struct {
 	Collection string                 `json:"collection"`
 	Action     string                 `json:"action"`
-	Type       string                 `json:"type"`
+	Type       PayloadType            `json:"type"`
 	Key        string                 `json:"key"`
 	Element    map[string]interface{} `json:"element"`
 }

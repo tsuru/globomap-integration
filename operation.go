@@ -86,7 +86,7 @@ func baseDocument(name, action, collection string, time time.Time, props map[str
 		Action:     action,
 		Collection: collection,
 		Key:        "tsuru_" + name,
-		Type:       "collections",
+		Type:       PayloadTypeCollection,
 	}
 
 	if action == "DELETE" {
@@ -167,7 +167,7 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 	props := globomapPayload{
 		Action:     op.action,
 		Collection: "tsuru_pool_app",
-		Type:       "edges",
+		Type:       PayloadTypeEdge,
 		Key:        "tsuru_" + id,
 	}
 
@@ -226,7 +226,7 @@ func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globoma
 	edge := globomapPayload{
 		Action:     op.action,
 		Collection: "tsuru_pool_comp_unit",
-		Type:       "edges",
+		Type:       PayloadTypeEdge,
 		Key:        "tsuru_" + strings.Replace(ip, ".", "_", -1),
 	}
 
@@ -360,7 +360,7 @@ func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
 	return &globomapPayload{
 		Action:     op.action,
 		Collection: "tsuru_service_service_instance",
-		Type:       "edges",
+		Type:       PayloadTypeEdge,
 		Key:        "tsuru_" + id,
 		Element: map[string]interface{}{
 			"id":        id,
