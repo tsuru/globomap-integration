@@ -82,14 +82,14 @@ func fetchEvents(filters []eventFilter) []event {
 }
 
 type eventProcessor interface {
-	process(groupedEvents) ([]operation, error)
+	process(target string, events []event) ([]operation, error)
 }
 
 func processorAsFunc(p eventProcessor) eventProcessorFunc {
 	return p.process
 }
 
-type eventProcessorFunc func(groupedEvents) ([]operation, error)
+type eventProcessorFunc func(target string, events []event) ([]operation, error)
 
 // processEvents groups events by target and pass each of the groups to the
 // corresponding processor
@@ -98,14 +98,16 @@ func processEvents(events []event, processors map[string]eventProcessorFunc) {
 	group := groupByTarget(events)
 	operations := []operation{}
 	for g, p := range processors {
-		ops, err := p(group[g])
-		if err != nil {
-			if env.config.verbose {
-				fmt.Printf("Error processing %s events: %v", g, err)
+		for target, evs := range group[g] {
+			ops, err := p(target, evs)
+			if err != nil {
+				if env.config.verbose {
+					fmt.Printf("[%v] Error processing %s events: %v", g, target, err)
+				}
+				continue
 			}
-			continue
+			operations = append(operations, ops...)
 		}
-		operations = append(operations, ops...)
 	}
 
 	postUpdates(operations)
@@ -115,7 +117,7 @@ type serviceInstanceProcessor struct {
 	instances map[string]tsuru.ServiceInstance
 }
 
-func (p *serviceInstanceProcessor) process(events groupedEvents) ([]operation, error) {
+func (p *serviceInstanceProcessor) process(target string, events []event) ([]operation, error) {
 	var operations []operation
 
 	if len(events) > 0 && p.instances == nil {
@@ -133,34 +135,32 @@ func (p *serviceInstanceProcessor) process(events groupedEvents) ([]operation, e
 		}
 	}
 
-	for name, evs := range events {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		endTime := evs[len(evs)-1].EndTime
-		lastStatus := eventStatus(evs[len(evs)-1])
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
+	})
+	endTime := events[len(events)-1].EndTime
+	lastStatus := eventStatus(events[len(events)-1])
 
-		instance := p.instances[name]
+	instance := p.instances[target]
 
-		// we need to make sure we set the name even if the service
-		// instance was deleted (and is not in the map)
-		nameParts := strings.Split(name, "/")
-		if len(nameParts) != 2 {
-			return nil, fmt.Errorf("invalid instance name %q from event", name)
-		}
-		instance.ServiceName = nameParts[0]
-		instance.Name = nameParts[1]
-
-		op := serviceInstanceOperation{
-			baseOperation: baseOperation{
-				action: lastStatus,
-				time:   endTime,
-			},
-			instance: instance,
-		}
-
-		operations = append(operations, &op)
+	// we need to make sure we set the name even if the service
+	// instance was deleted (and is not in the map)
+	nameParts := strings.Split(target, "/")
+	if len(nameParts) != 2 {
+		return nil, fmt.Errorf("invalid instance name %q from event", target)
 	}
+	instance.ServiceName = nameParts[0]
+	instance.Name = nameParts[1]
+
+	op := serviceInstanceOperation{
+		baseOperation: baseOperation{
+			action: lastStatus,
+			time:   endTime,
+		},
+		instance: instance,
+	}
+
+	operations = append(operations, &op)
 
 	return operations, nil
 }
@@ -169,7 +169,7 @@ type serviceProcessor struct {
 	services map[string]tsuru.Service
 }
 
-func (p *serviceProcessor) process(events groupedEvents) ([]operation, error) {
+func (p *serviceProcessor) process(target string, events []event) ([]operation, error) {
 	var operations []operation
 
 	if len(events) > 0 && p.services == nil {
@@ -183,50 +183,47 @@ func (p *serviceProcessor) process(events groupedEvents) ([]operation, error) {
 		}
 	}
 
-	for name, evs := range events {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		endTime := evs[len(evs)-1].EndTime
-		lastStatus := eventStatus(evs[len(evs)-1])
-		service := p.services[name]
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
+	})
+	endTime := events[len(events)-1].EndTime
+	lastStatus := eventStatus(events[len(events)-1])
+	service := p.services[target]
 
-		// we need to make sure we set the name even if the service
-		// was deleted (and is not in the map)
-		service.Service = name
+	// we need to make sure we set the name even if the service
+	// was deleted (and is not in the map)
+	service.Service = target
 
-		op := serviceOperation{
-			baseOperation: baseOperation{
-				action: lastStatus,
-				time:   endTime,
-			},
-			service: service,
-		}
-
-		operations = append(operations, &op)
+	op := serviceOperation{
+		baseOperation: baseOperation{
+			action: lastStatus,
+			time:   endTime,
+		},
+		service: service,
 	}
+
+	operations = append(operations, &op)
 
 	return operations, nil
 }
 
-func processPoolEvents(events groupedEvents) ([]operation, error) {
+func processPoolEvents(target string, events []event) ([]operation, error) {
 	var operations []operation
 
-	for name, evs := range events {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		endTime := evs[len(evs)-1].EndTime
-		lastStatus := eventStatus(evs[len(evs)-1])
-		op := &poolOperation{
-			baseOperation: baseOperation{
-				action: lastStatus,
-				time:   endTime,
-			},
-			poolName: name,
-		}
-		operations = append(operations, op)
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
+	})
+	endTime := events[len(events)-1].EndTime
+	lastStatus := eventStatus(events[len(events)-1])
+	op := &poolOperation{
+		baseOperation: baseOperation{
+			action: lastStatus,
+			time:   endTime,
+		},
+		poolName: target,
 	}
+	operations = append(operations, op)
+
 	if len(operations) > 0 {
 		var err error
 		env.pools, err = env.tsuru.PoolList()
@@ -238,34 +235,32 @@ func processPoolEvents(events groupedEvents) ([]operation, error) {
 	return operations, nil
 }
 
-func processNodeEvents(events groupedEvents) ([]operation, error) {
+func processNodeEvents(target string, events []event) ([]operation, error) {
 	var operations []operation
-	for addr, evs := range events {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		lastEvent := evs[0]
-		endTime := lastEvent.EndTime
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
+	})
+	lastEvent := events[0]
+	endTime := lastEvent.EndTime
 
-		if lastEvent.Kind.Name == "healer" {
-			if ops, err := processHealerEvent(lastEvent, addr); err == nil {
-				operations = append(operations, ops...)
-			} else {
-				fmt.Printf("Error processing healing event for addr %v: %v", addr, err)
-			}
-			continue
+	if lastEvent.Kind.Name == "healer" {
+		if ops, err := processHealerEvent(lastEvent, target); err == nil {
+			operations = append(operations, ops...)
+		} else {
+			fmt.Printf("Error processing healing event for addr %v: %v", target, err)
 		}
-
-		lastStatus := eventStatus(lastEvent)
-		op := &nodeOperation{
-			baseOperation: baseOperation{
-				action: lastStatus,
-				time:   endTime,
-			},
-			nodeAddr: addr,
-		}
-		operations = append(operations, op)
+		return operations, nil
 	}
+
+	lastStatus := eventStatus(lastEvent)
+	op := &nodeOperation{
+		baseOperation: baseOperation{
+			action: lastStatus,
+			time:   endTime,
+		},
+		nodeAddr: target,
+	}
+	operations = append(operations, op)
 
 	if len(operations) > 0 {
 		var err error
@@ -305,44 +300,42 @@ func processHealerEvent(e event, addr string) ([]operation, error) {
 	return append([]operation{}, addedNodeOp, removedNodeOp), nil
 }
 
-func processAppEvents(events groupedEvents) ([]operation, error) {
-	var operations []operation
-	for name, evs := range events {
-		sort.Slice(evs, func(i, j int) bool {
-			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
-		})
-		endTime := evs[len(evs)-1].EndTime
-		lastStatus := eventStatus(evs[len(evs)-1])
+func processAppEvents(target string, events []event) ([]operation, error) {
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
+	})
+	endTime := events[len(events)-1].EndTime
+	lastStatus := eventStatus(events[len(events)-1])
 
-		var cachedApp *app
-		if lastStatus != "DELETE" {
-			var err error
-			cachedApp, err = env.tsuru.AppInfo(name)
-			if err != nil {
-				if env.config.verbose {
-					fmt.Printf("Failed to retrieve app %s info: %v. Skipping.", name, err)
-				}
-				continue
+	var cachedApp *app
+	if lastStatus != "DELETE" {
+		var err error
+		cachedApp, err = env.tsuru.AppInfo(target)
+		if err != nil {
+			if env.config.verbose {
+				fmt.Printf("Failed to retrieve app %s info: %v. Skipping.", target, err)
 			}
+			return nil, nil
 		}
+	}
 
-		op := &appOperation{
+	operations := []operation{
+		&appOperation{
 			baseOperation: baseOperation{
 				action: lastStatus,
 				time:   endTime,
 			},
-			appName:   name,
+			appName:   target,
 			cachedApp: cachedApp,
-		}
-		appPoolOp := &appPoolOperation{
+		},
+		&appPoolOperation{
 			baseOperation: baseOperation{
 				action: lastStatus,
 				time:   endTime,
 			},
-			appName:   name,
+			appName:   target,
 			cachedApp: cachedApp,
-		}
-		operations = append(operations, op, appPoolOp)
+		},
 	}
 
 	return operations, nil
