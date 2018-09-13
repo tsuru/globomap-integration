@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,18 +26,32 @@ func newEvent(kind, value string) event {
 	e.Target.Type = parts[0]
 	e.Target.Value = value
 	e.Kind.Name = kind
+	e.EndTime = time.Now()
 	return e
 }
 
-func newTsuruServer(events []event, services []tsuru.Service, apps []app, pools []pool) *httptest.Server {
+type tsuruServer struct {
+	*httptest.Server
+	m             sync.Mutex
+	appInfoCalled map[string]int
+}
+
+func newTsuruServer(events []event, services []tsuru.Service, apps []app, pools []pool, nodes []node) *tsuruServer {
 	appIndex := make(map[string]app)
 	for _, a := range apps {
 		appIndex[a.Name] = a
 	}
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	tsuruServer := tsuruServer{
+		appInfoCalled: make(map[string]int),
+	}
+	tsuruServer.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if strings.HasPrefix(req.URL.Path, "/1.0/apps/") {
 			parts := strings.Split(req.URL.Path, "/")
-			if app, ok := appIndex[parts[len(parts)-1]]; ok {
+			tsuruServer.m.Lock()
+			defer tsuruServer.m.Unlock()
+			app := parts[len(parts)-1]
+			tsuruServer.appInfoCalled[app]++
+			if app, ok := appIndex[app]; ok {
 				json.NewEncoder(w).Encode(app)
 				return
 			}
@@ -59,10 +74,13 @@ func newTsuruServer(events []event, services []tsuru.Service, apps []app, pools 
 			json.NewEncoder(w).Encode(services)
 		case "/1.0/pools":
 			json.NewEncoder(w).Encode(pools)
+		case "/1.2/node":
+			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: nodes})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	return &tsuruServer
 }
 
 func (s *S) TestUpdateCmdRun(c *check.C) {
@@ -87,7 +105,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 			},
 		},
 	}
-	tsuruServer := newTsuruServer(events, services, []app{{Name: "myapp1", Pool: "pool1"}}, []pool{{Name: "pool1"}, {Name: "pool2"}})
+	tsuruServer := newTsuruServer(events, services, []app{{Name: "myapp1", Pool: "pool1"}}, []pool{{Name: "pool1"}, {Name: "pool2"}}, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -178,38 +196,20 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
-	var requestAppInfo1, requestAppInfo2 int32
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				events := []event{
-					newEvent("app.update", "myapp1"),
-					newEvent("app.delete", "myapp1"),
-					newEvent("app.create", "myapp2"),
-					newEvent("app.update", "myapp2"),
-					newEvent("pool.update", "pool1"),
-					newEvent("pool.delete", "pool1"),
-					newEvent("pool.create", "pool1"),
-					newEvent("pool.create", "pool2"),
-					newEvent("pool.delete", "pool2"),
-				}
-				json.NewEncoder(w).Encode(events)
-			} else {
-				json.NewEncoder(w).Encode(nil)
-			}
-		case "/1.0/apps/myapp1":
-			atomic.AddInt32(&requestAppInfo1, 1)
-			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
-		case "/1.0/apps/myapp2":
-			atomic.AddInt32(&requestAppInfo2, 1)
-			json.NewEncoder(w).Encode(app{Name: "myapp2", Pool: "pool1"})
-		case "/1.0/pools":
-			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}})
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	events := []event{
+		newEvent("app.update", "myapp1"),
+		newEvent("app.delete", "myapp1"),
+		newEvent("app.create", "myapp2"),
+		newEvent("app.update", "myapp2"),
+		newEvent("pool.update", "pool1"),
+		newEvent("pool.delete", "pool1"),
+		newEvent("pool.create", "pool1"),
+		newEvent("pool.create", "pool2"),
+		newEvent("pool.delete", "pool2"),
+	}
+	apps := []app{{Name: "myapp1", Pool: "pool1"}, {Name: "myapp2", Pool: "pool1"}}
+	pools := []pool{{Name: "pool1"}}
+	tsuruServer := newTsuruServer(events, nil, apps, pools, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -277,18 +277,12 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 	case <-time.After(5 * time.Second):
 		c.Fail()
 	}
-	c.Assert(atomic.LoadInt32(&requestAppInfo1), check.Equals, int32(1))
-	c.Assert(atomic.LoadInt32(&requestAppInfo2), check.Equals, int32(1))
+	c.Assert(tsuruServer.appInfoCalled["myapp1"], check.Equals, 1)
+	c.Assert(tsuruServer.appInfoCalled["myapp2"], check.Equals, 1)
 }
 
 func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path == "/events" {
-			json.NewEncoder(w).Encode([]event{})
-		} else {
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	tsuruServer := newTsuruServer(nil, nil, nil, nil, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -312,34 +306,20 @@ func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				events := []event{
-					newEvent("app.create", "myapp1"),
-				}
-				json.NewEncoder(w).Encode(events)
-			} else {
-				json.NewEncoder(w).Encode(nil)
-			}
-		case "/1.0/apps/myapp1":
-			a := app{
-				Name:        "myapp1",
-				Description: "about my app",
-				Tags:        []string{"tag1", "tag2"},
-				Platform:    "go",
-				Ip:          "myapp1.example.com",
-				Cname:       []string{"myapp1.alias.com"},
-				Router:      "galeb",
-				Owner:       "me@example.com",
-				TeamOwner:   "my-team",
-				Teams:       []string{"team1", "team2"},
-				Plan:        &tsuru.Plan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
-			}
-			json.NewEncoder(w).Encode(a)
-		}
-	}))
+	a := app{
+		Name:        "myapp1",
+		Description: "about my app",
+		Tags:        []string{"tag1", "tag2"},
+		Platform:    "go",
+		Ip:          "myapp1.example.com",
+		Cname:       []string{"myapp1.alias.com"},
+		Router:      "galeb",
+		Owner:       "me@example.com",
+		TeamOwner:   "my-team",
+		Teams:       []string{"team1", "team2"},
+		Plan:        &tsuru.Plan{Name: "large", Router: "galeb1", Memory: 1073741824, Swap: 0, Cpushare: 1024},
+	}
+	tsuruServer := newTsuruServer([]event{newEvent("app.create", "myapp1")}, nil, []app{a}, nil, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -407,28 +387,15 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				events := []event{
-					newEvent("pool.create", "pool1"),
-				}
-				json.NewEncoder(w).Encode(events)
-			} else {
-				json.NewEncoder(w).Encode(nil)
-			}
-		case "/1.0/pools":
-			p := pool{
-				Name:        "pool1",
-				Provisioner: "docker",
-				Default_:    false,
-				Public:      true,
-				Teams:       []string{"team1", "team2", "team3"},
-			}
-			json.NewEncoder(w).Encode([]pool{p})
-		}
-	}))
+	tsuruServer := newTsuruServer([]event{
+		newEvent("pool.create", "pool1"),
+	}, nil, nil, []pool{pool{
+		Name:        "pool1",
+		Provisioner: "docker",
+		Default_:    false,
+		Public:      true,
+		Teams:       []string{"team1", "team2", "team3"},
+	}}, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -476,57 +443,43 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				e1 := newEvent("node.create", "1.1.1.1")
-				e2 := newEvent("node.delete", "https://2.2.2.2:2376")
-				e3 := newEvent("node.create", "3.3.3.3")
-
-				e4 := newEvent("node.create", "https://4.4.4.4:2376")
-				e4.EndTime = time.Now()
-
-				json.NewEncoder(w).Encode([]event{e1, e2, e3, e4})
-			} else {
-				e5 := event{}
-				e5.Target.Type = "node"
-				e5.Target.Value = "https://4.4.4.4:2376"
-				e5.Kind.Name = "healer"
-
-				data := struct {
-					Id string `bson:"_id"`
-				}{"https://5.5.5.5:2376"}
-				b, err := bson.Marshal(data)
-				c.Assert(err, check.IsNil)
-				e5.EndCustomData = bson.Raw{Data: b, Kind: 3}
-				e5.EndTime = time.Now()
-
-				json.NewEncoder(w).Encode([]event{e5})
-			}
-		case "/1.0/pools":
-			p1 := pool{
-				Name:        "pool1",
-				Provisioner: "docker",
-				Default_:    false,
-				Public:      true,
-				Teams:       []string{"team1", "team2", "team3"},
-			}
-			p2 := pool{
-				Name:        "pool2",
-				Provisioner: "swarm",
-				Default_:    false,
-				Public:      false,
-				Teams:       []string{"team1"},
-			}
-			json.NewEncoder(w).Encode([]pool{p1, p2})
-		case "/1.2/node":
-			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}
-			n3 := node{Pool: "pool2", Iaasid: "node3", Address: "3.3.3.3"}
-			n5 := node{Pool: "pool2", Iaasid: "node5", Address: "https://5.5.5.5:2376"}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n3, n5}})
-		}
-	}))
+	healing := event{}
+	events := []event{
+		newEvent("node.create", "1.1.1.1"),
+		newEvent("node.delete", "https://2.2.2.2:2376"),
+		newEvent("node.create", "3.3.3.3"),
+		newEvent("node.create", "https://4.4.4.4:2376"),
+	}
+	healing.Target.Type = "node"
+	healing.Target.Value = "https://4.4.4.4:2376"
+	healing.Kind.Name = "healer"
+	data := struct {
+		Id string `bson:"_id"`
+	}{"https://5.5.5.5:2376"}
+	b, err := bson.Marshal(data)
+	c.Assert(err, check.IsNil)
+	healing.EndCustomData = bson.Raw{Data: b, Kind: 3}
+	healing.EndTime = time.Now()
+	events = append(events, healing)
+	pools := []pool{{
+		Name:        "pool1",
+		Provisioner: "docker",
+		Default_:    false,
+		Public:      true,
+		Teams:       []string{"team1", "team2", "team3"},
+	}, {
+		Name:        "pool2",
+		Provisioner: "swarm",
+		Default_:    false,
+		Public:      false,
+		Teams:       []string{"team1"},
+	}}
+	nodes := []node{
+		{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"},
+		{Pool: "pool2", Iaasid: "node5", Address: "https://5.5.5.5:2376"},
+		{Pool: "pool2", Iaasid: "node3", Address: "3.3.3.3"},
+	}
+	tsuruServer := newTsuruServer(events, nil, nil, pools, nodes)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -567,7 +520,7 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(err, check.IsNil)
 		defer req.Body.Close()
 
-		//c.Assert(data, check.HasLen, 5)
+		c.Assert(data, check.HasLen, 5)
 
 		sortPayload(data)
 		el := data[0].Element
@@ -634,29 +587,13 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				e1 := newEvent("node.create", "1.1.1.1")
-				json.NewEncoder(w).Encode([]event{e1})
-			} else {
-				json.NewEncoder(w).Encode(nil)
-			}
-		case "/1.0/pools":
-			p1 := pool{
-				Name:        "pool1",
-				Provisioner: "docker",
-				Default_:    false,
-				Public:      true,
-				Teams:       []string{"team1", "team2", "team3"},
-			}
-			json.NewEncoder(w).Encode([]pool{p1})
-		case "/1.2/node":
-			n1 := node{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}
-			json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
-		}
-	}))
+	tsuruServer := newTsuruServer([]event{newEvent("node.create", "1.1.1.1")}, nil, nil, []pool{{
+		Name:        "pool1",
+		Provisioner: "docker",
+		Default_:    false,
+		Public:      true,
+		Teams:       []string{"team1", "team2", "team3"},
+	}}, []node{{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}})
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -722,24 +659,13 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 }
 
 func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Path {
-		case "/events":
-			if req.FormValue("target.type") == "" {
-				failedEvent := newEvent("app.delete", "myapp1")
-				failedEvent.Error = "something wrong happened"
-				events := []event{
-					newEvent("app.create", "myapp1"),
-					failedEvent,
-				}
-				json.NewEncoder(w).Encode(events)
-			} else {
-				json.NewEncoder(w).Encode(nil)
-			}
-		case "/1.0/apps/myapp1":
-			json.NewEncoder(w).Encode(app{})
-		}
-	}))
+	failedEvent := newEvent("app.delete", "myapp1")
+	failedEvent.Error = "something wrong happened"
+	events := []event{
+		newEvent("app.create", "myapp1"),
+		failedEvent,
+	}
+	tsuruServer := newTsuruServer(events, nil, []app{{Name: "myapp1"}}, nil, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 

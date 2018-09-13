@@ -113,7 +113,7 @@ func processEvents(events []event, processors map[string]eventProcessorFunc) {
 	for g, p := range processors {
 		for target, evs := range group[g] {
 			sort.Slice(evs, func(i, j int) bool {
-				return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+				return evs[i].EndTime.UnixNano() < evs[j].EndTime.UnixNano()
 			})
 			ops, err := p(target, evs)
 			if err != nil {
@@ -240,7 +240,7 @@ func processPoolEvents(target string, events []event) ([]operation, error) {
 func processNodeEvents(target string, events []event) ([]operation, error) {
 	var operations []operation
 
-	lastEvent := events[0]
+	lastEvent := events[len(events)-1]
 	endTime := lastEvent.EndTime
 
 	if lastEvent.Kind.Name == "healer" {
