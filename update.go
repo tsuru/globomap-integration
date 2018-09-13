@@ -9,6 +9,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 )
 
 type updateCmd struct{}
@@ -27,6 +29,7 @@ func (u *updateCmd) Run() {
 			"app.create", "app.update", "app.delete",
 			"pool.create", "pool.update", "pool.delete",
 			"node.create", "node.delete",
+			"service.create", "service.delete",
 		}, Since: &since},
 		{Kindnames: []string{"healer"}, TargetType: "node", Since: &since},
 	})
@@ -35,10 +38,11 @@ func (u *updateCmd) Run() {
 		fmt.Printf("Found %d events\n", len(events))
 	}
 
-	processEvents(events, map[string]eventProcessor{
-		"pool": processPoolEvents,
-		"node": processNodeEvents,
-		"app":  processAppEvents,
+	processEvents(events, map[string]eventProcessorFunc{
+		"pool":    processPoolEvents,
+		"node":    processNodeEvents,
+		"app":     processAppEvents,
+		"service": processorAsFunc(&serviceProcessor{}),
 	})
 }
 
@@ -74,11 +78,19 @@ func fetchEvents(filters []eventFilter) []event {
 	return events
 }
 
-type eventProcessor func(groupedEvents) ([]operation, error)
+type eventProcessor interface {
+	process(groupedEvents) ([]operation, error)
+}
+
+func processorAsFunc(p eventProcessor) eventProcessorFunc {
+	return p.process
+}
+
+type eventProcessorFunc func(groupedEvents) ([]operation, error)
 
 // processEvents groups events by target and pass each of the groups to the
 // corresponding processor
-func processEvents(events []event, processors map[string]eventProcessor) {
+func processEvents(events []event, processors map[string]eventProcessorFunc) {
 
 	group := groupByTarget(events)
 	operations := []operation{}
@@ -94,6 +106,47 @@ func processEvents(events []event, processors map[string]eventProcessor) {
 	}
 
 	postUpdates(operations)
+}
+
+type serviceProcessor struct {
+	services map[string]tsuru.Service
+}
+
+func (p *serviceProcessor) process(events groupedEvents) ([]operation, error) {
+	var operations []operation
+
+	if len(events) > 0 && p.services == nil {
+		services, err := env.tsuru.ServiceList()
+		if err != nil {
+			return nil, err
+		}
+		p.services = make(map[string]tsuru.Service)
+		for _, s := range services {
+			p.services[s.Service] = s
+		}
+	}
+
+	for name, evs := range events {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		endTime := evs[len(evs)-1].EndTime
+		lastStatus := eventStatus(evs[len(evs)-1])
+		op := serviceOperation{
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
+			service: tsuru.Service{Service: name},
+		}
+		if s, ok := p.services[name]; ok {
+			op.service.Plans = s.Plans
+		}
+
+		operations = append(operations, &op)
+	}
+
+	return operations, nil
 }
 
 func processPoolEvents(events groupedEvents) ([]operation, error) {

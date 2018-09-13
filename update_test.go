@@ -38,11 +38,16 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 					newEvent("app.delete", "myapp2"),
 					newEvent("pool.update", "pool1"),
 					newEvent("pool.delete", "pool2"),
+					newEvent("service.create", "service1"),
+					newEvent("service.create", "service2"),
+					newEvent("service.delete", "service2"),
 				}
 				json.NewEncoder(w).Encode(events)
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
+		case "/1.0/services/instances":
+			json.NewEncoder(w).Encode([]tsuru.Service{{Service: "service1", Plans: []string{"small", "large"}}})
 		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/1.0/pools":
@@ -65,7 +70,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 6)
+		c.Assert(data, check.HasLen, 8)
 
 		sortPayload(data)
 		el := data[0].Element
@@ -105,6 +110,16 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(data[5].Collection, check.Equals, "tsuru_pool_app")
 		c.Assert(data[5].Type, check.Equals, PayloadTypeEdge)
 		c.Assert(data[5].Key, check.Equals, "tsuru_myapp2-pool")
+
+		c.Assert(data[6].Action, check.Equals, "UPDATE")
+		c.Assert(data[6].Collection, check.Equals, "tsuru_service")
+		c.Assert(data[6].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[6].Key, check.Equals, "tsuru_service1")
+
+		c.Assert(data[7].Action, check.Equals, "DELETE")
+		c.Assert(data[7].Collection, check.Equals, "tsuru_service")
+		c.Assert(data[7].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[7].Key, check.Equals, "tsuru_service2")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)
