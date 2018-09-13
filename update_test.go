@@ -41,13 +41,24 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 					newEvent("service.create", "service1"),
 					newEvent("service.create", "service2"),
 					newEvent("service.delete", "service2"),
+					newEvent("service-instance.create", "service1/instance1"),
+					newEvent("service-instance.create", "service1/instance2"),
+					newEvent("service-instance.delete", "service1/instance1"),
 				}
 				json.NewEncoder(w).Encode(events)
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
 		case "/1.0/services/instances":
-			json.NewEncoder(w).Encode([]tsuru.Service{{Service: "service1", Plans: []string{"small", "large"}}})
+			json.NewEncoder(w).Encode([]tsuru.Service{
+				{
+					Service: "service1",
+					Plans:   []string{"small", "large"},
+					ServiceInstances: []tsuru.ServiceInstance{
+						{ServiceName: "service1", Name: "instance2"},
+					},
+				},
+			})
 		case "/1.0/apps/myapp1":
 			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
 		case "/1.0/pools":
@@ -70,7 +81,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 8)
+		c.Assert(data, check.HasLen, 10)
 
 		sortPayload(data)
 		el := data[0].Element
@@ -120,6 +131,16 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(data[7].Collection, check.Equals, "tsuru_service")
 		c.Assert(data[7].Type, check.Equals, PayloadTypeCollection)
 		c.Assert(data[7].Key, check.Equals, "tsuru_service2")
+
+		c.Assert(data[8].Action, check.Equals, "DELETE")
+		c.Assert(data[8].Collection, check.Equals, "tsuru_service_instance")
+		c.Assert(data[8].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[8].Key, check.Equals, "tsuru_service1_instance1")
+
+		c.Assert(data[9].Action, check.Equals, "UPDATE")
+		c.Assert(data[9].Collection, check.Equals, "tsuru_service_instance")
+		c.Assert(data[9].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[9].Key, check.Equals, "tsuru_service1_instance2")
 	}))
 	defer server.Close()
 	os.Setenv("GLOBOMAP_LOADER_HOSTNAME", server.URL)

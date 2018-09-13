@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,7 @@ func (u *updateCmd) Run() {
 			"pool.create", "pool.update", "pool.delete",
 			"node.create", "node.delete",
 			"service.create", "service.delete",
+			"service-instance.create", "service-instance.delete",
 		}, Since: &since},
 		{Kindnames: []string{"healer"}, TargetType: "node", Since: &since},
 	})
@@ -39,10 +41,11 @@ func (u *updateCmd) Run() {
 	}
 
 	processEvents(events, map[string]eventProcessorFunc{
-		"pool":    processPoolEvents,
-		"node":    processNodeEvents,
-		"app":     processAppEvents,
-		"service": processorAsFunc(&serviceProcessor{}),
+		"pool":             processPoolEvents,
+		"node":             processNodeEvents,
+		"app":              processAppEvents,
+		"service":          processorAsFunc(&serviceProcessor{}),
+		"service-instance": processorAsFunc(&serviceInstanceProcessor{}),
 	})
 }
 
@@ -108,6 +111,60 @@ func processEvents(events []event, processors map[string]eventProcessorFunc) {
 	postUpdates(operations)
 }
 
+type serviceInstanceProcessor struct {
+	instances map[string]tsuru.ServiceInstance
+}
+
+func (p *serviceInstanceProcessor) process(events groupedEvents) ([]operation, error) {
+	var operations []operation
+
+	if len(events) > 0 && p.instances == nil {
+		services, err := env.tsuru.ServiceList()
+		if err != nil {
+			return nil, err
+		}
+
+		p.instances = make(map[string]tsuru.ServiceInstance)
+
+		for _, s := range services {
+			for _, i := range s.ServiceInstances {
+				p.instances[s.Service+"/"+i.Name] = i
+			}
+		}
+	}
+
+	for name, evs := range events {
+		sort.Slice(evs, func(i, j int) bool {
+			return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+		})
+		endTime := evs[len(evs)-1].EndTime
+		lastStatus := eventStatus(evs[len(evs)-1])
+
+		instance := p.instances[name]
+
+		// we need to make sure we set the name even if the service
+		// instance was deleted (and is not in the map)
+		nameParts := strings.Split(name, "/")
+		if len(nameParts) != 2 {
+			return nil, fmt.Errorf("invalid instance name %q from event", name)
+		}
+		instance.ServiceName = nameParts[0]
+		instance.Name = nameParts[1]
+
+		op := serviceInstanceOperation{
+			baseOperation: baseOperation{
+				action: lastStatus,
+				time:   endTime,
+			},
+			instance: instance,
+		}
+
+		operations = append(operations, &op)
+	}
+
+	return operations, nil
+}
+
 type serviceProcessor struct {
 	services map[string]tsuru.Service
 }
@@ -132,15 +189,18 @@ func (p *serviceProcessor) process(events groupedEvents) ([]operation, error) {
 		})
 		endTime := evs[len(evs)-1].EndTime
 		lastStatus := eventStatus(evs[len(evs)-1])
+		service := p.services[name]
+
+		// we need to make sure we set the name even if the service
+		// was deleted (and is not in the map)
+		service.Service = name
+
 		op := serviceOperation{
 			baseOperation: baseOperation{
 				action: lastStatus,
 				time:   endTime,
 			},
-			service: tsuru.Service{Service: name},
-		}
-		if s, ok := p.services[name]; ok {
-			op.service.Plans = s.Plans
+			service: service,
 		}
 
 		operations = append(operations, &op)
