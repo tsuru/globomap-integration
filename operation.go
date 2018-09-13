@@ -57,8 +57,9 @@ type serviceServiceInstanceOperation struct {
 
 type appServiceInstanceOperation struct {
 	baseOperation
-	appName  string
-	instance tsuru.ServiceInstance
+	appName      string
+	instanceName string
+	serviceName  string
 }
 
 type baseOperation struct {
@@ -403,7 +404,7 @@ func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
 }
 
 func (op *appServiceInstanceOperation) toPayload() *globomapPayload {
-	id := op.appName + "_" + op.instance.Name
+	id := op.appName + "_" + op.instanceName
 	return &globomapPayload{
 		Action:     op.action,
 		Collection: "tsuru_app_service_instance",
@@ -415,7 +416,7 @@ func (op *appServiceInstanceOperation) toPayload() *globomapPayload {
 			"provider":  "tsuru",
 			"timestamp": op.time.Unix(),
 			"from":      "tsuru_app/tsuru_" + op.appName,
-			"to":        "tsuru_service_instance/tsuru_" + op.instance.ServiceName + "_" + op.instance.Name,
+			"to":        "tsuru_service_instance/tsuru_" + op.serviceName + "_" + op.instanceName,
 		},
 	}
 }

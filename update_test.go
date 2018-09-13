@@ -28,45 +28,66 @@ func newEvent(kind, value string) event {
 	return e
 }
 
-func (s *S) TestUpdateCmdRun(c *check.C) {
-	tsuruServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+func newTsuruServer(events []event, services []tsuru.Service, apps []app, pools []pool) *httptest.Server {
+	appIndex := make(map[string]app)
+	for _, a := range apps {
+		appIndex[a.Name] = a
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.HasPrefix(req.URL.Path, "/1.0/apps/") {
+			parts := strings.Split(req.URL.Path, "/")
+			if app, ok := appIndex[parts[len(parts)-1]]; ok {
+				json.NewEncoder(w).Encode(app)
+				return
+			}
+		}
 		switch req.URL.Path {
 		case "/events":
-			if req.FormValue("target.type") == "" {
-				events := []event{
-					newEvent("app.create", "myapp1"),
-					newEvent("app.delete", "myapp2"),
-					newEvent("pool.update", "pool1"),
-					newEvent("pool.delete", "pool2"),
-					newEvent("service.create", "service1"),
-					newEvent("service.create", "service2"),
-					newEvent("service.delete", "service2"),
-					newEvent("service-instance.create", "service1/instance1"),
-					newEvent("service-instance.create", "service1/instance2"),
-					newEvent("service-instance.delete", "service1/instance1"),
-				}
-				json.NewEncoder(w).Encode(events)
-			} else {
-				json.NewEncoder(w).Encode(nil)
+			req.ParseForm()
+			reqKinds := make(map[string]struct{})
+			for _, k := range req.Form["kindname"] {
+				reqKinds[k] = struct{}{}
 			}
+			var selEvents []event
+			for _, e := range events {
+				if _, ok := reqKinds[e.Kind.Name]; ok {
+					selEvents = append(selEvents, e)
+				}
+			}
+			json.NewEncoder(w).Encode(selEvents)
 		case "/1.0/services/instances":
-			json.NewEncoder(w).Encode([]tsuru.Service{
-				{
-					Service: "service1",
-					Plans:   []string{"small", "large"},
-					ServiceInstances: []tsuru.ServiceInstance{
-						{ServiceName: "service1", Name: "instance2"},
-					},
-				},
-			})
-		case "/1.0/apps/myapp1":
-			json.NewEncoder(w).Encode(app{Name: "myapp1", Pool: "pool1"})
+			json.NewEncoder(w).Encode(services)
 		case "/1.0/pools":
-			json.NewEncoder(w).Encode([]pool{{Name: "pool1"}, {Name: "pool2"}})
+			json.NewEncoder(w).Encode(pools)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+}
+
+func (s *S) TestUpdateCmdRun(c *check.C) {
+	events := []event{
+		newEvent("app.create", "myapp1"),
+		newEvent("app.delete", "myapp2"),
+		newEvent("pool.update", "pool1"),
+		newEvent("pool.delete", "pool2"),
+		newEvent("service.create", "service1"),
+		newEvent("service.create", "service2"),
+		newEvent("service.delete", "service2"),
+		newEvent("service-instance.create", "service1/instance1"),
+		newEvent("service-instance.create", "service1/instance2"),
+		newEvent("service-instance.delete", "service1/instance1"),
+	}
+	services := []tsuru.Service{
+		{
+			Service: "service1",
+			Plans:   []string{"small", "large"},
+			ServiceInstances: []tsuru.ServiceInstance{
+				{ServiceName: "service1", Name: "instance2"},
+			},
+		},
+	}
+	tsuruServer := newTsuruServer(events, services, []app{{Name: "myapp1", Pool: "pool1"}}, []pool{{Name: "pool1"}, {Name: "pool2"}})
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
 
@@ -81,7 +102,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(data, check.HasLen, 10)
+		c.Assert(len(data), check.Equals, 10)
 
 		sortPayload(data)
 		el := data[0].Element

@@ -47,6 +47,19 @@ func (u *updateCmd) Run() {
 		"service":          processorAsFunc(&serviceProcessor{}),
 		"service-instance": processorAsFunc(&serviceInstanceProcessor{}),
 	})
+
+	events = fetchEvents([]eventFilter{
+		{Kindnames: []string{"app.update.bind", "app.update.unbind"}, Since: &since},
+	})
+
+	if env.config.verbose {
+		fmt.Printf("Found %d bind/unbind events\n", len(events))
+	}
+
+	processEvents(events, map[string]eventProcessorFunc{
+		"app": processAppInstanceEvents,
+	})
+
 }
 
 func fetchEvents(filters []eventFilter) []event {
@@ -99,6 +112,9 @@ func processEvents(events []event, processors map[string]eventProcessorFunc) {
 	operations := []operation{}
 	for g, p := range processors {
 		for target, evs := range group[g] {
+			sort.Slice(evs, func(i, j int) bool {
+				return evs[i].EndTime.Unix() < evs[j].EndTime.Unix()
+			})
 			ops, err := p(target, evs)
 			if err != nil {
 				if env.config.verbose {
@@ -135,9 +151,6 @@ func (p *serviceInstanceProcessor) process(target string, events []event) ([]ope
 		}
 	}
 
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
-	})
 	endTime := events[len(events)-1].EndTime
 	lastStatus := eventStatus(events[len(events)-1])
 
@@ -145,12 +158,7 @@ func (p *serviceInstanceProcessor) process(target string, events []event) ([]ope
 
 	// we need to make sure we set the name even if the service
 	// instance was deleted (and is not in the map)
-	nameParts := strings.Split(target, "/")
-	if len(nameParts) != 2 {
-		return nil, fmt.Errorf("invalid instance name %q from event", target)
-	}
-	instance.ServiceName = nameParts[0]
-	instance.Name = nameParts[1]
+	instance.ServiceName, instance.Name = extractServiceInstance(target)
 
 	op := serviceInstanceOperation{
 		baseOperation: baseOperation{
@@ -183,9 +191,6 @@ func (p *serviceProcessor) process(target string, events []event) ([]operation, 
 		}
 	}
 
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
-	})
 	endTime := events[len(events)-1].EndTime
 	lastStatus := eventStatus(events[len(events)-1])
 	service := p.services[target]
@@ -210,9 +215,6 @@ func (p *serviceProcessor) process(target string, events []event) ([]operation, 
 func processPoolEvents(target string, events []event) ([]operation, error) {
 	var operations []operation
 
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
-	})
 	endTime := events[len(events)-1].EndTime
 	lastStatus := eventStatus(events[len(events)-1])
 	op := &poolOperation{
@@ -237,9 +239,7 @@ func processPoolEvents(target string, events []event) ([]operation, error) {
 
 func processNodeEvents(target string, events []event) ([]operation, error) {
 	var operations []operation
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
-	})
+
 	lastEvent := events[0]
 	endTime := lastEvent.EndTime
 
@@ -301,9 +301,6 @@ func processHealerEvent(e event, addr string) ([]operation, error) {
 }
 
 func processAppEvents(target string, events []event) ([]operation, error) {
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].EndTime.Unix() < events[j].EndTime.Unix()
-	})
 	endTime := events[len(events)-1].EndTime
 	lastStatus := eventStatus(events[len(events)-1])
 
@@ -339,6 +336,38 @@ func processAppEvents(target string, events []event) ([]operation, error) {
 	}
 
 	return operations, nil
+}
+
+func extractServiceInstance(fqdn string) (string, string) {
+	parts := strings.SplitN(fqdn, "/", 2)
+	return parts[0], parts[1]
+}
+
+func processAppInstanceEvents(app string, events []event) ([]operation, error) {
+	// We only care about the last bind/unbind operation to this
+	// service instance by this app.
+	operations := make(map[string]operation)
+	for _, e := range events {
+		action := "UPDATE"
+		if strings.HasSuffix(e.Kind.Name, "unbind") {
+			action = "DELETE"
+		}
+		service, instance := extractServiceInstance(e.Target.Value)
+		operations[e.Target.Value] = &appServiceInstanceOperation{
+			baseOperation: baseOperation{
+				action: action,
+				time:   e.EndTime,
+			},
+			serviceName:  service,
+			instanceName: instance,
+		}
+	}
+
+	var opList []operation
+	for _, o := range operations {
+		opList = append(opList, o)
+	}
+	return opList, nil
 }
 
 func groupByTarget(events []event) map[string]groupedEvents {

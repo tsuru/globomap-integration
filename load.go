@@ -212,8 +212,9 @@ func (c *loadCmd) loadServices() {
 						action: "UPDATE",
 						time:   time.Now(),
 					},
-					appName:  app,
-					instance: instance,
+					appName:      app,
+					instanceName: instance.Name,
+					serviceName:  instance.ServiceName,
 				})
 			}
 
