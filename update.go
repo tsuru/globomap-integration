@@ -16,27 +16,33 @@ type updateCmd struct{}
 type groupedEvents map[string][]event
 
 func (u *updateCmd) Run() {
-	events := fetchEvents()
-	if env.config.verbose {
-		fmt.Printf("Found %d events\n", len(events))
-	}
-	processEvents(events)
-}
-
-func fetchEvents() []event {
 	since := time.Now().Add(-1 * *env.config.start)
+
 	if env.config.verbose {
 		fmt.Printf("Fetching events since %s\n", since)
 	}
 
-	filters := []eventFilter{
+	events := fetchEvents([]eventFilter{
 		{Kindnames: []string{
 			"app.create", "app.update", "app.delete",
 			"pool.create", "pool.update", "pool.delete",
 			"node.create", "node.delete",
 		}, Since: &since},
 		{Kindnames: []string{"healer"}, TargetType: "node", Since: &since},
+	})
+
+	if env.config.verbose {
+		fmt.Printf("Found %d events\n", len(events))
 	}
+
+	processEvents(events, map[string]eventProcessor{
+		"pool": processPoolEvents,
+		"node": processNodeEvents,
+		"app":  processAppEvents,
+	})
+}
+
+func fetchEvents(filters []eventFilter) []event {
 
 	eventStream := make(chan []event, len(filters))
 	var wg sync.WaitGroup
@@ -68,12 +74,11 @@ func fetchEvents() []event {
 	return events
 }
 
-func processEvents(events []event) {
-	processors := map[string]func(map[string][]event) ([]operation, error){
-		"pool": processPoolEvents,
-		"node": processNodeEvents,
-		"app":  processAppEvents,
-	}
+type eventProcessor func(groupedEvents) ([]operation, error)
+
+// processEvents groups events by target and pass each of the groups to the
+// corresponding processor
+func processEvents(events []event, processors map[string]eventProcessor) {
 
 	group := groupByTarget(events)
 	operations := []operation{}
@@ -91,7 +96,7 @@ func processEvents(events []event) {
 	postUpdates(operations)
 }
 
-func processPoolEvents(events map[string][]event) ([]operation, error) {
+func processPoolEvents(events groupedEvents) ([]operation, error) {
 	var operations []operation
 
 	for name, evs := range events {
@@ -120,7 +125,7 @@ func processPoolEvents(events map[string][]event) ([]operation, error) {
 	return operations, nil
 }
 
-func processNodeEvents(events map[string][]event) ([]operation, error) {
+func processNodeEvents(events groupedEvents) ([]operation, error) {
 	var operations []operation
 	for addr, evs := range events {
 		sort.Slice(evs, func(i, j int) bool {
@@ -187,7 +192,7 @@ func processHealerEvent(e event, addr string) ([]operation, error) {
 	return append([]operation{}, addedNodeOp, removedNodeOp), nil
 }
 
-func processAppEvents(events map[string][]event) ([]operation, error) {
+func processAppEvents(events groupedEvents) ([]operation, error) {
 	var operations []operation
 	for name, evs := range events {
 		sort.Slice(evs, func(i, j int) bool {
