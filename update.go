@@ -168,7 +168,15 @@ func (p *serviceInstanceProcessor) process(target string, events []event) ([]ope
 		instance: instance,
 	}
 
-	operations = append(operations, &op)
+	op2 := serviceServiceInstanceOperation{
+		baseOperation: baseOperation{
+			action: lastStatus,
+			time:   endTime,
+		},
+		instance: instance,
+	}
+
+	operations = append(operations, &op, &op2)
 
 	return operations, nil
 }
