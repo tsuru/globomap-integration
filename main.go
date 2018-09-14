@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/tsuru/globomap-integration/globomap"
 )
 
 type command interface {
@@ -18,7 +20,7 @@ type environment struct {
 	config   configParams
 	cmd      command
 	tsuru    *tsuruClient
-	globomap *globomapClient
+	globomap *globomap.Client
 	pools    []pool
 	nodes    []node
 }
@@ -37,11 +39,14 @@ func setup(args []string) {
 		Hostname: env.config.tsuruHostname,
 		Token:    env.config.tsuruToken,
 	}
-	env.globomap = &globomapClient{
+	env.globomap = &globomap.Client{
 		ApiHostname:    env.config.globomapApiHostname,
 		LoaderHostname: env.config.globomapLoaderHostname,
 		Username:       env.config.globomapUsername,
 		Password:       env.config.globomapPassword,
+		ChunkInterval:  env.config.sleepTimeBetweenChunks,
+		Verbose:        env.config.verbose,
+		Dry:            env.config.dry,
 	}
 }
 
@@ -68,7 +73,7 @@ func main() {
 }
 
 func postUpdates(operations []operation) {
-	data := []globomapPayload{}
+	data := []globomap.Payload{}
 	for _, op := range operations {
 		payload := op.toPayload()
 		if payload == nil {

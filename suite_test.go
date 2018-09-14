@@ -9,6 +9,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/tsuru/globomap-integration/globomap"
 	"gopkg.in/check.v1"
 )
 
@@ -38,7 +39,7 @@ func (s *S) TearDownSuite(c *check.C) {
 	os.Unsetenv("GLOBOMAP_API_HOSTNAME")
 }
 
-func sortPayload(data []globomapPayload) {
+func sortPayload(data []globomap.Payload) {
 	sort.Slice(data, func(i, j int) bool {
 		if data[i].Collection != data[j].Collection {
 			return data[i].Collection < data[j].Collection

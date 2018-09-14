@@ -11,11 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tsuru/globomap-integration/globomap"
 	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 )
 
 type operation interface {
-	toPayload() *globomapPayload
+	toPayload() *globomap.Payload
 }
 
 type nodeOperation struct {
@@ -91,12 +92,12 @@ func eventStatus(e event) string {
 	return status
 }
 
-func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomapPayload {
-	doc := globomapPayload{
+func baseDocument(name, action, collection string, time time.Time, props map[string]interface{}) *globomap.Payload {
+	doc := globomap.Payload{
 		Action:     action,
 		Collection: collection,
 		Key:        "tsuru_" + name,
-		Type:       PayloadTypeCollection,
+		Type:       globomap.PayloadTypeCollection,
 	}
 
 	if action == "DELETE" {
@@ -124,7 +125,7 @@ func baseDocument(name, action, collection string, time time.Time, props map[str
 	return &doc
 }
 
-func (op *appOperation) toPayload() *globomapPayload {
+func (op *appOperation) toPayload() *globomap.Payload {
 	return baseDocument(op.appName, op.action, "tsuru_app", op.time, op.properties())
 }
 
@@ -176,12 +177,12 @@ func (op *appPoolOperation) app() (*app, error) {
 	return op.cachedApp, err
 }
 
-func (op *appPoolOperation) toPayload() *globomapPayload {
+func (op *appPoolOperation) toPayload() *globomap.Payload {
 	id := fmt.Sprintf("%s-pool", op.appName)
-	props := globomapPayload{
+	props := globomap.Payload{
 		Action:     op.action,
 		Collection: "tsuru_pool_app",
-		Type:       PayloadTypeEdge,
+		Type:       globomap.PayloadTypeEdge,
 		Key:        "tsuru_" + id,
 	}
 
@@ -204,7 +205,7 @@ func (op *appPoolOperation) toPayload() *globomapPayload {
 	return &props
 }
 
-func (op *poolOperation) toPayload() *globomapPayload {
+func (op *poolOperation) toPayload() *globomap.Payload {
 	return baseDocument(op.poolName, op.action, "tsuru_pool", op.time, op.properties())
 }
 
@@ -235,16 +236,16 @@ func (op *poolOperation) properties() map[string]interface{} {
 	}
 }
 
-func (op *nodeOperation) toPayload() *globomapPayload {
+func (op *nodeOperation) toPayload() *globomap.Payload {
 	return op.buildPayload(nil)
 }
 
-func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globomapPayload {
+func (op *nodeOperation) buildPayload(queryResult *globomap.QueryResult) *globomap.Payload {
 	ip := op.nodeIP()
-	edge := globomapPayload{
+	edge := globomap.Payload{
 		Action:     op.action,
 		Collection: "tsuru_pool_comp_unit",
-		Type:       PayloadTypeEdge,
+		Type:       globomap.PayloadTypeEdge,
 		Key:        "tsuru_" + strings.Replace(ip, ".", "_", -1),
 	}
 
@@ -258,10 +259,10 @@ func (op *nodeOperation) buildPayload(queryResult *globomapQueryResult) *globoma
 	}
 
 	if queryResult == nil {
-		queryResult, err = env.globomap.Query(globomapQueryFields{
-			collection: "comp_unit",
-			name:       node.Name(),
-			ip:         node.IP(),
+		queryResult, err = env.globomap.Query(globomap.QueryFields{
+			Collection: "comp_unit",
+			Name:       node.Name(),
+			IP:         node.IP(),
 		})
 		if err != nil || queryResult == nil {
 			if env.config.repeat != nil {
@@ -326,10 +327,10 @@ func (op *nodeOperation) retry() {
 	if err != nil || node == nil {
 		return
 	}
-	f := globomapQueryFields{
-		collection: "comp_unit",
-		name:       node.Name(),
-		ip:         node.IP(),
+	f := globomap.QueryFields{
+		Collection: "comp_unit",
+		Name:       node.Name(),
+		IP:         node.IP(),
 	}
 
 	for i := 1; i <= env.config.maxRetries; i++ {
@@ -351,7 +352,7 @@ func (op *nodeOperation) retry() {
 		if payload == nil {
 			return
 		}
-		err = env.globomap.Post([]globomapPayload{*payload})
+		err = env.globomap.Post([]globomap.Payload{*payload})
 		if err != nil && env.config.verbose {
 			fmt.Println(err)
 		}
@@ -361,7 +362,7 @@ func (op *nodeOperation) retry() {
 	fmt.Printf("max retries reached for fetching node %s (IP %s) from globomap API, giving up\n", node.Name(), node.IP())
 }
 
-func (op *serviceOperation) toPayload() *globomapPayload {
+func (op *serviceOperation) toPayload() *globomap.Payload {
 	return baseDocument(op.service.Service, op.action, "tsuru_service", op.time, map[string]interface{}{
 		"plans": op.service.Plans,
 	})
@@ -371,7 +372,7 @@ func (op *serviceOperation) String() string {
 	return fmt.Sprintf("%s: service %s", op.baseOperation.String(), op.service.Service)
 }
 
-func (op *serviceInstanceOperation) toPayload() *globomapPayload {
+func (op *serviceInstanceOperation) toPayload() *globomap.Payload {
 	return baseDocument(op.instance.ServiceName+"_"+op.instance.Name, op.action, "tsuru_service_instance", time.Now(), map[string]interface{}{
 		"plan":        op.instance.PlanName,
 		"description": op.instance.Description,
@@ -385,12 +386,12 @@ func (op *serviceInstanceOperation) String() string {
 	return fmt.Sprintf("%s: service instance %v service %v", op.baseOperation.String(), op.instance.Name, op.instance.ServiceName)
 }
 
-func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
+func (op *serviceServiceInstanceOperation) toPayload() *globomap.Payload {
 	id := op.instance.ServiceName + "_" + op.instance.Name
-	return &globomapPayload{
+	return &globomap.Payload{
 		Action:     op.action,
 		Collection: "tsuru_service_service_instance",
-		Type:       PayloadTypeEdge,
+		Type:       globomap.PayloadTypeEdge,
 		Key:        "tsuru_" + id,
 		Element: map[string]interface{}{
 			"id":        id,
@@ -403,12 +404,12 @@ func (op *serviceServiceInstanceOperation) toPayload() *globomapPayload {
 	}
 }
 
-func (op *appServiceInstanceOperation) toPayload() *globomapPayload {
+func (op *appServiceInstanceOperation) toPayload() *globomap.Payload {
 	id := op.appName + "_" + op.instanceName
-	return &globomapPayload{
+	return &globomap.Payload{
 		Action:     op.action,
 		Collection: "tsuru_app_service_instance",
-		Type:       PayloadTypeEdge,
+		Type:       globomap.PayloadTypeEdge,
 		Key:        "tsuru_" + id,
 		Element: map[string]interface{}{
 			"id":        id,

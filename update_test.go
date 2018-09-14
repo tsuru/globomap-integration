@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tsuru/globomap-integration/globomap"
 	"github.com/tsuru/go-tsuruclient/pkg/tsuru"
 	"gopkg.in/check.v1"
 	"gopkg.in/mgo.v2/bson"
@@ -116,7 +117,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
@@ -126,31 +127,31 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 
 		c.Assert(data[1].Action, check.Equals, "DELETE")
 		c.Assert(data[1].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[1].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[1].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[1].Key, check.Equals, "tsuru_myapp2")
 
 		el = data[2].Element
 		c.Assert(data[2].Action, check.Equals, "UPDATE")
 		c.Assert(data[2].Collection, check.Equals, "tsuru_pool")
-		c.Assert(data[2].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[2].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[2].Key, check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
 		c.Assert(data[3].Action, check.Equals, "DELETE")
 		c.Assert(data[3].Collection, check.Equals, "tsuru_pool")
-		c.Assert(data[3].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[3].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[3].Key, check.Equals, "tsuru_pool2")
 
 		el = data[4].Element
 		c.Assert(data[4].Action, check.Equals, "UPDATE")
 		c.Assert(data[4].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[4].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[4].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[4].Key, check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
@@ -158,7 +159,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 
 		c.Assert(data[5].Action, check.Equals, "DELETE")
 		c.Assert(data[5].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[5].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[5].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[5].Key, check.Equals, "tsuru_myapp2-pool")
 
 		c.Assert(data[6].Action, check.Equals, "UPDATE")
@@ -230,7 +231,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
@@ -239,37 +240,37 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 		sortPayload(data)
 		c.Assert(data[0].Action, check.Equals, "DELETE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 
 		el := data[1].Element
 		c.Assert(data[1].Action, check.Equals, "UPDATE")
 		c.Assert(data[1].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[1].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[1].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[1].Key, check.Equals, "tsuru_myapp2")
 		c.Assert(el["name"], check.Equals, "myapp2")
 
 		el = data[2].Element
 		c.Assert(data[2].Action, check.Equals, "UPDATE")
 		c.Assert(data[2].Collection, check.Equals, "tsuru_pool")
-		c.Assert(data[2].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[2].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[2].Key, check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 
 		c.Assert(data[3].Action, check.Equals, "DELETE")
 		c.Assert(data[3].Collection, check.Equals, "tsuru_pool")
-		c.Assert(data[3].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[3].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[3].Key, check.Equals, "tsuru_pool2")
 
 		c.Assert(data[4].Action, check.Equals, "DELETE")
 		c.Assert(data[4].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[4].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[4].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[4].Key, check.Equals, "tsuru_myapp1-pool")
 
 		el = data[5].Element
 		c.Assert(data[5].Action, check.Equals, "UPDATE")
 		c.Assert(data[5].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[5].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[5].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[5].Key, check.Equals, "tsuru_myapp2-pool")
 		c.Assert(el["name"], check.Equals, "myapp2-pool")
 		c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp2")
@@ -340,7 +341,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
@@ -350,7 +351,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[0].Key, check.Equals, "tsuru_myapp1")
 		c.Assert(el["name"], check.Equals, "myapp1")
 		props, ok := el["properties"].(map[string]interface{})
@@ -374,7 +375,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 		el = data[1].Element
 		c.Assert(data[1].Action, check.Equals, "UPDATE")
 		c.Assert(data[1].Collection, check.Equals, "tsuru_pool_app")
-		c.Assert(data[1].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[1].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[1].Key, check.Equals, "tsuru_myapp1-pool")
 		c.Assert(el["name"], check.Equals, "myapp1-pool")
 		_, ok = el["properties"]
@@ -416,7 +417,7 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
@@ -426,7 +427,7 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_pool")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[0].Key, check.Equals, "tsuru_pool1")
 		c.Assert(el["name"], check.Equals, "pool1")
 		props, ok := el["properties"].(map[string]interface{})
@@ -500,17 +501,17 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(matches[0], check.HasLen, 2)
 
 		name := matches[0][1]
-		queryResult := []globomapQueryResult{}
+		queryResult := []globomap.QueryResult{}
 		switch name {
 		case "node1":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.1.1.1"}}})
+			queryResult = append(queryResult, globomap.QueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomap.Properties{IPs: []string{"1.1.1.1"}}})
 		case "node3":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomapProperties{IPs: []string{"3.3.3.3"}}})
+			queryResult = append(queryResult, globomap.QueryResult{Id: "comp_unit/globomap_node3", Name: "node3", Properties: globomap.Properties{IPs: []string{"3.3.3.3"}}})
 		case "node5":
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node5", Name: "node5", Properties: globomapProperties{IPs: []string{"5.5.5.5"}}})
+			queryResult = append(queryResult, globomap.QueryResult{Id: "comp_unit/globomap_node5", Name: "node5", Properties: globomap.Properties{IPs: []string{"5.5.5.5"}}})
 		}
 		json.NewEncoder(w).Encode(
-			struct{ Documents []globomapQueryResult }{
+			struct{ Documents []globomap.QueryResult }{
 				Documents: queryResult,
 			},
 		)
@@ -525,7 +526,7 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(req.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer req.Body.Close()
@@ -536,7 +537,7 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[0].Key, check.Equals, "tsuru_1_1_1_1")
 		c.Assert(el["id"], check.Equals, "1.1.1.1")
 		c.Assert(el["name"], check.Equals, "node1")
@@ -548,13 +549,13 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 		c.Assert(data[1].Action, check.Equals, "DELETE")
 		c.Assert(data[1].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[1].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[1].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[1].Key, check.Equals, "tsuru_2_2_2_2")
 
 		el = data[2].Element
 		c.Assert(data[2].Action, check.Equals, "UPDATE")
 		c.Assert(data[2].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[2].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[2].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[2].Key, check.Equals, "tsuru_3_3_3_3")
 		c.Assert(el["id"], check.Equals, "3.3.3.3")
 		c.Assert(el["name"], check.Equals, "node3")
@@ -566,13 +567,13 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 
 		c.Assert(data[3].Action, check.Equals, "DELETE")
 		c.Assert(data[3].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[3].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[3].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[3].Key, check.Equals, "tsuru_4_4_4_4")
 
 		el = data[4].Element
 		c.Assert(data[4].Action, check.Equals, "UPDATE")
 		c.Assert(data[4].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[4].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[4].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[4].Key, check.Equals, "tsuru_5_5_5_5")
 		c.Assert(el["id"], check.Equals, "5.5.5.5")
 		c.Assert(el["name"], check.Equals, "node5")
@@ -614,12 +615,12 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 		c.Assert(matches, check.HasLen, 1)
 		c.Assert(matches[0], check.HasLen, 2)
 
-		queryResult := []globomapQueryResult{}
+		queryResult := []globomap.QueryResult{}
 		if atomic.AddInt32(&globomapApiRequests, 1) > 1 {
-			queryResult = append(queryResult, globomapQueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomapProperties{IPs: []string{"1.1.1.1"}}})
+			queryResult = append(queryResult, globomap.QueryResult{Id: "comp_unit/globomap_node1", Name: "node1", Properties: globomap.Properties{IPs: []string{"1.1.1.1"}}})
 		}
 		json.NewEncoder(w).Encode(
-			struct{ Documents []globomapQueryResult }{
+			struct{ Documents []globomap.QueryResult }{
 				Documents: queryResult,
 			},
 		)
@@ -634,7 +635,7 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 		c.Assert(req.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(req.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer req.Body.Close()
@@ -643,7 +644,7 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_pool_comp_unit")
-		c.Assert(data[0].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[0].Key, check.Equals, "tsuru_1_1_1_1")
 		c.Assert(el["id"], check.Equals, "1.1.1.1")
 		c.Assert(el["name"], check.Equals, "node1")
@@ -686,7 +687,7 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
 		decoder := json.NewDecoder(r.Body)
-		var data []globomapPayload
+		var data []globomap.Payload
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
