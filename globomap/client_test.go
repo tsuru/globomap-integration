@@ -47,13 +47,13 @@ func (s *S) TestPostWithCredentials(c *check.C) {
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.Header.Get("Content-Type"), check.Equals, "application/json")
 		switch r.URL.Path {
-		case "/v2/updates":
+		case "/v2/updates/":
 			update = true
 			w.WriteHeader(http.StatusAccepted)
 			c.Assert(r.Header.Get("x-driver-name"), check.Equals, "tsuru")
-			c.Assert(r.Header.Get("Authorization"), check.Equals, "Token xpto")
+			c.Assert(r.Header.Get("Authorization"), check.Equals, "Token token=xpto")
 			json.NewEncoder(w).Encode(response{Message: "ok"})
-		case "/v2/auth":
+		case "/v2/auth/":
 			auth = true
 			var credentials authRequest
 			err := json.NewDecoder(r.Body).Decode(&credentials)
@@ -233,7 +233,7 @@ func (s *S) TestGlobomapQueryWithCredentials(c *check.C) {
 			} else {
 				json.NewEncoder(w).Encode(nil)
 			}
-		case "/v2/auth":
+		case "/v2/auth/":
 			var credentials authRequest
 			err := json.NewDecoder(req.Body).Decode(&credentials)
 			c.Assert(credentials, check.DeepEquals, authRequest{Username: "user", Password: "password"})

@@ -144,7 +144,7 @@ func (g *Client) auth(addr string) error {
 	if err := json.NewEncoder(buf).Encode(req); err != nil {
 		return err
 	}
-	resp, err := g.doPost(addr, "/v2/auth", buf)
+	resp, err := g.doPost(addr, "/v2/auth/", buf)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (g *Client) auth(addr string) error {
 func (g *Client) post(payload []Payload) error {
 	path := "/v1/updates"
 	if g.Username != "" || g.Password != "" {
-		path = "/v2/updates"
+		path = "/v2/updates/"
 	}
 	body := g.body(payload)
 	if body == nil {
@@ -219,7 +219,7 @@ func (g *Client) doPost(addr, path string, body io.Reader) (*http.Response, erro
 		return nil, err
 	}
 	if g.token != nil {
-		req.Header.Add("Authorization", fmt.Sprintf("Token %s", g.token.Token))
+		req.Header.Add("Authorization", fmt.Sprintf("Token token=%s", g.token.Token))
 	}
 	req.Header.Add("x-driver-name", "tsuru")
 	req.Header.Add("Content-Type", "application/json")
