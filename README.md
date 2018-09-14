@@ -8,6 +8,8 @@ Required environment variables:
 
 - `GLOBOMAP_LOADER_HOSTNAME`: API used to post updates
 - `GLOBOMAP_API_HOSTNAME`: API used to search for comp units
+- `GLOBOMAP_USERNAME`: Username used to authenticate with globomap
+- `GLOBOMAP_PASSWORD`: Password used to authenticate with globomap
 - `TSURU_HOSTNAME`: tsuru API, used to check for information about apps, pools and nodes
 - `TSURU_TOKEN`: token used in tsuru API
 

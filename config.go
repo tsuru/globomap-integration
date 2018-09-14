@@ -22,6 +22,8 @@ type configParams struct {
 	tsuruToken             string
 	globomapApiHostname    string
 	globomapLoaderHostname string
+	globomapUsername       string
+	globomapPassword       string
 	start                  *time.Duration
 	repeat                 *time.Duration
 	retrySleepTime         time.Duration
@@ -44,6 +46,8 @@ func NewConfig() configParams {
 		tsuruToken:             os.Getenv("TSURU_TOKEN"),
 		globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
 		globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
+		globomapUsername:       os.Getenv("GLOBOMAP_USERNAME"),
+		globomapPassword:       os.Getenv("GLOBOMAP_PASSWORD"),
 		retrySleepTime:         5 * time.Minute,
 		maxRetries:             20,
 		sleepTimeBetweenChunks: 10 * time.Second,

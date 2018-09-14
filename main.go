@@ -40,6 +40,8 @@ func setup(args []string) {
 	env.globomap = &globomapClient{
 		ApiHostname:    env.config.globomapApiHostname,
 		LoaderHostname: env.config.globomapLoaderHostname,
+		Username:       env.config.globomapUsername,
+		Password:       env.config.globomapPassword,
 	}
 }
 
