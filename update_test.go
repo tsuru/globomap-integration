@@ -164,32 +164,32 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 
 		c.Assert(data[6].Action, check.Equals, "UPDATE")
 		c.Assert(data[6].Collection, check.Equals, "tsuru_service")
-		c.Assert(data[6].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[6].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[6].Key, check.Equals, "tsuru_service1")
 
 		c.Assert(data[7].Action, check.Equals, "DELETE")
 		c.Assert(data[7].Collection, check.Equals, "tsuru_service")
-		c.Assert(data[7].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[7].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[7].Key, check.Equals, "tsuru_service2")
 
 		c.Assert(data[8].Action, check.Equals, "DELETE")
 		c.Assert(data[8].Collection, check.Equals, "tsuru_service_instance")
-		c.Assert(data[8].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[8].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[8].Key, check.Equals, "tsuru_service1_instance1")
 
 		c.Assert(data[9].Action, check.Equals, "UPDATE")
 		c.Assert(data[9].Collection, check.Equals, "tsuru_service_instance")
-		c.Assert(data[9].Type, check.Equals, PayloadTypeCollection)
+		c.Assert(data[9].Type, check.Equals, globomap.PayloadTypeCollection)
 		c.Assert(data[9].Key, check.Equals, "tsuru_service1_instance2")
 
 		c.Assert(data[10].Action, check.Equals, "DELETE")
 		c.Assert(data[10].Collection, check.Equals, "tsuru_service_service_instance")
-		c.Assert(data[10].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[10].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[10].Key, check.Equals, "tsuru_service1_instance1")
 
 		c.Assert(data[11].Action, check.Equals, "UPDATE")
 		c.Assert(data[11].Collection, check.Equals, "tsuru_service_service_instance")
-		c.Assert(data[11].Type, check.Equals, PayloadTypeEdge)
+		c.Assert(data[11].Type, check.Equals, globomap.PayloadTypeEdge)
 		c.Assert(data[11].Key, check.Equals, "tsuru_service1_instance2")
 	}))
 	defer server.Close()
