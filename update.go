@@ -150,15 +150,19 @@ func (p *serviceInstanceProcessor) process(target string, events []event) ([]ope
 			}
 		}
 	}
-
-	endTime := events[len(events)-1].EndTime
-	lastStatus := eventStatus(events[len(events)-1])
+	lastEvent := events[len(events)-1]
+	endTime := lastEvent.EndTime
+	lastStatus := eventStatus(lastEvent)
 
 	instance := p.instances[target]
 
 	// we need to make sure we set the name even if the service
 	// instance was deleted (and is not in the map)
-	instance.ServiceName, instance.Name = extractServiceInstance(target)
+	service, instanceName, err := extractServiceInstance(target)
+	if err != nil {
+		return nil, fmt.Errorf("%v. Skipping event kind=%v target=%v", err, lastEvent.Kind.Name, lastEvent.Target.Value)
+	}
+	instance.ServiceName, instance.Name = service, instanceName
 
 	op := serviceInstanceOperation{
 		baseOperation: baseOperation{
@@ -346,9 +350,12 @@ func processAppEvents(target string, events []event) ([]operation, error) {
 	return operations, nil
 }
 
-func extractServiceInstance(fqdn string) (string, string) {
+func extractServiceInstance(fqdn string) (string, string, error) {
 	parts := strings.SplitN(fqdn, "/", 2)
-	return parts[0], parts[1]
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("failed to extract service instance from %q", fqdn)
+	}
+	return parts[0], parts[1], nil
 }
 
 func processAppInstanceEvents(app string, events []event) ([]operation, error) {
@@ -360,7 +367,26 @@ func processAppInstanceEvents(app string, events []event) ([]operation, error) {
 		if strings.HasSuffix(e.Kind.Name, "unbind") {
 			action = "DELETE"
 		}
-		service, instance := extractServiceInstance(e.Target.Value)
+		data := []map[string]interface{}{}
+		var service, instance string
+		if err := e.StartCustomData.Unmarshal(&data); err != nil {
+			return nil, err
+		}
+		for _, d := range data {
+			if d["name"] == ":service" {
+				service = d["value"].(string)
+			}
+			if d["name"] == ":instance" {
+				instance = d["value"].(string)
+			}
+			if service != "" && instance != "" {
+				break
+			}
+		}
+		if service == "" || instance == "" {
+			fmt.Printf("Unable to extract service and instance from data: %v", data)
+			continue
+		}
 		operations[e.Target.Value] = &appServiceInstanceOperation{
 			baseOperation: baseOperation{
 				action: action,

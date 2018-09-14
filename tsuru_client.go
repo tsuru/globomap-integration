@@ -38,9 +38,10 @@ type event struct {
 	Kind struct {
 		Name string
 	}
-	EndTime       time.Time
-	Error         string
-	EndCustomData bson.Raw
+	EndTime         time.Time
+	Error           string
+	EndCustomData   bson.Raw
+	StartCustomData bson.Raw
 }
 
 type eventFilter struct {
