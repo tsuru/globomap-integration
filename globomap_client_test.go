@@ -34,6 +34,44 @@ func (s *S) TestPost(c *check.C) {
 	c.Assert(err, check.IsNil)
 }
 
+func (s *S) TestPostWithCredentials(c *check.C) {
+	var auth, update bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.Assert(r.Method, check.Equals, http.MethodPost)
+		c.Assert(r.Header.Get("Content-Type"), check.Equals, "application/json")
+		switch r.URL.Path {
+		case "/v2/updates":
+			update = true
+			w.WriteHeader(http.StatusAccepted)
+			c.Assert(r.Header.Get("x-driver-name"), check.Equals, "tsuru")
+			c.Assert(r.Header.Get("Authorization"), check.Equals, "Token xpto")
+			json.NewEncoder(w).Encode(globomapResponse{Message: "ok"})
+		case "/v2/auth":
+			auth = true
+			var credentials globomapAuthRequest
+			err := json.NewDecoder(r.Body).Decode(&credentials)
+			c.Assert(credentials, check.DeepEquals, globomapAuthRequest{Username: "user", Password: "password"})
+			c.Assert(err, check.IsNil)
+			json.NewEncoder(w).Encode(globomapToken{Token: "xpto"})
+		default:
+			c.Fatalf("Invalid request path called: %v", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := globomapClient{
+		LoaderHostname: server.URL,
+		Username:       "user",
+		Password:       "password",
+	}
+
+	payload := []globomapPayload{{}}
+	err := client.Post(payload)
+	c.Assert(err, check.IsNil)
+	c.Assert(auth, check.Equals, true)
+	c.Assert(update, check.Equals, true)
+}
+
 func (s *S) TestPostInChunks(c *check.C) {
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -147,6 +185,62 @@ func (s *S) TestGlobomapQuery(c *check.C) {
 	defer server.Close()
 	client := globomapClient{
 		ApiHostname: server.URL,
+	}
+
+	result, err := client.Query(globomapQueryFields{
+		collection: "comp_unit",
+		name:       "vm-1234",
+		ip:         "10.200.22.9",
+	})
+	c.Assert(err, check.IsNil)
+	c.Assert(result, check.NotNil)
+	c.Assert(result.Id, check.Equals, "def")
+	c.Assert(result.Name, check.Equals, "vm-1234")
+	c.Assert(result.Properties.IPs, check.DeepEquals, []string{"10.200.22.9"})
+
+	result, err = client.Query(globomapQueryFields{
+		collection: "comp_unit",
+		name:       "vm-123",
+		ip:         "10.200.22.9",
+	})
+	c.Assert(err, check.IsNil)
+	c.Assert(result, check.IsNil)
+}
+
+func (s *S) TestGlobomapQueryWithCredentials(c *check.C) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/v2/collections/comp_unit/":
+			c.Assert(req.Method, check.Equals, http.MethodGet)
+			query := req.FormValue("query")
+
+			if strings.Contains(query, `"value":"vm-1234"`) {
+				json.NewEncoder(w).Encode(
+					struct{ Documents []globomapQueryResult }{
+						[]globomapQueryResult{
+							{Id: "abc", Name: "vm-1234", Properties: globomapProperties{IPs: []string{"10.52.20.20"}}},
+							{Id: "def", Name: "vm-1234", Properties: globomapProperties{IPs: []string{"10.200.22.9"}}},
+						},
+					},
+				)
+			} else {
+				json.NewEncoder(w).Encode(nil)
+			}
+		case "/v2/auth":
+			var credentials globomapAuthRequest
+			err := json.NewDecoder(req.Body).Decode(&credentials)
+			c.Assert(credentials, check.DeepEquals, globomapAuthRequest{Username: "user", Password: "password"})
+			c.Assert(err, check.IsNil)
+			json.NewEncoder(w).Encode(globomapToken{Token: "xpto"})
+		default:
+			c.Fatalf("Invalid request path called: %v", req.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := globomapClient{
+		ApiHostname: server.URL,
+		Username:    "user",
+		Password:    "password",
 	}
 
 	result, err := client.Query(globomapQueryFields{

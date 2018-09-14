@@ -29,6 +29,18 @@ const (
 type globomapClient struct {
 	LoaderHostname string
 	ApiHostname    string
+	Username       string
+	Password       string
+	token          *globomapToken
+}
+
+type globomapAuthRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type globomapToken struct {
+	Token string `json:"token"`
 }
 
 type globomapPayload struct {
@@ -61,6 +73,9 @@ type globomapResponse struct {
 }
 
 func (g *globomapClient) Post(payload []globomapPayload) error {
+	if err := g.auth(g.LoaderHostname); err != nil {
+		return fmt.Errorf("failed to authenticate with globomap loader: %v", err)
+	}
 	maxPayloadItems := 100
 	if len(payload) <= maxPayloadItems {
 		return g.post(payload)
@@ -91,13 +106,38 @@ func (g *globomapClient) Post(payload []globomapPayload) error {
 	return nil
 }
 
+func (g *globomapClient) auth(addr string) error {
+	if g.Username == "" && g.Password == "" {
+		return nil
+	}
+	g.token = new(globomapToken)
+	req := globomapAuthRequest{Username: g.Username, Password: g.Password}
+	buf := new(bytes.Buffer)
+	if err := json.NewEncoder(buf).Encode(req); err != nil {
+		return err
+	}
+	resp, err := g.doPost(addr, "/v2/auth", buf)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected response code for auth: %v", resp.StatusCode)
+	}
+
+	return json.NewDecoder(resp.Body).Decode(g.token)
+}
+
 func (g *globomapClient) post(payload []globomapPayload) error {
 	path := "/v1/updates"
+	if g.Username != "" || g.Password != "" {
+		path = "/v2/updates"
+	}
 	body := g.body(payload)
 	if body == nil {
 		return errors.New("No events to post")
 	}
-	resp, err := g.doPost(path, body)
+	resp, err := g.doPost(g.LoaderHostname, path, body)
 	if err != nil {
 		return err
 	}
@@ -121,6 +161,9 @@ func (g *globomapClient) post(payload []globomapPayload) error {
 }
 
 func (g *globomapClient) Query(f globomapQueryFields) (*globomapQueryResult, error) {
+	if err := g.auth(g.ApiHostname); err != nil {
+		return nil, fmt.Errorf("failed to authenticate with globomap API: %v", err)
+	}
 	results, err := g.queryByName(f.collection, f.name)
 	if err != nil {
 		return nil, err
@@ -139,8 +182,12 @@ func (g *globomapClient) Query(f globomapQueryFields) (*globomapQueryResult, err
 }
 
 func (g *globomapClient) queryByName(collection, name string) ([]globomapQueryResult, error) {
+	path := "/v1/collections"
+	if g.Username != "" || g.Password != "" {
+		path = "/v2/collections"
+	}
 	query := fmt.Sprintf(`[[{"field":"name","value":"%s","operator":"=="}]]`, name)
-	path := fmt.Sprintf("/v1/collections/%s/?query=%s", collection, url.PathEscape(query))
+	path = fmt.Sprintf("%s/%s/?query=%s", path, collection, url.PathEscape(query))
 	resp, err := http.Get(g.ApiHostname + path)
 	if err != nil {
 		return nil, err
@@ -158,12 +205,16 @@ func (g *globomapClient) queryByName(collection, name string) ([]globomapQueryRe
 	return data.Documents, nil
 }
 
-func (g *globomapClient) doPost(path string, body io.Reader) (*http.Response, error) {
+func (g *globomapClient) doPost(addr, path string, body io.Reader) (*http.Response, error) {
 	client := &http.Client{}
-	req, err := http.NewRequest(http.MethodPost, g.LoaderHostname+path, body)
+	req, err := http.NewRequest(http.MethodPost, addr+path, body)
 	if err != nil {
 		return nil, err
 	}
+	if g.token != nil {
+		req.Header.Add("Authorization", fmt.Sprintf("Token %s", g.token.Token))
+	}
+	req.Header.Add("x-driver-name", "tsuru")
 	req.Header.Add("Content-Type", "application/json")
 	if env.config.dry {
 		data, err := ioutil.ReadAll(body)
