@@ -97,6 +97,15 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		newEvent("service-instance.create", "service1/instance2"),
 		newEvent("service-instance.delete", "service1/instance1"),
 	}
+	bindEvent := newEvent("app.update.bind", "myapp1")
+	b, err := bson.Marshal(&[]map[string]interface{}{
+		{"name": ":service", "value": "service1"},
+		{"name": ":instance", "value": "instance2"},
+	})
+	c.Assert(err, check.IsNil)
+	bindEvent.StartCustomData = bson.Raw{Data: b, Kind: 4}
+	bindEvent.EndTime = time.Now()
+	events = append(events, bindEvent)
 	services := []tsuru.Service{
 		{
 			Service: "service1",
@@ -109,10 +118,9 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 	tsuruServer := newTsuruServer(events, services, []app{{Name: "myapp1", Pool: "pool1"}}, []pool{{Name: "pool1"}, {Name: "pool2"}}, nil)
 	defer tsuruServer.Close()
 	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
-
 	requests := make(chan bool)
+	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer close(requests)
 		c.Assert(r.Method, check.Equals, http.MethodPost)
 		c.Assert(r.URL.Path, check.Equals, "/v1/updates")
 
@@ -121,9 +129,25 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 		err := decoder.Decode(&data)
 		c.Assert(err, check.IsNil)
 		defer r.Body.Close()
-		c.Assert(len(data), check.Equals, 12)
 
 		sortPayload(data)
+
+		v := atomic.AddInt32(&calls, 1)
+		if v == 2 {
+			el := data[0].Element
+			c.Assert(data[0].Action, check.Equals, "UPDATE")
+			c.Assert(data[0].Collection, check.Equals, "tsuru_app_service_instance")
+			c.Assert(data[0].Type, check.Equals, globomap.PayloadTypeEdge)
+			c.Assert(data[0].Key, check.Equals, "tsuru_myapp1_instance2")
+			c.Assert(el["name"], check.Equals, "myapp1_instance2")
+			c.Assert(el["from"], check.Equals, "tsuru_app/tsuru_myapp1")
+			c.Assert(el["to"], check.Equals, "tsuru_service_instance/tsuru_service1_instance2")
+			return
+		}
+
+		defer close(requests)
+
+		c.Assert(len(data), check.Equals, 12)
 		el := data[0].Element
 		c.Assert(data[0].Action, check.Equals, "UPDATE")
 		c.Assert(data[0].Collection, check.Equals, "tsuru_app")
@@ -204,6 +228,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 	case <-time.After(5 * time.Second):
 		c.Fail()
 	}
+	c.Assert(calls, check.Equals, int32(2))
 }
 
 func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {

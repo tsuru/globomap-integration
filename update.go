@@ -384,14 +384,14 @@ func processAppInstanceEvents(app string, events []event) ([]operation, error) {
 			}
 		}
 		if service == "" || instance == "" {
-			fmt.Printf("Unable to extract service and instance from data: %v", data)
-			continue
+			return nil, fmt.Errorf("Unable to extract service and instance from data: %v", data)
 		}
 		operations[e.Target.Value] = &appServiceInstanceOperation{
 			baseOperation: baseOperation{
 				action: action,
 				time:   e.EndTime,
 			},
+			appName:      app,
 			serviceName:  service,
 			instanceName: instance,
 		}
