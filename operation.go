@@ -363,8 +363,18 @@ func (op *nodeOperation) retry() {
 }
 
 func (op *serviceOperation) toPayload() *globomap.Payload {
+	planMap := make(map[string]struct{})
+	for _, p := range op.service.Plans {
+		planMap[p] = struct{}{}
+	}
+	plans := make([]string, len(planMap))
+	var i int
+	for p := range planMap {
+		plans[i] = p
+		i++
+	}
 	return baseDocument(op.service.Service, op.action, "tsuru_service", op.time, map[string]interface{}{
-		"plans": op.service.Plans,
+		"plans": plans,
 	})
 }
 
