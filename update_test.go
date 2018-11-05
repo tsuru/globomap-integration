@@ -117,7 +117,7 @@ func (s *S) TestUpdateCmdRun(c *check.C) {
 	}
 	tsuruServer := newTsuruServer(events, services, []app{{Name: "myapp1", Pool: "pool1"}}, []pool{{Name: "pool1"}, {Name: "pool2"}}, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 	requests := make(chan bool)
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +247,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 	pools := []pool{{Name: "pool1"}}
 	tsuruServer := newTsuruServer(events, nil, apps, pools, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +320,7 @@ func (s *S) TestUpdateCmdRunWithMultipleEventsPerKind(c *check.C) {
 func (s *S) TestUpdateCmdRunNoRequestWhenNoEventsToPost(c *check.C) {
 	tsuruServer := newTsuruServer(nil, nil, nil, nil, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -357,7 +357,7 @@ func (s *S) TestUpdateCmdRunAppProperties(c *check.C) {
 	}
 	tsuruServer := newTsuruServer([]event{newEvent("app.create", "myapp1")}, nil, []app{a}, nil, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +433,7 @@ func (s *S) TestUpdateCmdRunPoolProperties(c *check.C) {
 		Teams:       []string{"team1", "team2", "team3"},
 	}}, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -517,7 +517,7 @@ func (s *S) TestUpdateCmdRunWithNodeEvents(c *check.C) {
 	}
 	tsuruServer := newTsuruServer(events, nil, nil, pools, nodes)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		re := regexp.MustCompile(`"value":"([^"]*)"`)
@@ -631,7 +631,7 @@ func (s *S) TestUpdateCmdRunWithRetry(c *check.C) {
 		Teams:       []string{"team1", "team2", "team3"},
 	}}, []node{{Pool: "pool1", Iaasid: "node1", Address: "https://1.1.1.1:2376"}})
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	var globomapApiRequests int32
 	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -703,7 +703,7 @@ func (s *S) TestUpdateCmdRunIgnoresFailedEvents(c *check.C) {
 	}
 	tsuruServer := newTsuruServer(events, nil, []app{{Name: "myapp1"}}, nil, nil)
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

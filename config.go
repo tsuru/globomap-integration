@@ -42,7 +42,7 @@ type flags struct {
 
 func NewConfig() configParams {
 	config := configParams{
-		tsuruHostname:          os.Getenv("TSURU_HOSTNAME"),
+		tsuruHostname:          os.Getenv("TSURU_HOST"),
 		tsuruToken:             os.Getenv("TSURU_TOKEN"),
 		globomapApiHostname:    os.Getenv("GLOBOMAP_API_HOSTNAME"),
 		globomapLoaderHostname: os.Getenv("GLOBOMAP_LOADER_HOSTNAME"),
@@ -129,7 +129,7 @@ func (c *configParams) ProcessArguments(args []string) error {
 	}
 
 	if c.tsuruHostname == "" {
-		return errors.New("TSURU_HOSTNAME is required")
+		return errors.New("TSURU_HOST is required")
 	}
 	if c.tsuruToken == "" {
 		return errors.New("TSURU_TOKEN is required")

@@ -52,7 +52,7 @@ func (s *S) TestLoadCmdRun(c *check.C) {
 		}
 	}))
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	globomapApi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		c.Assert(req.Method, check.Equals, http.MethodGet)
@@ -241,7 +241,7 @@ func (s *S) TestLoadCmdRunNoRequestWhenNoData(c *check.C) {
 		}
 	}))
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +288,7 @@ func (s *S) TestLoadCmdRunAppProperties(c *check.C) {
 		}
 	}))
 	defer tsuruServer.Close()
-	os.Setenv("TSURU_HOSTNAME", tsuruServer.URL)
+	os.Setenv("TSURU_HOST", tsuruServer.URL)
 
 	requests := make(chan bool)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

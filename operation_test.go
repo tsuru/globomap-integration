@@ -24,7 +24,7 @@ func (s *S) TestNodeOperationNode(c *check.C) {
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1, n2, n3}})
 	}))
 	defer server.Close()
-	os.Setenv("TSURU_HOSTNAME", server.URL)
+	os.Setenv("TSURU_HOST", server.URL)
 	setup(nil)
 
 	op := &nodeOperation{nodeAddr: "https://10.20.30.41:2376"}
@@ -44,7 +44,7 @@ func (s *S) TestNodeOperationNodeCacheRequest(c *check.C) {
 		json.NewEncoder(w).Encode(struct{ Nodes []node }{Nodes: []node{n1}})
 	}))
 	defer server.Close()
-	os.Setenv("TSURU_HOSTNAME", server.URL)
+	os.Setenv("TSURU_HOST", server.URL)
 	setup(nil)
 
 	op := &nodeOperation{nodeAddr: "https://10.20.30.40:2376"}
@@ -65,7 +65,7 @@ func (s *S) TestNodeOperationNodeError(c *check.C) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	os.Setenv("TSURU_HOSTNAME", server.URL)
+	os.Setenv("TSURU_HOST", server.URL)
 	setup(nil)
 
 	op := &nodeOperation{}
